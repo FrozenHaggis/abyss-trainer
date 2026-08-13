@@ -122,6 +122,12 @@ export interface World {
   prompt: Prompt | null
   /** The most recent failure, for an immediate toast. */
   lastFailure: { name: string; failText: string; atMs: number } | null
+  /** ms remaining in a burn window, and what it multiplies your damage by. */
+  burnMs: number
+  burnMult: number
+  /** The burn window's mechanic id, and whether you used burst inside it. */
+  burnId: string | null
+  burnUsed: boolean
   /** True while two tanked entities are close enough to gain their damage reduction. */
   bossesLinked: boolean
   linkedMs: number
@@ -306,6 +312,10 @@ export function createWorld(boss: BossDef, role: Role): World {
     playerStacks: 0,
     prompt: null,
     lastFailure: null,
+    burnMs: 0,
+    burnMult: 1,
+    burnId: null,
+    burnUsed: false,
     bossesLinked: false,
     linkedMs: 0,
     drillId: null,
@@ -628,6 +638,14 @@ function resolveInstance(w: World, inst: Instance) {
       }
       break
     }
+
+    case 'burnWindow':
+      // Opens on resolve and runs on a clock. Judged when it closes, in step().
+      w.burnMs = def.rule.durationMs
+      w.burnMult = def.rule.multiplier
+      w.burnId = def.id
+      w.burnUsed = false
+      break
 
     case 'raidDamage':
     case 'keepApart':
@@ -1040,6 +1058,13 @@ function computePrompt(w: World): Prompt | null {
       // at the instant the clock starts running on a failure.
       consider({ verb: 'TAUNT', mechanic: swapDef.name, urgency: 1 }, 0)
     }
+  }
+
+  // A burn window you have not spent your cooldown in.
+  if (w.burnMs > 0 && !w.burnUsed && abilitiesFor(w.player.role).includes('burst')
+      && !w.player.cooldowns.burst) {
+    const d = w.boss.mechanics.find(m => m.id === w.burnId)
+    if (d) consider({ verb: 'BURN IT', mechanic: d.name, urgency: 1 - w.burnMs / 20000 }, 0)
   }
 
   // Linked bosses beat everything else: at 99% damage reduction nothing you do
@@ -1552,6 +1577,25 @@ export function step(w: World, input: Input, dtMs: number) {
   }
   w.bossEnergy = Math.min(100, w.bossEnergy + w.boss.energyPerSec * dt)
 
+  // ── burn window ──
+  if (w.burnMs > 0) {
+    w.burnMs -= dtMs
+    if ((w.player.cooldowns.burst ?? 0) > COOLDOWN_MS.burst - BURST_WINDOW_MS) w.burnUsed = true
+    if (w.burnMs <= 0) {
+      const def = w.boss.mechanics.find(m => m.id === w.burnId)
+      // Only scored if burst is actually on your bar — blaming a healer for not
+      // pressing a button they do not have is the defect this project keeps
+      // having to re-fix.
+      if (def && !w.burnUsed && abilitiesFor(w.player.role).includes('burst')
+          && def.roles.includes(w.player.role)) {
+        recordFailure(w, def)
+      }
+      w.burnMs = 0
+      w.burnMult = 1
+      w.burnId = null
+    }
+  }
+
   // ── scheduler ──
   w.loopTimerMs += dtMs
   if (w.loopTimerMs >= w.boss.loopIntervalSec * 1000) {
@@ -1741,7 +1785,7 @@ export function step(w: World, input: Input, dtMs: number) {
       s.life = 0
       w.shotsHit++
       // 99% damage reduction while the pair is linked.
-      w.bossHp -= w.bossesLinked ? perShot * 0.01 : perShot
+      w.bossHp -= (w.bossesLinked ? perShot * 0.01 : perShot) * (w.burnMs > 0 ? w.burnMult : 1)
       break
     }
   }

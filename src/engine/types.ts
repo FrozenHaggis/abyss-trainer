@@ -49,6 +49,18 @@ export type Rule =
    * failure is a state you are allowed to sit in, not an event you miss.
    */
   | { type: 'keepApart'; minYards: number }
+  /**
+   * A burn window: the boss takes bonus damage for a fixed stretch.
+   *
+   * Every fight with one says the same thing about it — Sszorak's Dig In is
+   * "the fight's only burn window", Ula'tek's Venomous Heart is "the raid's
+   * burn phase", and both tactic files list missing it as the failure
+   * ("cooldowns missing the Heart wastes the only burn in the stage").
+   *
+   * So the failure is not pressing your burst inside it. Only scored for roles
+   * that actually have burst on their bar.
+   */
+  | { type: 'burnWindow'; multiplier: number; durationMs: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */
   | { type: 'faceAway' }
   /** Press an ability inside the window. Kicks, dispels, taunts. */

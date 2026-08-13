@@ -149,7 +149,7 @@ export const ulatek: BossDef = {
   maxHp: 1,
   loopIntervalSec: 5.5,        // slightly faster than the others — it is the last boss
   energyPerSec: 2.2,           // ~45s between platform collapses
-  atFullEnergy: 'circlingprey',
+  atFullEnergy: 'heart',
   ambient: ['vapors'],
   pullLengthSec: 165,
 
@@ -166,6 +166,21 @@ export const ulatek: BossDef = {
   ],
 
   mechanics: [
+    {
+      id: 'heart',
+      name: 'Venomous Heart',
+      spellId: 1299526,
+      roles: ['tank', 'dps'],
+      telegraphMs: 2000,
+      origin: 'boss',
+      // "20 sec window where the Heart takes +100% damage — the raid's burn
+      // phase", opened by Rage of the Shackled. The stage's only burn, and it
+      // was absent: "cooldowns missing the Heart wastes the only burn in the
+      // stage" was a failure the trainer had no way to show you.
+      rule: { type: 'burnWindow', multiplier: 2, durationMs: 20000 },
+      good: 'Healing cooldowns cover the channel, debris dodged, every damage cooldown into the Heart.',
+      failText: 'The Venomous Heart window closed with cooldowns still up',
+    },
     // ───────────────────────── the clock ─────────────────────────
     {
       id: 'vapors',

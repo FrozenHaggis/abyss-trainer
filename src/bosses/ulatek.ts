@@ -317,10 +317,16 @@ export const ulatek: BossDef = {
     {
       id: 'serpentsbite',
       name: "Serpent's Bite",
-      // CAST MARKER ONLY. The real venom debuff is one of ten unresolved
-      // siblings, so this is the selector ID — the honest one to point at until
-      // a log resolves the child. Nothing is invented to fill the gap.
-      spellId: 1295905,
+      // Points at Calcified Corpse, the terminal state of an un-leeched bite:
+      // "Bad: Any applydebuff of 1306119 — a bite was never leeched, and that
+      // is a death."
+      //
+      // It used to point at 1295905, which the ability data flags as "CAST
+      // MARKER ONLY ... a Dummy effect and 300 yd radius ... the selector, not
+      // the player debuff". A 300-yard selector keyed to a 7-yard leech meant
+      // the mechanic was hung on an ID that can never describe its failure.
+      spellId: 1306119,
+      lethal: true,
       roles: ['tank', 'dps', 'healer'],
       // Really 15s. Compressed because the decision — spot the bite, get inside
       // 7 yards — is made in the first seconds and the rest is dead air.

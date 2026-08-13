@@ -57,29 +57,31 @@ export const vashnik: BossDef = {
       id: 'shrouded', name: 'Shrouded Venom', npcId: 0, spellId: 1312366,
       job: 'kill', count: 1, hp: 8, shieldHp: 8, fuseSec: 16, spawnRadius: 30,
       good: 'Break Miasmic Coating first — until it drops, the add takes no damage at all.',
-      failText: 'A Shrouded Venom survived its window',
+      onLeak: 'burst',
+      failText: 'A Shrouded Venom reached the Malignant Cavity — Malignant Burst',
     },
     {
       id: 'clotting', name: 'Clotting Venom', npcId: 259408, spellId: 1286631,
       job: 'kill', count: 2, hp: 7, fuseSec: 14, spawnRadius: 32,
       good: 'Kill them before they reach the Cavity — they cannot be slowed, rooted or feared.',
-      failText: 'A Clotting Venom reached the Malignant Cavity',
+      onLeak: 'burst',
+      failText: 'A Clotting Venom reached the Malignant Cavity — Malignant Burst',
     },
   ],
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,          // Imbibe at 100 energy — roughly every 45s
   atFullEnergy: 'imbibe',
-  ambient: ['vapor'],
+  ambient: ['vapor', 'burst'],
   pullLengthSec: 150,
 
   // "No phases — one loop driven by Imbibe." Between drinks the raid alternates
   // between running OUT (venom kill squads at the edge, bile lanes, froth
   // spreads) and collapsing back IN through waves, drains and trails.
   loop: [
-    'fangs', 'burst', 'clotting', 'froth', 'siphon', 'fangs',
-    'bile', 'burst', 'exploding', 'congealing', 'froth', 'fangs',
-    'siphon', 'bile', 'burst', 'froth', 'exploding', 'clotting',
+    'fangs', 'trail', 'clotting', 'froth', 'siphon', 'fangs',
+    'bile', 'trail', 'exploding', 'congealing', 'froth', 'fangs',
+    'siphon', 'bile', 'trail', 'froth', 'exploding', 'clotting',
   ],
 
   mechanics: [
@@ -87,22 +89,21 @@ export const vashnik: BossDef = {
       id: 'burst',
       name: 'Malignant Burst',
       spellId: 1280189,
-      lethal: true,
-      roles: ['tank', 'dps', 'healer'],
-      // The cast itself is 1.5s, but the cast is the failure, not the mechanic.
-      // What you actually practise is the crawl window: the venom is dragged out
-      // of a fountain and walks for the Cavity, and the kill squad has to be on
-      // it. So the telegraph is the walk, not the burst.
-      telegraphMs: 7000,
-      shape: { kind: 'circle', radius: 10 },
-      // Venoms are pulled from the fountains at the edge and crawl inward to the
-      // Malignant Cavity at the centre — so the soak is always an outward run.
-      origin: 'edge',
-      rule: { type: 'beInside' },
-      soakers: 4,
-      spawns: { defId: 'trail' },
-      good: 'Every venom dies en route. Clotting Venom is CC-immune and splits; Shrouded Venom carries a full-health absorb and fires Umbral Ejection within 3yd on death; Burning Venom erupts with Caustic Surge, so kill it away from the raid.',
-      failText: 'Let a venom reach the Cavity — Malignant Burst',
+      roles: ['healer'],
+      telegraphMs: 0,
+      origin: 'boss',
+      // 300 YARD RAID-WIDE, and not a soak. It was a 10-yard `beInside` circle
+      // with four soakers, which asked the raid to stand in a burst that hits
+      // everyone on the map regardless.
+      //
+      // "A venom reaching the Cavity casts 1280189 ... Bad: a Malignant Burst
+      // CAST — one cast is one venom leaked. Count casts, not just deaths."
+      // So the failure belongs to the venom nobody killed, which is exactly
+      // where it now sits: the Clotting and Shrouded Venom adds fire this
+      // through `onLeak` when they reach the Cavity.
+      rule: { type: 'raidDamage', dps: 1.6 },
+      good: 'Every venom dies en route — one Malignant Burst cast is one venom leaked.',
+      failText: '',
     },
     {
       id: 'fangs',

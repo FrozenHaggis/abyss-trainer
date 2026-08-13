@@ -346,6 +346,24 @@ test('the co-tank taunts off you before it becomes your failure', () => {
     'the co-tank has no reaction window; it must taunt off you on its own')
 })
 
+// 300-yard raid-wide abilities must never be dodgeable shapes. Every tactic
+// file that has one says the same thing: "a per-player hit leaderboard would
+// name the whole raid".
+test('no 300-yard raid-wide ability is scored as a player failure', () => {
+  for (const [key, dir] of present) {
+    const raw = JSON.parse(readFileSync(join(ABILITIES, `${dir}.json`), 'utf8'))
+    const all = [...(raw.spells ?? [])]
+    for (const a of [...(raw.bosses ?? []), ...(raw.adds ?? [])]) all.push(...(a.spells ?? []))
+    const wide = new Set(all.filter(s => /\b300\s*(yd|yard)/i.test(s.note ?? '')).map(s => s.spellId))
+    for (const m of readBoss(key).mechanics) {
+      if (!wide.has(m.spellId)) continue
+      assert.ok(['raidDamage', 'press', 'tankSwap', 'keepApart'].includes(m.rule),
+        `${key}/${m.id} (spell ${m.spellId}) is 300yd raid-wide but its rule is '${m.rule}' — ` +
+        'that produces a failure leaderboard naming the entire raid every pull')
+    }
+  }
+})
+
 test('adds cannot pile up faster than they can be cleared', () => {
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
   // The cap is now a per-boss dial with a default, so match either form.

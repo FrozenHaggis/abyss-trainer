@@ -36,6 +36,19 @@ export type Rule =
    * file is explicit: report "un-soaked ruptures only, never soakers".
    */
   | { type: 'collect'; count: number }
+  /**
+   * Two tanked entities must be held at least this far apart.
+   *
+   * Entombed Sentinels: "Both bosses gain 99% DR for 10s while within ~25yd of
+   * each other. Good: Tanks hold them 40+ yards apart all pull." Its own boss
+   * file called this "the single most important tank job on the real fight and
+   * the trainer cannot teach it", because the engine had one boss position.
+   * It has several now.
+   *
+   * Judged continuously rather than at a resolve moment — like a tank swap, the
+   * failure is a state you are allowed to sit in, not an event you miss.
+   */
+  | { type: 'keepApart'; minYards: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */
   | { type: 'faceAway' }
   /** Press an ability inside the window. Kicks, dispels, taunts. */
@@ -148,6 +161,14 @@ export interface AddDef {
   failText: string
   /** Its threat landing kills rather than chips. */
   lethal?: boolean
+  /**
+   * Mechanic id fired when this add gets where it was going.
+   *
+   * Vashnik: "A venom reaching the Cavity casts 1280189 — 300yd Nature burst...
+   * one cast is one venom leaked." The burst is not something you dodge, it is
+   * what a leaked add does to the raid, and showing that link is the lesson.
+   */
+  onLeak?: string
 }
 
 export interface MechanicDef {

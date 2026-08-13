@@ -217,6 +217,28 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   ctx.stroke()
   ctx.lineWidth = 1
 
+  // ── the link between two golems held too close ──
+  // Drawn before the bosses so the bar reads as ground between them. A number
+  // ticking somewhere would not communicate "your damage is doing nothing".
+  if (w.bossesLinked && w.bosses.length > 1) {
+    const held = w.bosses.filter(b => b.targetId >= 0)
+    if (held.length > 1) {
+      const a = toPx(cam, held[0].pos)
+      const b = toPx(cam, held[1].pos)
+      ctx.save()
+      ctx.setLineDash([9, 6])
+      ctx.lineWidth = 4
+      ctx.strokeStyle = `rgba(${RED}, ${0.55 + 0.35 * pulse})`
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke()
+      ctx.restore()
+      ctx.font = '700 13px Rajdhani, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillStyle = `rgba(${RED}, 0.95)`
+      ctx.fillText('99% DAMAGE REDUCTION', (a.x + b.x) / 2, (a.y + b.y) / 2 - 10)
+      ctx.textAlign = 'start'
+    }
+  }
+
   // ── boss entities ──
   // Every entity is drawn and named. Four fights in this tier field two or more,
   // and a single dot in the middle made "the other one is casting" invisible.

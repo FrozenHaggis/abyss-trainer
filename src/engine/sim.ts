@@ -122,6 +122,9 @@ export interface World {
   prompt: Prompt | null
   /** The most recent failure, for an immediate toast. */
   lastFailure: { name: string; failText: string; atMs: number } | null
+  /** True while two tanked entities are close enough to gain their damage reduction. */
+  bossesLinked: boolean
+  linkedMs: number
   /** Set in drill mode: the one mechanic being practised. */
   drillId: string | null
   /** Drill mode only: reps attempted and reps survived. */
@@ -303,6 +306,8 @@ export function createWorld(boss: BossDef, role: Role): World {
     playerStacks: 0,
     prompt: null,
     lastFailure: null,
+    bossesLinked: false,
+    linkedMs: 0,
     drillId: null,
     drillReps: 0,
     drillClean: 0,
@@ -625,7 +630,8 @@ function resolveInstance(w: World, inst: Instance) {
     }
 
     case 'raidDamage':
-      // Never a per-player failure. Handled continuously in step().
+    case 'keepApart':
+      // Never resolved here. Both are judged continuously in step().
       break
   }
 
@@ -650,6 +656,10 @@ function resolveInstance(w: World, inst: Instance) {
 
 const ALLY_SPEED = 12
 const SWAP_GRACE_MS = 2500
+/** How fast a boss walks to its tank. Slower than a player, so leading one is deliberate. */
+const BOSS_FOLLOW_SPEED = 7
+/** How long the pair may sit inside the link range before it is scored. */
+const LINK_GRACE_MS = 2500
 /**
  * How long the co-tank takes to taunt off you once your stacks are up. Long
  * enough that you see the stacks climb and understand why the swap happened,
@@ -790,7 +800,14 @@ function allyThink(w: World) {
     //    holding nothing waits behind the primary, clear of the frontal, ready
     //    to take the swap.
     const held = w.bosses.find(b => b.targetId === a.id)
-    if (held) {
+    if (held?.def.tankedApart) {
+      // Hold it at its assigned corner. Standing relative to the boss made the
+      // tank and the boss chase each other now that a tanked entity follows its
+      // tank — a slow crawl that eventually walked the pair together, which is
+      // the one thing this fight forbids.
+      a.want.x = held.def.start.x
+      a.want.y = held.def.start.y
+    } else if (held) {
       a.want.x = held.pos.x + Math.cos(held.angle) * 5
       a.want.y = held.pos.y + Math.sin(held.angle) * 5
     } else if (a.role === 'tank') {
@@ -1004,6 +1021,13 @@ function computePrompt(w: World): Prompt | null {
     }
   }
 
+  // Linked bosses beat everything else: at 99% damage reduction nothing you do
+  // to them matters until they are pulled apart again.
+  if (w.bossesLinked) {
+    const d = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
+    if (d) consider({ verb: 'PULL THEM APART', mechanic: d.name, urgency: 1 }, 0)
+  }
+
   // Adds first — a cast landing in two seconds beats any floor telegraph.
   for (const add of w.adds) {
     if (!add.alive) continue
@@ -1200,6 +1224,17 @@ function stepAdds(w: World, dtMs: number, dt: number) {
         recordAddFailure(w, d)
         if (d.lethal) killPlayer(w, d.name)
         else w.raidHealth -= ADD_LEAK_COST
+        // What the leak sets off. Named and announced so the cause and the
+        // consequence are visibly the same event.
+        if (d.onLeak) {
+          const conseq = w.boss.mechanics.find(m => m.id === d.onLeak)
+          if (conseq) {
+            w.raidHealth -= 0.14
+            w.shake = 1
+            w.lastFailure = { name: conseq.name, failText: d.failText, atMs: w.elapsedMs }
+            if (!w.seen.has(conseq.id)) { w.seen.add(conseq.id); w.announce = conseq }
+          }
+        }
       }
     }
   }
@@ -1455,6 +1490,44 @@ export function step(w: World, input: Input, dtMs: number) {
     const face = b.targetId >= 0 ? currentTank(w, b).pos : raidAnchor(w)
     const turn = angleDelta(b.angle, Math.atan2(face.y - b.pos.y, face.x - b.pos.x))
     b.angle += Math.max(-1.4 * dt, Math.min(1.4 * dt, turn))
+
+    // A tanked entity follows its tank. Without this the bosses were bolted to
+    // their spawn points, and "hold them 40 yards apart" was not something a
+    // tank could get right or wrong — the separation was whatever the boss file
+    // hard-coded. Slower than a player so leading one somewhere is deliberate.
+    if (b.targetId >= 0) {
+      const to = currentTank(w, b).pos
+      const d = dist(b.pos, to)
+      if (d > MELEE_RANGE) {
+        const step = Math.min(d - MELEE_RANGE, BOSS_FOLLOW_SPEED * dt)
+        b.pos.x += ((to.x - b.pos.x) / d) * step
+        b.pos.y += ((to.y - b.pos.y) / d) * step
+      }
+      const r = lenOf(b.pos)
+      const rim = w.boss.arenaRadius * 0.88
+      if (r > rim) { b.pos.x = (b.pos.x / r) * rim; b.pos.y = (b.pos.y / r) * rim }
+    }
+  }
+
+  // ── keep them apart ──
+  // 99% damage reduction while the pair is close: your shots stop mattering,
+  // which is the honest consequence and a far better teacher than a number
+  // ticking up somewhere.
+  const apartDef = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
+  w.bossesLinked = false
+  if (apartDef && apartDef.rule.type === 'keepApart' && w.bosses.length > 1) {
+    const held = w.bosses.filter(b => b.targetId >= 0)
+    if (held.length > 1 && dist(held[0].pos, held[1].pos) < apartDef.rule.minYards) {
+      w.bossesLinked = true
+      w.linkedMs += dtMs
+      if (w.linkedMs > LINK_GRACE_MS) {
+        w.linkedMs = 0
+        if (apartDef.roles.includes(w.player.role)) recordFailure(w, apartDef)
+      }
+      if (!w.seen.has(apartDef.id)) { w.seen.add(apartDef.id); w.announce = apartDef }
+    } else {
+      w.linkedMs = 0
+    }
   }
   w.bossEnergy = Math.min(100, w.bossEnergy + w.boss.energyPerSec * dt)
 
@@ -1641,7 +1714,8 @@ export function step(w: World, input: Input, dtMs: number) {
       if (dist(s.pos, b.pos) > BOSS_HIT_RADIUS) continue
       s.life = 0
       w.shotsHit++
-      w.bossHp -= perShot
+      // 99% damage reduction while the pair is linked.
+      w.bossHp -= w.bossesLinked ? perShot * 0.01 : perShot
       break
     }
   }

@@ -18,24 +18,21 @@ import type { BossDef } from '../engine/types'
 // exclusion list — the whole fight is in scope for a Heroic trainer.
 //
 // ── the two Sentinels ────────────────────────────────────────────────────────
-// This is a two-entity encounter: Breath of Ula'tek (258557, Nature) and Blood of
-// Ula'tek (258558, Shadow). The engine has exactly one bossPos, so the split is
-// expressed by where each mechanic comes FROM rather than by two boss actors:
+// A two-entity encounter: Breath of Ula'tek (258557, Nature) and Blood of
+// Ula'tek (258558, Shadow). BOTH are tanked, and held apart — each has its own
+// tank mechanic (Empowering Slam on Breath, Bloodvenom Injection on Blood), so
+// the two tanks trade golems rather than passing one between them. Every
+// mechanic below is tagged with the golem that casts it.
 //
-//   Breath  — anchored on the boss / the floor around it: Empowering Slam,
-//             Living Venom, Toxic Droplets → Noxious Blast, Venom Coagulation,
-//             and the Vitriolic Stasis channel that seeds Helical Toxins.
-//   Blood   — lands out in the raid: Blighted Blood, Blood Venom, Unstable
-//             Miasma, Shifting Protovenom.
-//
-// Every mechanic below is commented with which golem owns it.
+// Ula'tek's Dominance is now modelled. This file used to record it as
+// "inexpressible: there is no second boss position for the engine to measure a
+// separation against ... the single most important tank job on the real fight
+// and the trainer cannot teach it." There are two boss positions now, a tanked
+// golem walks to its tank, and `keepApart` scores the separation — so walking
+// your golem into the other one costs you 99% of your damage, exactly as it
+// does in the fight.
 //
 // ── what is deliberately NOT here ────────────────────────────────────────────
-// • Ula'tek's Dominance (1290189 / 1290193) — the 99% DR the pair gains within
-//   ~25yd of each other. Inexpressible: there is no second boss position for the
-//   engine to measure a separation against, and no Rule that scores boss-to-boss
-//   distance. It is the single most important tank job on the real fight and the
-//   trainer cannot teach it.
 // • Bloodvenom Injection (1284487 / 1284491 / 1310126) — the fight's SECOND tank
 //   swap driver. The sim binds one tankSwap def per boss, so Empowering Slam
 //   takes the slot; it has the cleaner "Good:" line and is the purer swap.
@@ -107,6 +104,24 @@ export const sentinels: BossDef = {
   ],
 
   mechanics: [
+    {
+      id: 'dominance',
+      name: "Ula'tek's Dominance",
+      spellId: 1290189,
+      from: 'breath',
+      // The tank job, and for a long time the one this trainer could not teach:
+      // "Both bosses gain 99% DR for 10s while within ~25yd of each other.
+      // Good: Tanks hold them 40+ yards apart all pull."
+      //
+      // Judged continuously. Walk your golem into the other one and your shots
+      // stop doing anything, which is the consequence the real fight applies.
+      roles: ['tank'],
+      telegraphMs: 0,
+      origin: 'boss',
+      rule: { type: 'keepApart', minYards: 25 },
+      good: 'Tanks hold them 40+ yards apart all pull.',
+      failText: "Let the golems close — Ula'tek's Dominance, 99% damage reduction",
+    },
     // ───────────────────────────── shared ─────────────────────────────
     {
       id: 'marks',
@@ -198,31 +213,23 @@ export const sentinels: BossDef = {
       spellId: 1284434,
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
-      telegraphMs: 1800,
-      shape: { kind: 'circle', radius: 5 },
+      // "1284434 scatters droplets; each erupts into Noxious Blast after 16s.
+      // STEPPING ON A DROPLET DEFUSES IT."
+      //
+      // This was an `avoid` circle that scored you for standing in one — the
+      // exact inverse of the mechanic, and the same defect Caustic Globule had.
+      // Sweeping droplets is the assigned job; the failure is a droplet nobody
+      // reached, and the tactic file is explicit that the eruption is 300yd
+      // raid-wide so "a per-player hit leaderboard would name the whole raid".
+      telegraphMs: 16000,            // "each erupts ... after 16s"
+      shape: { kind: 'circle', radius: 3 },
       origin: 'random',
-      rule: { type: 'avoid' },
-      damage: 0.12,                  // the scatter is a scratch; the fuse is not
-      spawns: { defId: 'noxious' },
+      rule: { type: 'collect', count: 4 },
+      // The eruption itself is Noxious Blast (1284452 / 1284451), 300yd
+      // raid-wide. It is not a separate mechanic here because the tactic file
+      // attributes it precisely: "each 1284452 event is one uncleared droplet".
       good: 'Assigned clearers sweep every droplet inside 16s, so Noxious Blast never fires.',
-      failText: 'Stood in the Toxic Droplets scatter',
-    },
-    {
-      id: 'noxious',
-      name: 'Noxious Blast',
-      spellId: 1284452,
-      lethal: true,
-      from: 'breath',
-      roles: ['tank', 'dps', 'healer'],
-      telegraphMs: 16000,            // "each erupts into Noxious Blast after 16s"
-      shape: { kind: 'circle', radius: 10 },
-      origin: 'random',              // always placed on its parent droplet
-      rule: { type: 'avoid' },
-      // "top killer in the log". A long fuse sitting on the floor is the point:
-      // it makes the arena progressively smaller and rewards reading the ground.
-      damage: 0.44,
-      good: 'Assigned clearers sweep every droplet inside 16s, so Noxious Blast never fires.',
-      failText: 'Caught by a Noxious Blast eruption',
+      failText: 'A droplet went unswept — Noxious Blast erupted on the raid',
     },
     {
       id: 'livingvenom',

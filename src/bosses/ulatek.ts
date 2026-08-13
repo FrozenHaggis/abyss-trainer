@@ -104,6 +104,7 @@ export const ulatek: BossDef = {
   // The kick fight. Three of the raid's four Heroic add-kicks live here, and
   // "the adds set the clock". Malice is the highest-value kick in the fight.
   addEverySec: 20,
+  maxAdds: 8,
   adds: [
     {
       id: 'warden', name: 'Doomscale Warden', npcId: 0, spellId: 1290779,

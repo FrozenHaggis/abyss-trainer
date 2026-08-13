@@ -65,6 +65,7 @@ export const sentinels: BossDef = {
   // No kick exists on this fight: no guide lists Contaminate as interruptible
   // and the log recorded zero interrupts. Cast count proxies add kill speed.
   addEverySec: 30,
+  maxAdds: 4,
   adds: [
     {
       id: 'coagulation_add', name: 'Venom Coagulation', npcId: 260766, spellId: 1284257,

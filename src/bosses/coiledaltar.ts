@@ -57,6 +57,7 @@ export const coiledaltar: BossDef = {
   // blows, more than everything else in the fight combined — while the Soulcoiler
   // must be kicked and the Fragments must be body-blocked.
   addEverySec: 22,
+  maxAdds: 8,
   adds: [
     {
       id: 'orbadd', name: 'Coalesced Venom', npcId: 268042, spellId: 1282408,
@@ -177,7 +178,7 @@ export const coiledaltar: BossDef = {
       origin: 'random',
       rule: { type: 'avoid' },
       damage: 0.15,                    // per second while stood in it
-      lingerMs: 24000,
+      lingerMs: 45000,
       // "189 applications and 12 killing blows on Heroic" — the quiet killer,
       // and the tactic file's target is the shortest "Good:" line in the raid.
       good: 'Zero uptime.',

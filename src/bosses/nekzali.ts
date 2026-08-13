@@ -49,6 +49,7 @@ export const nekzali: BossDef = {
   // Shadow, a permanent stacking DoT, and 5 energy to Nek'zali. The shield is
   // the lesson — while Gravebound Advance holds, the add cannot die at all.
   addEverySec: 26,
+  maxAdds: 6,
   adds: [
     {
       id: 'amani', name: 'Restless Amani', npcId: 261509, spellId: 1287533,

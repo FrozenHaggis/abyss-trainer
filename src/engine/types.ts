@@ -243,6 +243,15 @@ export interface BossDef {
   /** Seconds between add waves. Omit when the boss has no adds. */
   addEverySec?: number
   /**
+   * How many adds may be alive at once before waves stop arriving.
+   *
+   * This is the intensity dial. A low cap makes a fight readable; a high one
+   * lets adds genuinely swamp the raid, which is the point on Ula'tek — "the
+   * adds set the clock" — and on the Coiled Altar, where orbs accumulate until
+   * somebody detonates one. Defaults to 5.
+   */
+  maxAdds?: number
+  /**
    * Recurrence intervals are NOT in the source data, so the fight is driven off
    * an energy bar — which is how several of these bosses genuinely work. `loop`
    * cycles while energy fills; `atFullEnergy` fires and resets it.

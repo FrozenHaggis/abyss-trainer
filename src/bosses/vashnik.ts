@@ -51,6 +51,7 @@ export const vashnik: BossDef = {
   // or CC'd, only killed" — and splits on death, each split still walking for
   // the Malignant Cavity.
   addEverySec: 28,
+  maxAdds: 6,
   adds: [
     {
       id: 'shrouded', name: 'Shrouded Venom', npcId: 0, spellId: 1312366,

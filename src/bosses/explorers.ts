@@ -59,6 +59,7 @@ export const explorers: BossDef = {
   // sample. Deaths here are a crate-cleave failure, not a positioning one — the
   // junk piles up and has to be cleared.
   addEverySec: 24,
+  maxAdds: 7,
   adds: [
     {
       id: 'junk', name: 'Useless Junk', npcId: 272110, spellId: 1310027,

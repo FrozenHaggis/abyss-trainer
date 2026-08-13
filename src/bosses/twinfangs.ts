@@ -43,6 +43,7 @@ export const twinfangs: BossDef = {
   // damage per pulse — a soft enrage with no interrupt, so kill the add."
   // 12 killing blows on Heroic PTR. There is nothing to kick on this boss.
   addEverySec: 30,
+  maxAdds: 3,
   adds: [
     {
       id: 'mass', name: 'Bloodcurdled Mass', npcId: 268668, spellId: 1302695,
@@ -254,7 +255,7 @@ export const twinfangs: BossDef = {
       // teaching anything. The Sanguine Storm variant (1306925) is the same
       // hazard on a 6s timer and is folded into the glob dodge rather than
       // duplicated as its own def.
-      lingerMs: 30000,
+      lingerMs: 120000,
       good: 'Carriers spread, close together as it tightens, and dump pools at the room edges.',
       failText: 'Stood in Congealed Gore',
     },

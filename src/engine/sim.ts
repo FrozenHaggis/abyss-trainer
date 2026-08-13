@@ -430,9 +430,28 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       break
     }
     default: {
+      // Floor AoE lands where the raid is, not uniformly across the map.
+      //
+      // This used to scatter over the whole arena, and once the radii were
+      // measured from real logs — 58 yards on Vashnik against the 42 it was
+      // being played at — the floor area nearly doubled and a 5-yard circle
+      // stopped reaching anybody. You could stand still and never be touched,
+      // which is not a mechanic, it is scenery.
+      //
+      // Anchoring on a raider and jittering keeps it dodgeable (you always have
+      // somewhere to go) while guaranteeing it is somewhere that matters.
+      const live = w.allies.filter(a => a.alive)
+      const anchor = Math.random() < 0.4 || !live.length
+        ? w.player.pos
+        : live[Math.floor(Math.random() * live.length)].pos
+      const jitter = (w.boss.arenaRadius * 0.16) + 6
       const a = Math.random() * Math.PI * 2
-      const r = Math.random() * w.boss.arenaRadius * 0.85
-      pos = { x: Math.cos(a) * r, y: Math.sin(a) * r }
+      const r = Math.random() * jitter
+      pos = { x: anchor.x + Math.cos(a) * r, y: anchor.y + Math.sin(a) * r }
+      // Never outside the floor.
+      const len = lenOf(pos)
+      const rim = w.boss.arenaRadius * 0.92
+      if (len > rim) { pos.x = (pos.x / len) * rim; pos.y = (pos.y / len) * rim }
     }
   }
   if (at) pos = { ...at }
@@ -1121,7 +1140,10 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     if (!add.alive) continue
     const d = add.def
 
-    if (d.auraDps) w.raidHealth -= (d.auraDps / 100) * dt
+    // Aura pressure compounds with how many you have let live. One add up is a
+    // nuisance; four is the raid drowning — that escalation is what "the adds
+    // set the clock" means, and a flat per-add drain never conveyed it.
+    if (d.auraDps) w.raidHealth -= (d.auraDps / 100) * dt * (1 + 0.35 * (w.adds.length - 1))
 
     if (d.job === 'intercept' && d.marchSpeed) {
       // Walks to the centre. Standing in its path stops it; killing it is not
@@ -1185,7 +1207,7 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // Never more than a handful on the field. A wave landing on top of a wave
     // you have not cleared is a wipe you cannot play out of, and it teaches
     // nothing except that the trainer is unfair.
-    if (w.addTimerMs >= every && w.adds.length < MAX_CONCURRENT_ADDS) {
+    if (w.addTimerMs >= every && w.adds.length < (w.boss.maxAdds ?? MAX_CONCURRENT_ADDS)) {
       w.addTimerMs = 0
       const list = w.boss.adds
       spawnAdds(w, list[w.addWave % list.length])

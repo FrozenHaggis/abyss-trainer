@@ -116,7 +116,7 @@ export const sszorak: BossDef = {
       origin: 'random',
       rule: { type: 'avoid' },
       damage: 0.16,                   // per second while stood in it
-      lingerMs: 22000,
+      lingerMs: 34000,
       // "the most-applied debuff on PTR (838x), and its amp is the upstream
       // cause of most of the death report."
       good: 'Leave the acid pools alone and re-stack on clean floor.',
@@ -145,7 +145,7 @@ export const sszorak: BossDef = {
       origin: 'random',
       rule: { type: 'avoid' },
       damage: 0.32,
-      lingerMs: 30000,
+      lingerMs: 40000,
       popsOnContact: true,          // "pops on contact" — one hit, then gone
       good: 'Cysts are left alone to expire.',
       failText: 'Popped a Viscous Cyst — 30% slow in the wind',

@@ -81,6 +81,7 @@ export const nekzali: BossDef = {
       id: 'flame',
       name: 'Slithering Flame',
       spellId: 1294933,
+      lethal: true,
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 8000,               // "an 8s Fire DoT detonating as Cremation"
       shape: { kind: 'circle', radius: 6 },

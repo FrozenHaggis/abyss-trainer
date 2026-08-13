@@ -37,6 +37,10 @@ export const twinfangs: BossDef = {
   realName: 'The Twin Fangs',
   blurb: 'Nothing to kick, nothing to dispel. Venom never washes off — the soaks are the only relief.',
   arenaRadius: 44,
+  entities: [
+    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -19, y: 0 }, tankedApart: true },
+    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 19, y: 0 }, tankedApart: true },
+  ],
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,            // ~45s to the Vile Flood window, so three per pull
@@ -64,6 +68,7 @@ export const twinfangs: BossDef = {
       id: 'venom',
       name: 'Eternal Venom',
       spellId: 1290480,
+      from: 'vexhul',
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -80,6 +85,7 @@ export const twinfangs: BossDef = {
       id: 'deluge',
       name: 'Caustic Deluge',
       spellId: 1289994,
+      from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       // "1s cast into a 5s tank channel, ejecting three 4-yard splashes" — the
       // splash is the avoidable half, so the telegraph is the eject, not the cast.
@@ -99,6 +105,8 @@ export const twinfangs: BossDef = {
       id: 'globule',
       name: 'Caustic Globule',
       spellId: 1290338,
+      lethal: true,
+      from: 'vexhul',
       // Tanks are welded to their serpent; the file names "low-stack players" as
       // the soakers, and the engine's ally AI never sends a tank to a soak.
       roles: ['dps', 'healer'],
@@ -119,6 +127,7 @@ export const twinfangs: BossDef = {
       id: 'envenomed',
       name: 'Envenomed',
       spellId: 1310360,
+      from: 'vexhul',
       roles: ['tank'],
       telegraphMs: 1500,
       origin: 'boss',
@@ -138,6 +147,7 @@ export const twinfangs: BossDef = {
       id: 'spit',
       name: 'Corrosive Spit',
       spellId: 1291478,
+      from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,             // "A 5s marker lands on a player"
       shape: { kind: 'line', length: 46, width: 7 },
@@ -156,6 +166,7 @@ export const twinfangs: BossDef = {
       id: 'depths',
       name: 'Stir the Depths',
       spellId: 1292807,
+      from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 6000,             // "6s channel ... while waves run down five lanes"
       shape: { kind: 'line', length: 70, width: 11 },
@@ -174,6 +185,8 @@ export const twinfangs: BossDef = {
       id: 'feast',
       name: 'Ravenous Feast',
       spellId: 1290662,
+      lethal: true,
+      from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4250,             // "4.25s cast"
       shape: { kind: 'circle', radius: 14 },   // "splits damage among players within 14 yards"
@@ -190,6 +203,7 @@ export const twinfangs: BossDef = {
       id: 'ichor',
       name: 'Coiling Ichor',
       spellId: 1290814,
+      from: 'ithraz',
       // "Carriers are chosen, never at fault" — but a tank running 26 yards out
       // drops their serpent, so carriers come from the rest of the raid.
       roles: ['dps', 'healer'],
@@ -208,6 +222,7 @@ export const twinfangs: BossDef = {
       id: 'gore',
       name: 'Congealed Gore',
       spellId: 1292552,
+      from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                // spawned already active
       shape: { kind: 'circle', radius: 6 },
@@ -228,6 +243,7 @@ export const twinfangs: BossDef = {
       id: 'storm',
       name: 'Sanguine Storm',
       spellId: 1306876,
+      from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2200,
       shape: { kind: 'circle', radius: 4 },    // "Glob impacts within 4 yards, dodgeable"
@@ -241,6 +257,7 @@ export const twinfangs: BossDef = {
       id: 'stonebreaker',
       name: 'Stone Breaker',
       spellId: 1288538,
+      from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       // "1.5s cast ... knocks players away, then three slam swirlies." The cast
       // is 1.5s; the telegraph is stretched to cover the knock windup, because a
@@ -260,6 +277,7 @@ export const twinfangs: BossDef = {
       id: 'flood',
       name: 'Vile Flood',
       spellId: 1294605,
+      from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,             // "4s cast into a 14s rotating torrent"
       // A cone anchored on the boss: the engine keeps a boss-origin cone locked

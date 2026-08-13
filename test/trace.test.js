@@ -39,11 +39,41 @@ const present = Object.entries(BOSS_DIRS).filter(([key]) =>
 /** Pull the MechanicDef literals out of a boss .ts without a TS toolchain. */
 function readBoss(key) {
   const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+  // Parse from `mechanics:` onward only. The `entities:` block also carries
+  // `id:` fields, and without this bound the first entity was picked up as a
+  // mechanic and swallowed a real one — a parser that silently drops mechanics
+  // is exactly what these tests exist to prevent.
+  const body = src.slice(Math.max(0, src.indexOf('mechanics: [')))
   const mechanics = []
-  const re = /id:\s*'([^']+)'[\s\S]*?spellId:\s*(\d+)[\s\S]*?rule:\s*\{\s*type:\s*'([^']+)'/g
+  const re = /id:\s*'([^']+)',\s*\n\s*name:[\s\S]*?spellId:\s*(\d+)[\s\S]*?rule:\s*\{\s*type:\s*'([^']+)'/g
   let m
-  while ((m = re.exec(src))) mechanics.push({ id: m[1], spellId: Number(m[2]), rule: m[3] })
+  while ((m = re.exec(body))) {
+    const from = /from:\s*'([^']+)'/.exec(m[0])
+    mechanics.push({ id: m[1], spellId: Number(m[2]), rule: m[3], from: from?.[1] ?? null })
+  }
   return { src, mechanics }
+}
+
+/** The entities a boss file declares, if any. */
+function readEntities(key) {
+  const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+  const block = src.match(/entities:\s*\[([\s\S]*?)\n {2}\]/)
+  if (!block) return []
+  const out = []
+  for (const m of block[1].matchAll(/id:\s*'([^']+)',\s*name:\s*"([^"]+)",\s*npcId:\s*(\d+)/g)) {
+    out.push({ id: m[1], name: m[2], npcId: Number(m[3]) })
+  }
+  return out
+}
+
+/** spellId -> owning entity NAME, straight from abilities.json. */
+function spellOwners(bossKey) {
+  const raw = JSON.parse(readFileSync(join(ABILITIES, `${bossKey}.json`), 'utf8'))
+  const owners = new Map()
+  for (const b of raw.bosses ?? []) {
+    for (const s of b.spells ?? []) if (!owners.has(s.spellId)) owners.set(s.spellId, b.name)
+  }
+  return owners
 }
 
 function realSpells(bossKey) {
@@ -98,6 +128,72 @@ for (const [key, dir] of present) {
     }
   })
 
+  test(`${key}: declared entities are real NPCs from abilities.json`, () => {
+    const ents = readEntities(key)
+    if (!ents.length) return          // single-boss fight, nothing to check
+    const raw = JSON.parse(readFileSync(join(ABILITIES, `${dir}.json`), 'utf8'))
+    const real = new Map((raw.bosses ?? []).map(b => [b.name, b.npcId]))
+    assert.equal(ents.length, real.size,
+      `declares ${ents.length} entities but abilities.json lists ${real.size}`)
+    for (const e of ents) {
+      assert.ok(real.has(e.name), `entity "${e.name}" is not a boss in ${dir}/abilities.json`)
+      assert.equal(e.npcId, real.get(e.name),
+        `entity "${e.name}" has npcId ${e.npcId}, but abilities.json says ${real.get(e.name)}`)
+    }
+  })
+
+  test(`${key}: each mechanic is cast by the entity that really owns it`, () => {
+    const ents = readEntities(key)
+    if (!ents.length) return
+    const byName = new Map(ents.map(e => [e.name, e.id]))
+    const ids = new Set(ents.map(e => e.id))
+    const owners = spellOwners(dir)
+    for (const m of readBoss(key).mechanics) {
+      assert.ok(m.from, `${m.id} has no 'from' on a multi-entity fight`)
+      assert.ok(ids.has(m.from), `${m.id} is cast by '${m.from}', which is not a declared entity`)
+      // Where abilities.json names the caster, the file must agree with it.
+      // Ownership is derived from the data, never chosen — this is the check
+      // that keeps it that way.
+      const owner = owners.get(m.spellId)
+      if (owner) {
+        assert.equal(m.from, byName.get(owner),
+          `${m.id} is tagged from '${m.from}' but abilities.json says ${owner} casts it`)
+      }
+    }
+  })
+
+  test(`${key}: the tank mechanic belongs to the primary entity`, () => {
+    const ents = readEntities(key)
+    if (!ents.length) return
+    // The player's tank holds entity 0, so a tankSwap or faceAway owned by any
+    // other entity would be unplayable — you would be told to swap something
+    // you are not holding.
+    for (const m of readBoss(key).mechanics) {
+      if (m.rule !== 'tankSwap' && m.rule !== 'faceAway') continue
+      assert.equal(m.from, ents[0].id,
+        `${m.id} is a ${m.rule} owned by '${m.from}', but the player tanks '${ents[0].id}'`)
+    }
+  })
+
+  test(`${key}: lethality is derived from the ability data, not chosen`, () => {
+    const byId = new Map(realSpells(dir).map(s => [s.spellId, s]))
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const body = src.slice(Math.max(0, src.indexOf('mechanics: [')))
+    for (const b of body.split(/\n {4}\{\n {6}id:/).slice(1)) {
+      const sid = /spellId:\s*(\d+)/.exec(b)
+      const rule = /rule:\s*\{\s*type:\s*'([^']+)'/.exec(b)
+      if (!sid || !rule) continue
+      const deadly = byId.get(Number(sid[1]))?.category === 'Deadly'
+      const marked = /\blethal:\s*true/.test(b)
+      // raidDamage is a healing check and must never carry a failure semantic,
+      // so a Deadly one stays unmarked on purpose.
+      const shouldMark = deadly && rule[1] !== 'raidDamage'
+      assert.equal(marked, shouldMark,
+        `spell ${sid[1]} is category=${byId.get(Number(sid[1]))?.category} rule=${rule[1]}` +
+        ` but lethal is ${marked} — lethality must match abilities.json`)
+    }
+  })
+
   test(`${key}: every referenced mechanic id resolves`, () => {
     const { src, mechanics } = readBoss(key)
     const ids = new Set(mechanics.map(m => m.id))
@@ -146,6 +242,28 @@ test('every avoid mechanic is actually escapable', () => {
         `${key}/${id}: lands on you with radius ${r}yd but only ${tele}s to clear it — "MOVE OUT" is impossible advice`)
     }
   }
+})
+
+// Lethality raises the stakes on every "is this actually fair?" question, so
+// the two ways it could become unfair are pinned down here.
+test('missing a soak never kills the player outright', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'beInside':")
+  assert.ok(i > 0, "sim.ts no longer handles 'beInside'")
+  const body = sim.slice(i, i + sim.slice(i).indexOf('break'))
+  assert.ok(!body.includes('killPlayer'),
+    'a missed soak kills the player — an unsoaked hit lands on the raid, and ' +
+    'blaming one person for a collective miss is the defect this project keeps refixing')
+})
+
+test('a contact hazard cannot kill on the frame it spawns', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'avoid':")
+  assert.ok(i > 0, "sim.ts no longer handles 'avoid'")
+  const body = sim.slice(i, i + sim.slice(i).indexOf('break'))
+  assert.ok(/inside\s*&&\s*!def\.popsOnContact/.test(body),
+    'avoid resolves without excluding contact hazards — a Deadly orb with a 1ms ' +
+    'telegraph can then spawn on top of you and kill you with no reaction window')
 })
 
 test('avoid frontals do not track the player', () => {

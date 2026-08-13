@@ -29,6 +29,9 @@ export default function App() {
     setScreen(sc => sc.s === 'play' ? { s: 'done', boss: sc.boss, role: sc.role, result } : sc)
   }, [])
 
+  /** Abandon the pull and go back to the picker. No debrief — you did not finish. */
+  const onQuit = useCallback(() => setScreen({ s: 'pick' }), [])
+
   if (screen.s === 'play') {
     return (
       <Arena
@@ -36,6 +39,7 @@ export default function App() {
         boss={screen.boss}
         role={screen.role}
         onEnd={onEnd}
+        onQuit={onQuit}
       />
     )
   }

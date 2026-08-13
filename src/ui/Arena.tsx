@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ability, BossDef, MechanicDef, Prompt, Role, RunResult } from '../engine/types'
-import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createWorld, step, upcoming } from '../engine/sim'
+import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createWorld, currentTank, step, upcoming } from '../engine/sim'
 import type { Input, World } from '../engine/sim'
 import { makeCamera, render } from '../engine/render'
 import RoleIcon from './RoleIcon'
@@ -28,8 +28,8 @@ interface HudSample {
   next: { name: string; inSec: number }[]
 }
 
-export default function Arena({ boss, role, onEnd }: {
-  boss: BossDef; role: Role; onEnd: (r: RunResult) => void
+export default function Arena({ boss, role, onEnd, onQuit }: {
+  boss: BossDef; role: Role; onEnd: (r: RunResult) => void; onQuit: () => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const worldRef = useRef<World | null>(null)
@@ -51,12 +51,15 @@ export default function Arena({ boss, role, onEnd }: {
     startMusic()
     initVoice()
 
-    const input: Input = { up: false, down: false, left: false, right: false, pressed: [] }
+    const input: Input = {
+      up: false, down: false, left: false, right: false, pressed: [],
+      aim: null, firing: false,
+    }
     const held = new Set<string>()
 
     function onKey(e: KeyboardEvent, down: boolean) {
       const k = e.key.toLowerCase()
-      if ('wasd'.includes(k) || k.startsWith('arrow')) e.preventDefault()
+      if ('wasd'.includes(k) || k.startsWith('arrow') || k === ' ') e.preventDefault()
       if (down) held.add(k); else held.delete(k)
       if (down && k in KEY_ABILITY) {
         const ab = abilities[KEY_ABILITY[k]]
@@ -67,6 +70,20 @@ export default function Arena({ boss, role, onEnd }: {
     const ku = (e: KeyboardEvent) => onKey(e, false)
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup', ku)
+
+    // Aim with the mouse, hold to fire. Space fires too, straight at the nearest
+    // entity, so the fight is playable one-handed from the keyboard.
+    const toYards = (e: MouseEvent) => {
+      const r = canvas.getBoundingClientRect()
+      return { x: (e.clientX - r.left - cam.cx) / cam.scale, y: (e.clientY - r.top - cam.cy) / cam.scale }
+    }
+    let mouseDown = false
+    const mm = (e: MouseEvent) => { input.aim = toYards(e) }
+    const md = (e: MouseEvent) => { input.aim = toYards(e); mouseDown = true }
+    const mu = () => { mouseDown = false }
+    canvas.addEventListener('mousemove', mm)
+    canvas.addEventListener('mousedown', md)
+    window.addEventListener('mouseup', mu)
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     let cam = makeCamera(1, 1, boss.arenaRadius)
@@ -107,6 +124,9 @@ export default function Arena({ boss, role, onEnd }: {
         input.down = held.has('s') || held.has('arrowdown')
         input.left = held.has('a') || held.has('arrowleft')
         input.right = held.has('d') || held.has('arrowright')
+        // Space fires at the nearest entity — keyboard-only players get to fight
+        // the boss, not the controls.
+        input.firing = mouseDown || held.has(' ')
         step(world, input, TICK_MS)
         input.pressed.length = 0
         acc -= TICK_MS
@@ -145,10 +165,10 @@ export default function Arena({ boss, role, onEnd }: {
           elapsed: world.elapsedMs / 1000,
           cooldowns: { ...world.player.cooldowns },
           alive: world.player.alive,
-          stacks: world.bossTargetId === 0
-            ? world.playerStacks
-            : (world.allies.find(a => a.id === world.bossTargetId)?.stacks ?? 0),
-          tanking: world.bossTargetId === 0,
+          // Stacks on whoever holds the entity you would be swapping with —
+          // the primary, which is the one the tankSwap mechanic belongs to.
+          stacks: currentTank(world).stacks,
+          tanking: world.bosses.some(b => b.targetId === 0),
           raidAlive: world.allies.filter(a => a.alive).length,
           prompt: world.prompt,
           next: upcoming(world, 3),
@@ -163,6 +183,9 @@ export default function Arena({ boss, role, onEnd }: {
       ro.disconnect()
       window.removeEventListener('keydown', kd)
       window.removeEventListener('keyup', ku)
+      canvas.removeEventListener('mousemove', mm)
+      canvas.removeEventListener('mousedown', md)
+      window.removeEventListener('mouseup', mu)
       stopMusic()
       stopVoice()
     }
@@ -173,6 +196,14 @@ export default function Arena({ boss, role, onEnd }: {
     const t = window.setTimeout(() => setToast(null), 2600)
     return () => window.clearTimeout(t)
   }, [toast])
+
+  // Esc abandons the pull. Its own effect so changing the handler cannot tear
+  // down and restart the simulation.
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onQuit() }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [onQuit])
 
   // Teaching callout: shown once, the first time a mechanic appears.
   useEffect(() => {
@@ -186,6 +217,11 @@ export default function Arena({ boss, role, onEnd }: {
   return (
     <div className="arena">
       <canvas ref={canvasRef} className="arena-canvas" />
+
+      {/* Bail out of a pull without having to die or wait out the enrage. */}
+      <button className="arena-quit glass-btn" onClick={onQuit} title="Back to boss select (Esc)">
+        ← Bosses
+      </button>
 
       <div className="hud hud-top">
         <div className="boss-block">

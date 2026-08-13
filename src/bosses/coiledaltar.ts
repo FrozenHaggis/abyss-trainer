@@ -50,6 +50,10 @@ export const coiledaltar: BossDef = {
   realName: 'The Coiled Altar',
   blurb: 'Venom Rupture is more killing blows than everything else combined. Arena management, not reflexes.',
   arenaRadius: 44,
+  entities: [
+    { id: 'zuljan', name: "Zul'jan", npcId: 257911, start: { x: -10, y: 0 } },
+    { id: 'malacrass', name: "Hex Lord Malacrass", npcId: 259854, start: { x: 13, y: -7 } },
+  ],
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,          // ~45s per Eternal Nightfall — three kicks a pull
@@ -72,6 +76,7 @@ export const coiledaltar: BossDef = {
       id: 'fangs',
       name: 'Fangs of the Coiled Altar',
       spellId: 1282512,
+      from: 'zuljan',
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -86,6 +91,7 @@ export const coiledaltar: BossDef = {
       id: 'twinfang',
       name: 'Twinfang Toxin',
       spellId: 1300322,
+      from: 'zuljan',
       roles: ['tank'],
       telegraphMs: 1500,
       origin: 'boss',
@@ -101,6 +107,7 @@ export const coiledaltar: BossDef = {
       id: 'sever',
       name: 'Sever',
       spellId: 1299684,
+      from: 'zuljan',
       roles: ['tank'],
       telegraphMs: 3000,
       shape: { kind: 'cone', radius: 32, arcDeg: 75 },
@@ -117,6 +124,7 @@ export const coiledaltar: BossDef = {
       id: 'deluge',
       name: 'Toxic Deluge',
       spellId: 1300137,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2500,
       shape: { kind: 'circle', radius: 4 },   // "hitting within 4 yards"
@@ -134,6 +142,7 @@ export const coiledaltar: BossDef = {
       id: 'noxious',
       name: 'Noxious Ground',
       spellId: 1283290,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                  // spawned already active under the chunk
       shape: { kind: 'circle', radius: 7 },
@@ -150,6 +159,7 @@ export const coiledaltar: BossDef = {
       id: 'volatile',
       name: 'Volatile Venom',
       spellId: 1282419,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,               // "pulsing damage within 5 yards for 5s"
       shape: { kind: 'circle', radius: 5 },
@@ -167,6 +177,8 @@ export const coiledaltar: BossDef = {
       id: 'orb',
       name: 'Coalesced Venom',
       spellId: 1282408,
+      lethal: true,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,
       shape: { kind: 'circle', radius: 5 },
@@ -186,6 +198,7 @@ export const coiledaltar: BossDef = {
       id: 'guillotine',
       name: 'Guillotine',
       spellId: 1283594,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 9 },   // "splitting damage within 9 yards"
@@ -203,6 +216,8 @@ export const coiledaltar: BossDef = {
       id: 'widowskiss',
       name: "Widow's Kiss",
       spellId: 1283623,
+      lethal: true,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3500,
       // The axe splits the arena into two punished bands — Widow's Kiss inside
@@ -225,6 +240,7 @@ export const coiledaltar: BossDef = {
       id: 'axegrinder',
       name: 'Axegrinder',
       spellId: 1285017,
+      from: 'zuljan',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5200,               // long enough for the axe to cross the floor
       shape: { kind: 'circle', radius: 5 },
@@ -239,6 +255,7 @@ export const coiledaltar: BossDef = {
       id: 'venomfang',
       name: 'Venomfang',
       spellId: 1306906,
+      from: 'zuljan',
       roles: ['healer'],
       telegraphMs: 6000,
       shape: { kind: 'circle', radius: 4 },
@@ -258,6 +275,7 @@ export const coiledaltar: BossDef = {
       id: 'nightfall',
       name: 'Eternal Nightfall',
       spellId: 1286918,
+      from: 'malacrass',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 6000,
       // Raid-wide and lethal, so the shape is not a place to stand — it is the

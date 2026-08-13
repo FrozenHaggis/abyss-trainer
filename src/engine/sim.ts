@@ -1,5 +1,5 @@
 import type {
-  Ability, Ally, BossDef, FailureRow, Instance, MechanicDef,
+  Ability, Ally, BossDef, BossEntityDef, FailureRow, Instance, MechanicDef,
   PlayerState, Prompt, Role, RunResult, Vec,
 } from './types'
 
@@ -16,10 +16,45 @@ const MELEE_RANGE = 5
 /** Range at which you can damage the boss. Generous — dodging is the game. */
 const ATTACK_RANGE = 32
 const BURST_WINDOW_MS = 10000
+/** Shot travel speed in yards/sec — fast enough to feel instant at melee range. */
+const SHOT_SPEED = 62
+const SHOTS_PER_SEC = 5
+const FIRE_INTERVAL_MS = 1000 / SHOTS_PER_SEC
+/** How close a shot must pass to an entity to count. Generous: aiming is not the skill being taught. */
+const BOSS_HIT_RADIUS = 4.5
 
 export interface Input {
   up: boolean; down: boolean; left: boolean; right: boolean
   pressed: Ability[] // abilities pressed since the last tick
+  /** Where the player is aiming, in yards. null = not aiming. */
+  aim: Vec | null
+  /** Trigger held. */
+  firing: boolean
+}
+
+/** A shot in flight. The boss only dies from these. */
+export interface Shot {
+  pos: Vec
+  vel: Vec
+  /** ms of life left, so a miss expires instead of flying forever. */
+  life: number
+}
+
+/**
+ * A boss entity on the field. Most fights have one; four in this tier have more.
+ * Position is fixed at its station — the boss does not chase, the tank comes to
+ * it — so what changes each tick is its facing and who holds it.
+ */
+export interface BossUnit {
+  def: BossEntityDef
+  pos: Vec
+  angle: number
+  /**
+   * Ally id holding this entity, 0 for the player, or -1 for an entity nobody
+   * is tanking (a stationary caster). Only the primary and anything flagged
+   * `tankedApart` is tanked — this raid has exactly two tanks.
+   */
+  targetId: number
 }
 
 export interface World {
@@ -27,15 +62,19 @@ export interface World {
   player: PlayerState
   /** The rest of the raid. Simulated so group mechanics have bodies. */
   allies: Ally[]
-  /** Ally id the boss is currently tanking, or 0 when it is on the player. */
-  bossTargetId: number
+  /** Every entity in the encounter, primary first. */
+  bosses: BossUnit[]
   /** How long the current tank has been over the swap threshold, in ms. */
   overStackMs: number
   alliesLost: number
   instances: Instance[]
-  /** Boss position and facing. Facing drives `faceAway`. */
-  bossPos: Vec
-  bossAngle: number
+  /** Shots in flight. */
+  shots: Shot[]
+  /** ms until the weapon can fire again. */
+  fireCooldown: number
+  /** Shots fired and shots that connected, for the debrief's accuracy line. */
+  shotsFired: number
+  shotsHit: number
   bossEnergy: number // 0..100
   bossHp: number     // 0..1 — you win by emptying it
   killed: boolean
@@ -97,19 +136,83 @@ function makeAllies(playerRole: Role): Ally[] {
       id: i + 1, role: r,
       pos: { x: 0, y: 0 }, want: { x: 0, y: 0 },
       health: 1, alive: true, stacks: 0, debuff: null, debuffMs: 0,
+      // Tanks are on the boss from the pull; everyone else walks on when needed.
+      presence: r === 'tank' ? 1 : 0,
     })
   })
   return out
 }
 
+/**
+ * Build the encounter's entities. A fight that declares none gets a single
+ * unnamed one at the centre, which is exactly how every boss behaved before
+ * multi-boss support existed — so single-boss fights are untouched.
+ */
+function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
+  const defs: BossEntityDef[] = boss.entities?.length
+    ? boss.entities
+    : [{ id: boss.key, name: boss.name, npcId: 0, start: { x: 0, y: 0 } }]
+
+  // Two tanks exist, so at most two entities can be held. The primary opens on
+  // the co-tank; a `tankedApart` entity takes the other tank.
+  const tanks = allies.filter(a => a.role === 'tank').map(a => a.id)
+  let nextTank = 0
+  return defs.map((d, i) => {
+    const wants = i === 0 || d.tankedApart
+    return {
+      def: d,
+      pos: { ...d.start },
+      angle: -Math.PI / 2,
+      targetId: wants && nextTank < tanks.length ? tanks[nextTank++] : -1,
+    }
+  })
+}
+
+/** The entity the player's tank holds, and the anchor for anything untagged. */
+export function primaryBoss(w: World): BossUnit {
+  return w.bosses[0]
+}
+
+/** The entity that casts a given mechanic, falling back to the primary. */
+export function bossUnitFor(w: World, from?: string): BossUnit {
+  if (!from) return w.bosses[0]
+  return w.bosses.find(b => b.def.id === from) ?? w.bosses[0]
+}
+
+/** Nearest entity to a point — what "in range" and "in melee" mean with several. */
+export function nearestBoss(w: World, p: Vec): BossUnit {
+  let best = w.bosses[0]
+  let bd = Infinity
+  for (const b of w.bosses) {
+    const d = dist(b.pos, p)
+    if (d < bd) { bd = d; best = b }
+  }
+  return best
+}
+
+/**
+ * Where the bulk of the raid is standing — what a tank frontal must not sweep.
+ *
+ * Previously this was hard-coded to the arena centre, which is only true when
+ * the single boss is at the centre. With entities held apart the raid stacks
+ * between them, so the honest reference is where the raid actually is.
+ */
+function raidAnchor(w: World): Vec {
+  let x = 0, y = 0, n = 0
+  for (const a of w.allies) {
+    if (!a.alive) continue
+    x += a.pos.x; y += a.pos.y; n++
+  }
+  return n ? { x: x / n, y: y / n } : { x: 0, y: 0 }
+}
+
 export function createWorld(boss: BossDef, role: Role): World {
   const allies = makeAllies(role)
   // Boss opens on the co-tank, so a player tank's first job is to taunt it off.
-  const coTank = allies.find(a => a.role === 'tank')!
   return {
     boss,
     allies,
-    bossTargetId: coTank.id,
+    bosses: makeBosses(boss, allies),
     overStackMs: 0,
     alliesLost: 0,
     player: {
@@ -117,8 +220,10 @@ export function createWorld(boss: BossDef, role: Role): World {
       carrying: {}, cooldowns: {}, aloft: 0,
     },
     instances: [],
-    bossPos: { x: 0, y: 0 },
-    bossAngle: -Math.PI / 2,
+    shots: [],
+    fireCooldown: 0,
+    shotsFired: 0,
+    shotsHit: 0,
     bossEnergy: 0,
     bossHp: 1,
     killed: false,
@@ -141,13 +246,13 @@ export function createWorld(boss: BossDef, role: Role): World {
   }
 }
 
-/** Where the boss currently is, in world terms. */
-export function currentTank(w: World): { pos: Vec; stacks: number; isPlayer: boolean } {
-  if (w.bossTargetId === 0) return { pos: w.player.pos, stacks: w.playerStacks, isPlayer: true }
-  const a = w.allies.find(x => x.id === w.bossTargetId)
+/** Whoever is holding an entity — the primary unless told otherwise. */
+export function currentTank(w: World, unit = w.bosses[0]): { pos: Vec; stacks: number; isPlayer: boolean } {
+  if (unit.targetId === 0) return { pos: w.player.pos, stacks: w.playerStacks, isPlayer: true }
+  const a = w.allies.find(x => x.id === unit.targetId)
   return a
     ? { pos: a.pos, stacks: a.stacks, isPlayer: false }
-    : { pos: w.bossPos, stacks: 0, isPlayer: false }
+    : { pos: unit.pos, stacks: 0, isPlayer: false }
 }
 
 const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y)
@@ -204,6 +309,20 @@ function recordFailure(w: World, def: MechanicDef) {
 
 const MAX_SINGLE_HIT = 0.55
 
+/**
+ * A mechanic that kills outright. No cap, no mitigation, no healing through it —
+ * that IS the lesson. These are the `category: "Deadly"` abilities, and the
+ * whole point of separating them from chip damage is that you cannot heal your
+ * way out of standing in one.
+ */
+function killPlayer(w: World, cause: string) {
+  if (!w.player.alive) return
+  w.player.alive = false
+  w.player.health = 0
+  w.deathCause = cause
+  w.shake = 1
+}
+
 function hurt(w: World, amount: number, cause: string) {
   // Cap any one hit. You should be able to eat a mechanic, see the failure, and
   // carry on — three mistakes in quick succession is what kills you, not one.
@@ -221,9 +340,12 @@ function hurt(w: World, amount: number, cause: string) {
 }
 
 function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
+  // Whichever entity casts this. On a two-boss fight a frontal has to come out
+  // of the boss that actually casts it, or "get behind Ithraz" means nothing.
+  const src = bossUnitFor(w, def.from)
   let pos: Vec
   switch (def.origin) {
-    case 'boss': pos = { ...w.bossPos }; break
+    case 'boss': pos = { ...src.pos }; break
     case 'player': pos = { ...w.player.pos }; break
     case 'targeted': {
       // Mechanics that pick a raider pick YOU most of the time. This is a
@@ -263,6 +385,7 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
 
   const inst: Instance = {
     uid: w.nextUid++, def, pos, angle: ang,
+    fromId: src.def.id,
     timer: def.telegraphMs, resolved: false, answered: false,
     // Did this land on the player? Drives both the "it follows you" behaviour
     // and where its pool drops.
@@ -297,25 +420,38 @@ function resolveInstance(w: World, inst: Instance) {
 
   switch (def.rule.type) {
     case 'avoid':
-      if (inside) {
+      // A contact hazard's "resolve" is the moment it appears on the floor, not
+      // a hit landing. It sits there until something touches it, and the linger
+      // tick below is what punishes touching it.
+      //
+      // Without this, Coalesced Venom — a 1 ms telegraph, spawned at a random
+      // point, and Deadly — could materialise on top of you and kill you
+      // outright with no reaction window. That is not a mechanic, it is a coin
+      // flip, and it killed all three roles at the 90 second mark in playtests.
+      if (inside && !def.popsOnContact) {
         if (scored) recordFailure(w, def)
-        hurt(w, def.damage ?? 0.3, def.name)
+        // Deadly means deadly. Everything else is damage you get healed through.
+        if (def.lethal) killPlayer(w, def.name)
+        else hurt(w, def.damage ?? 0.3, def.name)
       }
       break
 
     case 'beInside':
       if (!inside) {
         if (scored) recordFailure(w, def)
-        // Missing a shared soak hurts the raid, not you.
-        w.raidHealth -= 0.12
+        // Missing a shared soak hurts the RAID, not you — even when the ability
+        // is Deadly. An unsoaked hit lands on the group; killing the player for
+        // being late to it would blame one person for a collective miss.
+        w.raidHealth -= def.lethal ? 0.3 : 0.12
       }
       break
 
     case 'faceAway': {
-      // Fails if the cone sweeps the arena centre, where the raid stands.
-      const toCentre = Math.atan2(-inst.pos.y, -inst.pos.x)
+      // Fails if the cone sweeps the raid.
+      const raid = raidAnchor(w)
+      const toRaid = Math.atan2(raid.y - inst.pos.y, raid.x - inst.pos.x)
       const arc = def.shape?.kind === 'cone' ? (def.shape.arcDeg * Math.PI) / 360 : 0.5
-      if (Math.abs(angleDelta(inst.angle, toCentre)) <= arc) {
+      if (Math.abs(angleDelta(inst.angle, toRaid)) <= arc) {
         if (scored) recordFailure(w, def)
         w.raidHealth -= 0.1
       }
@@ -335,7 +471,15 @@ function resolveInstance(w: World, inst: Instance) {
       const d = lenOf(w.player.pos)
       if (w.player.carrying[def.id] !== undefined && d < def.rule.minDistance) {
         if (scored) recordFailure(w, def)
-        w.raidHealth -= 0.1
+        // You detonated it on top of the raid. A Deadly one kills you where you
+        // stand and takes a chunk of the group with it — which is why running
+        // it out is the mechanic.
+        if (def.lethal) {
+          w.raidHealth -= 0.25
+          killPlayer(w, def.name)
+        } else {
+          w.raidHealth -= 0.1
+        }
       }
       delete w.player.carrying[def.id]
       break
@@ -363,15 +507,17 @@ function resolveInstance(w: World, inst: Instance) {
       }
       break
 
-    case 'tankSwap':
-      // Applies a stack to whoever is currently holding the boss. The failure
-      // is checked continuously in step(), not here.
-      if (w.bossTargetId === 0) w.playerStacks += 1
+    case 'tankSwap': {
+      // Applies a stack to whoever holds the entity that cast it. The failure is
+      // checked continuously in step(), not here.
+      const unit = bossUnitFor(w, def.from)
+      if (unit.targetId === 0) w.playerStacks += 1
       else {
-        const t = w.allies.find(a => a.id === w.bossTargetId)
+        const t = w.allies.find(a => a.id === unit.targetId)
         if (t) t.stacks += 1
       }
       break
+    }
 
     case 'raidDamage':
       // Never a per-player failure. Handled continuously in step().
@@ -487,6 +633,17 @@ function threatAt(inst: Instance, x: number, y: number): number {
 function allyThink(w: World) {
   const arena = w.boss.arenaRadius
 
+  // Where melee stands: the midpoint of everything being tanked. With one boss
+  // that is the boss. With Vexhul and Ithraz held apart it is the gap between
+  // them, which is exactly where the tactic file puts melee.
+  const tanked = w.bosses.filter(b => b.targetId >= 0)
+  const anchor: Vec = tanked.length
+    ? {
+        x: tanked.reduce((s, b) => s + b.pos.x, 0) / tanked.length,
+        y: tanked.reduce((s, b) => s + b.pos.y, 0) / tanked.length,
+      }
+    : { ...w.bosses[0].pos }
+
   // Soak slots. All but one are filled by allies; the last is the player's, so
   // a group mechanic is always personally consequential.
   const soaks: { inst: Instance; slots: number; taken: number }[] = []
@@ -494,8 +651,6 @@ function allyThink(w: World) {
     if (inst.resolved || inst.def.rule.type !== 'beInside') continue
     soaks.push({ inst, slots: Math.max(1, (inst.def.soakers ?? 4) - 1), taken: 0 })
   }
-
-  const offTankId = w.allies.find(a => a.role === 'tank' && a.id !== w.bossTargetId)?.id
 
   for (const a of w.allies) {
     if (!a.alive) continue
@@ -508,18 +663,22 @@ function allyThink(w: World) {
     const isMelee = a.role === 'tank' || a.id % 3 === 0
     const ringR = isMelee ? 9 : 21 + (a.id % 4) * 2.5
     const spread = (a.id / Math.max(1, w.allies.length)) * Math.PI * 2
-    a.want.x = w.bossPos.x + Math.cos(spread) * ringR
-    a.want.y = w.bossPos.y + Math.sin(spread) * ringR
+    a.want.x = anchor.x + Math.cos(spread) * ringR
+    a.want.y = anchor.y + Math.sin(spread) * ringR
 
-    // 2. Tanks. The one holding the boss plants itself so the cone stays put and
-    //    points away from the raid; the off-tank waits behind the boss, clear of
-    //    the frontal, ready to take the swap.
-    if (a.id === w.bossTargetId) {
-      a.want.x = w.bossPos.x + Math.cos(w.bossAngle) * 5
-      a.want.y = w.bossPos.y + Math.sin(w.bossAngle) * 5
-    } else if (a.id === offTankId) {
-      a.want.x = w.bossPos.x - Math.cos(w.bossAngle) * 7
-      a.want.y = w.bossPos.y - Math.sin(w.bossAngle) * 7
+    // 2. Tanks. A tank stands in front of whatever it is holding, so the frontal
+    //    stays put and points away from the raid. On a fight where two entities
+    //    are held apart that puts a tank at each — which is the mechanic. A tank
+    //    holding nothing waits behind the primary, clear of the frontal, ready
+    //    to take the swap.
+    const held = w.bosses.find(b => b.targetId === a.id)
+    if (held) {
+      a.want.x = held.pos.x + Math.cos(held.angle) * 5
+      a.want.y = held.pos.y + Math.sin(held.angle) * 5
+    } else if (a.role === 'tank') {
+      const p = w.bosses[0]
+      a.want.x = p.pos.x - Math.cos(p.angle) * 7
+      a.want.y = p.pos.y - Math.sin(p.angle) * 7
     }
 
     // 3. Soak, if a slot is going spare. Tanks stay on the boss.
@@ -655,8 +814,21 @@ function allyThink(w: World) {
 }
 
 function allyMove(w: World, dt: number) {
+  // The raid shows up for group work. A soak, a spread, a debuff to dispel —
+  // anything that needs other bodies brings them in; otherwise the floor stays
+  // clear so you can actually read your own telegraphs. Tanks never leave.
+  const groupWork = w.instances.some(i => !i.resolved && (
+    i.def.rule.type === 'beInside' ||
+    i.def.rule.type === 'carryOut' ||
+    (i.def.rule.type === 'press' && i.def.rule.ability === 'dispel')))
+
   for (const a of w.allies) {
-    if (!a.alive) continue
+    if (!a.alive) { a.presence = Math.max(0, a.presence - dt * 3); continue }
+    const wanted = a.role === 'tank' || groupWork || a.debuff ? 1 : 0
+    // Walk on briskly, drift off gently — a raid that blinks out mid-mechanic
+    // reads as a bug.
+    a.presence += Math.max(-dt * 1.1, Math.min(dt * 3.4, wanted - a.presence))
+    a.presence = Math.max(0, Math.min(1, a.presence))
     // Reaction time, staggered by id: a raid does not move as one object.
     // Deterministic rather than random so playtests stay reproducible.
     const lag = 0.06 + (a.id % 5) * 0.035
@@ -736,7 +908,8 @@ function computePrompt(w: World): Prompt | null {
         if (inside) consider({ verb: 'BRACE — KNOCKBACK', mechanic: def.name, urgency: t }, 4)
         break
       case 'faceAway':
-        if (w.player.role === 'tank' && w.bossTargetId === 0) {
+        // Only your problem when you are the one holding the thing casting it.
+        if (w.player.role === 'tank' && bossUnitFor(w, def.from).targetId === 0) {
           consider({ verb: 'POINT IT AWAY', mechanic: def.name, urgency: t }, 2)
         }
         break
@@ -747,13 +920,28 @@ function computePrompt(w: World): Prompt | null {
   return best
 }
 
+/**
+ * How many of the loop's mechanics are in play yet.
+ *
+ * Mechanics arrive one at a time: you meet one, get a few reps on it, and only
+ * then does the next join the rotation. Firing the whole loop from the first
+ * second is how a trainer turns into noise — you never find out which telegraph
+ * was the one that killed you.
+ */
+export function unlockedCount(w: World): number {
+  const every = w.boss.introEverySec ?? 14
+  const n = 1 + Math.floor(w.elapsedMs / 1000 / every)
+  return Math.max(1, Math.min(w.boss.loop.length, n))
+}
+
 /** The next few mechanics the loop will fire, for the anticipation strip. */
 export function upcoming(w: World, count = 3): { name: string; inSec: number }[] {
   const out: { name: string; inSec: number }[] = []
   const period = w.boss.loopIntervalSec * 1000
-  let untilNext = period - w.loopTimerMs
+  const untilNext = period - w.loopTimerMs
+  const live = unlockedCount(w)
   for (let i = 0; i < count; i++) {
-    const id = w.boss.loop[(w.loopIndex + i) % w.boss.loop.length]
+    const id = w.boss.loop[(w.loopIndex + i) % live]
     const def = w.boss.mechanics.find(m => m.id === id)
     if (def) out.push({ name: def.name, inSec: (untilNext + i * period) / 1000 })
   }
@@ -815,7 +1003,19 @@ export function step(w: World, input: Input, dtMs: number) {
       w.raidHealth = Math.min(1, w.raidHealth + 0.35)
       for (const a of w.allies) if (a.alive) a.health = Math.min(1, a.health + 0.4)
     }
-    if (ab === 'taunt') { w.bossTargetId = 0; w.overStackMs = 0 }
+    if (ab === 'taunt') {
+      // A taunt takes the nearest entity. Anything else you were holding goes
+      // back to a free tank — you have one target, same as in the game.
+      const u = nearestBoss(w, w.player.pos)
+      for (const b of w.bosses) {
+        if (b === u || b.targetId !== 0) continue
+        const free = w.allies.find(x =>
+          x.role === 'tank' && x.alive && !w.bosses.some(o => o.targetId === x.id))
+        b.targetId = free ? free.id : -1
+      }
+      u.targetId = 0
+      w.overStackMs = 0
+    }
     if (ab === 'dispel') {
       // Clear the nearest debuffed ally — the healer's actual job.
       let bestAlly: Ally | null = null
@@ -847,32 +1047,39 @@ export function step(w: World, input: Input, dtMs: number) {
   // two AI tanks swap between themselves and it is never scored against you.
   const swapDef = w.boss.mechanics.find(m => m.rule.type === 'tankSwap')
   if (swapDef && swapDef.rule.type === 'tankSwap') {
-    const tank = currentTank(w)
+    // The swap belongs to whichever entity casts it, not to "the boss".
+    const unit = bossUnitFor(w, swapDef.from)
+    const tank = currentTank(w, unit)
     const playerIsTank = w.player.role === 'tank'
+    const freeTank = () => w.allies.find(a =>
+      a.role === 'tank' && a.alive && a.id !== unit.targetId
+      && !w.bosses.some(b => b !== unit && b.targetId === a.id))
     if (tank.stacks >= swapDef.rule.maxStacks) {
       w.overStackMs += dtMs
       if (!playerIsTank) {
         if (w.overStackMs > 800) {
-          const other = w.allies.find(a => a.role === 'tank' && a.id !== w.bossTargetId && a.alive)
-          if (other) { w.bossTargetId = other.id; w.overStackMs = 0 }
+          const other = freeTank()
+          if (other) { unit.targetId = other.id; w.overStackMs = 0 }
         }
       } else if (w.overStackMs > SWAP_GRACE_MS) {
         recordFailure(w, swapDef)
         w.overStackMs = 0
         if (tank.isPlayer) hurt(w, 0.3, swapDef.name)
         // The co-tank covers for you so the pull carries on.
-        const other = w.allies.find(a => a.role === 'tank' && a.id !== w.bossTargetId && a.alive)
-        if (other) w.bossTargetId = other.id
-        else if (!tank.isPlayer) w.bossTargetId = 0
+        const other = freeTank()
+        if (other) unit.targetId = other.id
+        else if (!tank.isPlayer) unit.targetId = 0
       }
     } else {
       w.overStackMs = 0
     }
-    // Stacks fall off whoever is not holding the boss.
+    // Stacks fall off anyone not currently holding something.
     for (const a of w.allies) {
-      if (a.id !== w.bossTargetId && a.stacks > 0) a.stacks = Math.max(0, a.stacks - 0.35 * dt)
+      if (a.stacks > 0 && !w.bosses.some(b => b.targetId === a.id)) {
+        a.stacks = Math.max(0, a.stacks - 0.35 * dt)
+      }
     }
-    if (w.bossTargetId !== 0 && w.playerStacks > 0) {
+    if (!w.bosses.some(b => b.targetId === 0) && w.playerStacks > 0) {
       w.playerStacks = Math.max(0, w.playerStacks - 0.35 * dt)
     }
   }
@@ -894,17 +1101,20 @@ export function step(w: World, input: Input, dtMs: number) {
   // ── boss ──
   // Faces the player unless a tank is holding it: a tank who stays put keeps
   // the cone pointed away from centre, which is the whole `faceAway` game.
-  const tankPos = currentTank(w).pos
-  const toTank = Math.atan2(tankPos.y - w.bossPos.y, tankPos.x - w.bossPos.x)
-  const turn = angleDelta(w.bossAngle, toTank)
-  w.bossAngle += Math.max(-1.4 * dt, Math.min(1.4 * dt, turn))
+  for (const b of w.bosses) {
+    // An untanked entity — a stationary caster — faces the raid instead.
+    const face = b.targetId >= 0 ? currentTank(w, b).pos : raidAnchor(w)
+    const turn = angleDelta(b.angle, Math.atan2(face.y - b.pos.y, face.x - b.pos.x))
+    b.angle += Math.max(-1.4 * dt, Math.min(1.4 * dt, turn))
+  }
   w.bossEnergy = Math.min(100, w.bossEnergy + w.boss.energyPerSec * dt)
 
   // ── scheduler ──
   w.loopTimerMs += dtMs
   if (w.loopTimerMs >= w.boss.loopIntervalSec * 1000) {
     w.loopTimerMs = 0
-    const id = w.boss.loop[w.loopIndex % w.boss.loop.length]
+    // Only what has been introduced so far — see unlockedCount().
+    const id = w.boss.loop[w.loopIndex % unlockedCount(w)]
     w.loopIndex++
     fire(w, id)
   }
@@ -959,8 +1169,9 @@ export function step(w: World, input: Input, dtMs: number) {
     // out of something it has glued to you, then fails you for not doing the
     // impossible. Real frontals fire where they were aimed and you sidestep.
     if (!inst.resolved && inst.def.origin === 'boss' && inst.def.shape?.kind !== 'circle') {
-      inst.pos = { ...w.bossPos }
-      if (inst.def.rule.type === 'faceAway') inst.angle = w.bossAngle
+      const src = bossUnitFor(w, inst.fromId)
+      inst.pos = { ...src.pos }
+      if (inst.def.rule.type === 'faceAway') inst.angle = src.angle
     }
     // A carried debuff rides its carrier. Anchoring it where it landed meant the
     // marker stayed on the floor while you ran, and the pool then dropped where
@@ -998,17 +1209,46 @@ export function step(w: World, input: Input, dtMs: number) {
     !i.resolved || (i.def.lingerMs !== undefined && -i.timer < i.def.lingerMs))
 
   // ── your damage ──
-  // You contribute while alive and in range. A tank does less, a dps more; the
-  // point is that dodging well kills the boss faster, not that you play a rotation.
-  if (dist(w.player.pos, w.bossPos) <= ATTACK_RANGE) {
-    // Tuned from headless playtests so all three roles can clear a clean pull
-    // inside the enrage, with dps fastest and healer slowest — but nobody
-    // locked out of a kill for picking the "wrong" role.
-    const base = w.player.role === 'dps' ? 1.0 : w.player.role === 'tank' ? 0.82 : 0.75
-    const bursting = (w.player.cooldowns.burst ?? 0) > COOLDOWN_MS.burst - BURST_WINDOW_MS
-    const rate = base * (bursting ? 3 : 1)
-    w.bossHp -= (rate / w.boss.pullLengthSec) * dt * 1.45
+  // The boss only dies from shots you actually land. Passive HP drain meant you
+  // could win by running in circles and never looking at the boss; having to
+  // aim is what makes dodging cost something, because every second spent
+  // running is a second not shooting.
+  w.fireCooldown -= dtMs
+  if (input.firing && w.fireCooldown <= 0 && w.player.alive) {
+    // Aim at the cursor, or at the nearest entity when nothing is aimed.
+    const target = input.aim ?? nearestBoss(w, w.player.pos).pos
+    const a = Math.atan2(target.y - w.player.pos.y, target.x - w.player.pos.x)
+    w.shots.push({
+      pos: { ...w.player.pos },
+      vel: { x: Math.cos(a) * SHOT_SPEED, y: Math.sin(a) * SHOT_SPEED },
+      life: (ATTACK_RANGE / SHOT_SPEED) * 1000,
+    })
+    w.shotsFired++
+    w.fireCooldown = FIRE_INTERVAL_MS
   }
+
+  // Tuned so all three roles can clear a clean pull inside the enrage, with dps
+  // fastest and healer slowest — nobody locked out of a kill for their role.
+  const base = w.player.role === 'dps' ? 1.0 : w.player.role === 'tank' ? 0.82 : 0.75
+  const bursting = (w.player.cooldowns.burst ?? 0) > COOLDOWN_MS.burst - BURST_WINDOW_MS
+  const perShot = (base * (bursting ? 3 : 1)) / (w.boss.pullLengthSec * SHOTS_PER_SEC * 0.62)
+
+  for (const s of w.shots) {
+    if (s.life <= 0) continue
+    s.pos.x += s.vel.x * dt
+    s.pos.y += s.vel.y * dt
+    s.life -= dtMs
+    for (const b of w.bosses) {
+      if (b.def.untargetable) continue
+      if (dist(s.pos, b.pos) > BOSS_HIT_RADIUS) continue
+      s.life = 0
+      w.shotsHit++
+      w.bossHp -= perShot
+      break
+    }
+  }
+  w.shots = w.shots.filter(s => s.life > 0)
+
   if (w.bossHp <= 0 && !w.killed) {
     w.bossHp = 0
     w.killed = true
@@ -1025,7 +1265,7 @@ export function step(w: World, input: Input, dtMs: number) {
 }
 
 export function isInMelee(w: World): boolean {
-  return dist(w.player.pos, w.bossPos) <= MELEE_RANGE
+  return dist(w.player.pos, nearestBoss(w, w.player.pos).pos) <= MELEE_RANGE
 }
 
 export function buildResult(w: World): RunResult {
@@ -1042,5 +1282,7 @@ export function buildResult(w: World): RunResult {
     mechanicsResolved: w.resolvedCount,
     raidHealthLow: w.raidHealthLow,
     alliesLost: w.alliesLost,
+    shotsFired: w.shotsFired,
+    shotsHit: w.shotsHit,
   }
 }

@@ -64,6 +64,7 @@ export const vashnik: BossDef = {
       id: 'burst',
       name: 'Malignant Burst',
       spellId: 1280189,
+      lethal: true,
       roles: ['tank', 'dps', 'healer'],
       // The cast itself is 1.5s, but the cast is the failure, not the mechanic.
       // What you actually practise is the crawl window: the venom is dragged out
@@ -127,6 +128,7 @@ export const vashnik: BossDef = {
       id: 'bile',
       name: 'Catalytic Bile',
       spellId: 1282602,
+      lethal: true,
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,                 // "A 5s cast forms an orb"
       shape: { kind: 'circle', radius: 6 },     // "hits only that player in 6yd"

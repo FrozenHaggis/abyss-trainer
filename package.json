@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node --test test/*.test.js",
-    "playtest": "esbuild src/engine/sim.ts --bundle --format=esm --outfile=.playtest/sim.mjs --log-level=error && esbuild src/bosses/sszorak.ts --bundle --format=esm --outfile=.playtest/sszorak.mjs --log-level=error && node test/playtest.mjs"
+    "playtest": "esbuild src/engine/sim.ts --bundle --format=esm --outfile=.playtest/sim.mjs --log-level=error && esbuild src/bosses/registry.ts --bundle --format=esm --outfile=.playtest/registry.mjs --log-level=error && node test/playtest.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

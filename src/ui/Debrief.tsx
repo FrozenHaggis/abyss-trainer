@@ -28,6 +28,14 @@ export default function Debrief({ result, onRetry, onQuit }: {
         <div className="stat"><span className="stat-num">{failures.reduce((n, f) => n + f.count, 0)}</span><span className="stat-lab">failures</span></div>
         <div className="stat"><span className="stat-num">{Math.round(result.raidHealthLow * 100)}%</span><span className="stat-lab">lowest raid HP</span></div>
         <div className="stat"><span className="stat-num">{result.alliesLost}</span><span className="stat-lab">raiders lost</span></div>
+        {/* Uptime, in the only currency the fight cares about. Dodging costs
+            damage, and this is where you find out how much. */}
+        <div className="stat">
+          <span className="stat-num">
+            {result.shotsFired ? Math.round((result.shotsHit / result.shotsFired) * 100) : 0}%
+          </span>
+          <span className="stat-lab">shots on target</span>
+        </div>
       </div>
 
       {clean ? (

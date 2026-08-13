@@ -86,13 +86,13 @@ function pathShape(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance) {
  */
 function drawGlyph(
   ctx: CanvasRenderingContext2D, role: Role, cx: number, cy: number,
-  size: number, health: number,
+  size: number, health: number, presence = 1,
 ) {
   const k = size / 24
   ctx.save()
   ctx.translate(cx - size / 2, cy - size / 2)
   ctx.scale(k, k)
-  ctx.globalAlpha = 0.35 + 0.65 * Math.max(0, Math.min(1, health))
+  ctx.globalAlpha = (0.35 + 0.65 * Math.max(0, Math.min(1, health))) * presence
   ctx.fill(ROLE_PATH_2D[role])
   ctx.restore()
   ctx.globalAlpha = 1
@@ -170,18 +170,21 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // ── the raid ──
   // Shield / cross / sword, so you can read a raider's role at a glance without
   // relying on colour alone. Drawn from the same paths as the UI icons.
+  // Faded in only while there is group work — see allyMove(). A soak with
+  // bodies converging on it reads as a group mechanic; the same soak with
+  // nineteen idle glyphs permanently on screen reads as clutter.
   for (const role of ['dps', 'healer', 'tank'] as Role[]) {
     ctx.fillStyle = ROLE_COLOUR[role]
     for (const a of w.allies) {
-      if (!a.alive || a.role !== role) continue
+      if (!a.alive || a.role !== role || a.presence < 0.03) continue
       const p = toPx(cam, a.pos)
-      drawGlyph(ctx, role, p.x, p.y, 15, a.health)
+      drawGlyph(ctx, role, p.x, p.y, 15, a.health, a.presence)
     }
   }
   // Debuffed allies get a ring — that is the healer's target list.
   ctx.beginPath()
   for (const a of w.allies) {
-    if (!a.alive || !a.debuff) continue
+    if (!a.alive || !a.debuff || a.presence < 0.03) continue
     const p = toPx(cam, a.pos)
     ctx.moveTo(p.x + 9, p.y)
     ctx.arc(p.x, p.y, 9, 0, Math.PI * 2)
@@ -191,48 +194,85 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   ctx.stroke()
   ctx.lineWidth = 1
 
-  // ── boss ──
-  const bp = toPx(cam, w.bossPos)
-  ctx.beginPath(); ctx.arc(bp.x, bp.y, 22, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(124, 77, 255, 0.18)'
-  ctx.fill()
-  ctx.shadowBlur = 18; ctx.shadowColor = `rgba(${VIOLET}, 0.8)`
+  // ── boss entities ──
+  // Every entity is drawn and named. Four fights in this tier field two or more,
+  // and a single dot in the middle made "the other one is casting" invisible.
   const sig = sigilPath(w.boss.key)
   const meta = BOSS_SIGILS[w.boss.key]
-  if (sig && meta) {
-    // The boss is its sigil — a serpent, a golem, a tornado — rather than an
-    // anonymous circle, so each fight reads as its own encounter.
-    const vb = meta.viewBox.split(' ').map(Number)
-    const span = Math.max(vb[2] || 512, vb[3] || 512)
-    const k = 34 / span
-    ctx.save()
-    ctx.translate(bp.x - 17, bp.y - 17)
-    ctx.scale(k, k)
-    ctx.fillStyle = '#b79bff'
-    ctx.fill(sig)
-    ctx.restore()
-  } else {
-    ctx.beginPath(); ctx.arc(bp.x, bp.y, 14, 0, Math.PI * 2)
-    ctx.fillStyle = '#7c4dff'
+  const multi = w.bosses.length > 1
+  for (const b of w.bosses) {
+    const bp = toPx(cam, b.pos)
+    // Secondary entities are drawn slightly smaller so the primary — the one
+    // your tank holds — stays readable at a glance.
+    const isPrimary = b === w.bosses[0]
+    const size = isPrimary ? 34 : 27
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, size * 0.65, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(124, 77, 255, 0.18)'
     ctx.fill()
-  }
-  ctx.shadowBlur = 0
-  // Facing pip — a tank needs to see which way it is pointed.
-  ctx.beginPath()
-  ctx.moveTo(bp.x, bp.y)
-  ctx.lineTo(bp.x + Math.cos(w.bossAngle) * 26, bp.y + Math.sin(w.bossAngle) * 26)
-  ctx.strokeStyle = '#c9b6ff'; ctx.lineWidth = 3; ctx.stroke()
-  ctx.lineWidth = 1
+    ctx.shadowBlur = 18; ctx.shadowColor = `rgba(${VIOLET}, 0.8)`
+    if (sig && meta) {
+      // The boss is its sigil — a serpent, a golem, a tornado — rather than an
+      // anonymous circle, so each fight reads as its own encounter.
+      const vb = meta.viewBox.split(' ').map(Number)
+      const span = Math.max(vb[2] || 512, vb[3] || 512)
+      const k = size / span
+      ctx.save()
+      ctx.translate(bp.x - size / 2, bp.y - size / 2)
+      ctx.scale(k, k)
+      ctx.fillStyle = isPrimary ? '#b79bff' : '#9a86e0'
+      ctx.fill(sig)
+      ctx.restore()
+    } else {
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, size * 0.4, 0, Math.PI * 2)
+      ctx.fillStyle = '#7c4dff'
+      ctx.fill()
+    }
+    ctx.shadowBlur = 0
 
-  // Threat line to whoever is tanking — a tank has to see where the boss is.
-  const tankEnt = w.bossTargetId === 0
-    ? w.player.pos
-    : (w.allies.find(a => a.id === w.bossTargetId)?.pos ?? w.bossPos)
-  const tp = toPx(cam, tankEnt)
+    // Facing pip — a tank needs to see which way it is pointed.
+    ctx.beginPath()
+    ctx.moveTo(bp.x, bp.y)
+    ctx.lineTo(bp.x + Math.cos(b.angle) * 26, bp.y + Math.sin(b.angle) * 26)
+    ctx.strokeStyle = '#c9b6ff'; ctx.lineWidth = 3; ctx.stroke()
+    ctx.lineWidth = 1
+
+    // Threat line to whoever holds it. An untanked entity has none.
+    if (b.targetId >= 0) {
+      const tankEnt = b.targetId === 0
+        ? w.player.pos
+        : (w.allies.find(a => a.id === b.targetId)?.pos ?? b.pos)
+      const tp = toPx(cam, tankEnt)
+      ctx.beginPath()
+      ctx.moveTo(bp.x, bp.y); ctx.lineTo(tp.x, tp.y)
+      ctx.strokeStyle = 'rgba(198, 155, 58, 0.5)'
+      ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([])
+    }
+
+    // Name them, but only when there is more than one — on a single-boss fight
+    // the name is already in the HUD and a floating label is just clutter.
+    if (multi) {
+      ctx.font = '600 11px Rajdhani, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillStyle = 'rgba(201, 182, 255, 0.92)'
+      ctx.fillText(b.def.name, bp.x, bp.y + size * 0.65 + 14)
+      ctx.textAlign = 'start'
+    }
+  }
+
+  // ── your shots ──
+  // Drawn in the player's own lime so it is obvious they are yours, and as a
+  // short streak rather than a dot so you can see where a volley is going.
+  ctx.strokeStyle = `rgba(${LIME}, 0.85)`
+  ctx.lineWidth = 2.5
   ctx.beginPath()
-  ctx.moveTo(bp.x, bp.y); ctx.lineTo(tp.x, tp.y)
-  ctx.strokeStyle = 'rgba(198, 155, 58, 0.5)'
-  ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([])
+  for (const s of w.shots) {
+    const p = toPx(cam, s.pos)
+    const back = 0.035
+    ctx.moveTo(p.x - s.vel.x * back * cam.scale, p.y - s.vel.y * back * cam.scale)
+    ctx.lineTo(p.x, p.y)
+  }
+  ctx.stroke()
+  ctx.lineWidth = 1
 
   // ── player ──
   // Same glyph as the allies so you read as one of the raid, but lime and

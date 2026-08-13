@@ -4,10 +4,16 @@ A top-down trainer for the **Heroic** mechanics of The Venomous Abyss, in the
 spirit of [Castle Pineapplia](https://tacticalairhorse.itch.io/castle-pineapplia):
 silly boss names over real, transferable mechanics.
 
-Pick tank, healer or DPS. **WASD** to move, **1–4** for abilities. Kill the boss
-before the enrage. Spoken callouts name each mechanic and tell you what to do —
-the arena slows and the music ducks while one is being explained. The 🔊 button
-turns the voice off.
+Pick tank, healer or DPS. **WASD** to move, **mouse to aim, hold to shoot**
+(**Space** fires at the nearest boss), **1–4** for abilities, **Esc** to leave
+the pull. The boss only dies from shots you land, so every second spent dodging
+is a second off the kill — which is the whole tension. Spoken callouts name each
+mechanic and tell you what to do; the arena slows and the music ducks while one
+is being explained. The 🔊 button turns the voice off.
+
+Mechanics arrive **one at a time**. You meet one, get a few reps on it, and only
+then does the next join the rotation — the whole loop firing from the first
+second is how a trainer becomes noise.
 
 ## The raid
 
@@ -62,6 +68,14 @@ data. Tests run on every build and every deploy:
 - every `avoid` mechanic is genuinely escapable at run speed
 - `avoid` frontals must not track the player
 - every id referenced by `loop`, `spawns`, `ambient`, `atFullEnergy` resolves
+- **which mechanics kill outright** is read from `category: "Deadly"` in the
+  ability data, not chosen for balance — the same categorisation RaidLens uses
+  to attribute a death to a mechanic
+- a missed soak never kills you personally; an unsoaked hit lands on the raid
+- a contact hazard cannot kill on the frame it spawns
+- on multi-boss fights, **every entity and its npcId** must match
+  `abilities.json`, and each mechanic must be cast by the entity that really
+  owns it — re-derived from the data on every run
 
 ## Adding a boss
 
@@ -82,9 +96,14 @@ them, and a tank dying to a dispel they cannot cast.
   confirms Sszorak is a platform with lethal edges and Twin Fangs is a platform
   ringed by a venom sea, but no source publishes room geometry, and the raid only
   opened on 18–19 August 2026. Real shapes need in-game confirmation.
-- **Multi-boss encounters render one boss.** Entombed Sentinels, Twin Fangs
-  (tanked apart, confirmed), Lost Explorers and Coiled Altar all have two or more
-  entities.
+
+  Geometry *is* derivable from combat logs — position data falls straight out of
+  a log recorded with **Advanced Combat Logging** enabled. The PTR log checked so
+  far had it switched off, which is why no `x`/`y` was available. One live night
+  with it on and every room's shape and size can be measured rather than guessed.
+- **Mor'zahi is targetable here but untargetable in the real fight** (0 damage
+  taken across 10,001 events in the PTR log). He should be a caster you cannot
+  shoot.
 
 ## Deployment
 

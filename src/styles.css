@@ -291,6 +291,23 @@ body {
   .prompt.urgent, .fail-toast { animation: none; }
 }
 
+/* Bail out of a pull. Bottom-left, clear of the top HUD, so it is always
+   reachable but never sits under the cursor while you are aiming. */
+.arena-quit {
+  position: absolute; left: 18px; bottom: 18px; z-index: 5;
+  pointer-events: auto; cursor: pointer;
+  font-family: 'Rajdhani', system-ui, sans-serif;
+  font-size: 14px; font-weight: 600; letter-spacing: .04em;
+  color: inherit; background: rgba(255,255,255,.06);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px;
+  transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.arena-quit:hover {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  box-shadow: 0 0 18px rgba(47, 227, 160, .16);
+}
+
 /* Spoken callouts toggle — voice is the sort of thing people want off later. */
 .voice-toggle {
   pointer-events: auto; cursor: pointer; font-size: 17px; line-height: 1;

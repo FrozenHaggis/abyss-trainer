@@ -53,6 +53,14 @@ export const explorers: BossDef = {
   realName: 'The Lost Explorers',
   blurb: 'A three-body council with one real kick. Blast Wave took more killing blows than any other ability in the fight.',
   arenaRadius: 44,
+  entities: [
+    { id: 'iku', name: "Scrollsage Iku", npcId: 261843, start: { x: 0, y: -12 } },
+    { id: 'nama', name: "First Mate Nama", npcId: 261835, start: { x: -17, y: 4 } },
+    { id: 'gebbo', name: "Trader Gebbo", npcId: 261848, start: { x: 17, y: 4 } },
+    // Outside the health pool: 0 damage taken across 10,001 player damage events
+    // in a Mythic PTR log, while casting Malevolent Presence 1,911 times.
+    { id: 'morzahi', name: "Mor'zahi", npcId: 261584, start: { x: 0, y: 17 }, untargetable: true },
+  ],
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,          // ~45s between Blast Waves
@@ -75,6 +83,7 @@ export const explorers: BossDef = {
       id: 'flames',
       name: 'Icebound Flames',
       spellId: 1286922,
+      from: 'iku',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,             // "4s cast on one player"
       // The only kickable cast in the fight, so it gets a shape purely so the
@@ -91,6 +100,7 @@ export const explorers: BossDef = {
       id: 'patches',
       name: 'Fire Patch',
       spellId: 1297649,
+      from: 'iku',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2500,
       shape: { kind: 'circle', radius: 7 },
@@ -108,6 +118,7 @@ export const explorers: BossDef = {
       id: 'eyes',
       name: 'Evil Eyes',
       spellId: 1292764,
+      from: 'iku',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2000,
       // "hitting within 3 yds" — small, but the most-cast ability in the fight
@@ -124,6 +135,7 @@ export const explorers: BossDef = {
       id: 'shellspin',
       name: 'Shell Spin',
       spellId: 1291918,
+      from: 'nama',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
       shape: { kind: 'cone', radius: 30, arcDeg: 70 },
@@ -140,6 +152,7 @@ export const explorers: BossDef = {
       id: 'shards',
       name: 'Shredding Shards',
       spellId: 1295858,
+      from: 'iku',
       roles: ['tank'],
       telegraphMs: 1500,
       origin: 'boss',
@@ -153,6 +166,8 @@ export const explorers: BossDef = {
       id: 'thud',
       name: 'Mighty Thud',
       spellId: 1300237,
+      lethal: true,
+      from: 'nama',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 8 },
@@ -171,6 +186,7 @@ export const explorers: BossDef = {
       id: 'aftershock',
       name: 'Aftershock',
       spellId: 1310500,
+      from: 'nama',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                 // the crater is there the moment the leap lands
       shape: { kind: 'circle', radius: 8 },
@@ -187,6 +203,8 @@ export const explorers: BossDef = {
       id: 'splinters',
       name: 'Splinters',
       spellId: 1308853,
+      lethal: true,
+      from: 'gebbo',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 8000,              // "stacking Physical bleed, 8s"
       shape: { kind: 'circle', radius: 6 },
@@ -203,6 +221,8 @@ export const explorers: BossDef = {
       id: 'bomb',
       name: 'Explosive Surprise',
       spellId: 1296245,
+      lethal: true,
+      from: 'gebbo',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 10000,             // "10s bomb-carrier marker"
       shape: { kind: 'circle', radius: 10 },   // "10 yd Physical hit"
@@ -216,6 +236,7 @@ export const explorers: BossDef = {
       id: 'concussive',
       name: 'Concussive Blast',
       spellId: 1299947,
+      from: 'gebbo',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,
       shape: { kind: 'circle', radius: 10 },
@@ -230,6 +251,8 @@ export const explorers: BossDef = {
       id: 'blastwave',
       name: 'Blast Wave',
       spellId: 1305844,
+      lethal: true,
+      from: 'gebbo',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4500,
       // The deadliest ID in the fight. A ground-level fire wave rolling out from
@@ -246,6 +269,7 @@ export const explorers: BossDef = {
       id: 'presence',
       name: 'Malevolent Presence',
       spellId: 1295450,
+      from: 'morzahi',
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',

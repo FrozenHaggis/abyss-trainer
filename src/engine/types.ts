@@ -43,11 +43,54 @@ export type Rule =
    */
   | { type: 'tankSwap'; maxStacks: number }
 
+/**
+ * One entity in the encounter.
+ *
+ * Half this raid is a multi-boss fight — Sentinels, Twin Fangs, Lost Explorers
+ * and Coiled Altar each field two or more — and drawing a single dot in the
+ * middle for all of them makes "keep them apart" and "the other one is casting"
+ * impossible to practise.
+ *
+ * Names and npcIds come straight from the boss's abilities.json, and each
+ * mechanic's owner is derived from which `bosses[]` entry lists its spell. None
+ * of the ownership here is invented; a test re-derives it from the same data.
+ */
+export interface BossEntityDef {
+  id: string
+  name: string
+  /** Real NPC id from abilities.json. */
+  npcId: number
+  /** Where it stands, in yards from the arena centre. */
+  start: Vec
+  /**
+   * Held by its own tank, away from the others.
+   *
+   * Set this ONLY where a source states it. Twin Fangs is the one confirmed
+   * case in this tier: Vexhul and Ithraz are tanked apart with melee between
+   * them. Everywhere else the entities simply hold their own stations, which is
+   * a claim about how many bosses there are — not about how they are tanked.
+   */
+  tankedApart?: boolean
+  /**
+   * Cannot be shot. Mor'zahi is the confirmed case: he took 0 damage across
+   * 10,001 player damage events in a Mythic PTR log while casting constantly,
+   * so he sits outside the health pool and puppets the council. Shooting him
+   * would teach a raider to waste a pull on a target that cannot die.
+   */
+  untargetable?: boolean
+}
+
 export interface MechanicDef {
   id: string
   name: string
   /** Real spell ID from abilities.json — the link back to the analyser. */
   spellId: number
+  /**
+   * Which entity casts this, by `BossEntityDef.id`. Derived from the owning
+   * `bosses[]` entry in abilities.json, so a frontal comes out of the boss that
+   * actually casts it. Omit on single-entity fights.
+   */
+  from?: string
   /** Whose job this is. A mechanic you are not scored on still renders. */
   roles: Role[]
   /** Telegraph duration in ms — the real cast time where the file states one. */
@@ -70,6 +113,23 @@ export interface MechanicDef {
   failText: string
   /** Damage to the player on failure, as a fraction of max health. */
   damage?: number
+  /**
+   * Failing this KILLS rather than chips.
+   *
+   * Taken from `category: "Deadly"` in the boss's abilities.json — the same
+   * categorisation RaidLens uses to attribute a death to a mechanic ("a damage
+   * event cross-referenced with a death within 3 seconds"). A test re-derives
+   * this from the data, so it cannot drift into being a balance knob.
+   *
+   * What "lethal" means depends on how you fail it, and the difference matters:
+   *   • `avoid`    — you stood in it. It kills you.
+   *   • `carryOut` — you dropped it on the raid. It kills you and hurts them.
+   *   • `beInside` — an unsoaked Deadly hit lands on the RAID, so it is a heavy
+   *                  raid-damage event, not your personal death. Killing the
+   *                  player for a soak they were merely late to would blame
+   *                  them for the group's miss.
+   */
+  lethal?: boolean
   /** Leaves a persistent hazard behind when it resolves. */
   spawns?: { defId: string; delayMs?: number }
   /** Persistent hazards only: how long the pool lingers. */
@@ -94,6 +154,16 @@ export interface BossDef {
   /** Playable radius in yards. Leaving it is a fall — the real killer on Sszorak. */
   arenaRadius: number
   blurb: string
+  /**
+   * The encounter's entities, PRIMARY FIRST. The primary is the one the player's
+   * tank holds and the one the `faceAway` / `tankSwap` mechanics belong to — on
+   * every multi-boss fight in this tier the tank mechanic already sits with a
+   * single entity, so which comes first is read off the data rather than chosen.
+   *
+   * Omit for a single-boss fight; the engine synthesises one entity at the
+   * centre.
+   */
+  entities?: BossEntityDef[]
   mechanics: MechanicDef[]
   /**
    * Recurrence intervals are NOT in the source data, so the fight is driven off
@@ -103,6 +173,11 @@ export interface BossDef {
   loop: string[]
   /** Seconds between loop entries. */
   loopIntervalSec: number
+  /**
+   * Seconds before the next mechanic in `loop` joins the rotation. Mechanics are
+   * introduced one at a time rather than all at once. Defaults to 14.
+   */
+  introEverySec?: number
   energyPerSec: number
   atFullEnergy?: string
   /** Always-on mechanics, e.g. Ula'tek's Presence attrition. */
@@ -137,6 +212,8 @@ export interface Instance {
   answered: boolean
   /** True when this instance landed on the player, not an ally. */
   carriedByPlayer: boolean
+  /** Entity id that cast this, so a boss-anchored shape tracks the right one. */
+  fromId: string
   drift?: Vec
 }
 
@@ -154,6 +231,15 @@ export interface Ally {
   /** Mechanic id of a dispellable debuff they are carrying, if any. */
   debuff: string | null
   debuffMs: number
+  /**
+   * 0..1 — how present they are on the field.
+   *
+   * The raid turns up when there is something for it to do and clears out
+   * again. Nineteen idle glyphs standing around during a solo dodging drill
+   * only make the telegraphs harder to read; when a soak lands, bodies appear
+   * and the mechanic is visibly a group problem.
+   */
+  presence: number
 }
 
 export interface PlayerState {
@@ -196,4 +282,6 @@ export interface RunResult {
   mechanicsResolved: number
   raidHealthLow: number
   alliesLost: number
+  shotsFired: number
+  shotsHit: number
 }

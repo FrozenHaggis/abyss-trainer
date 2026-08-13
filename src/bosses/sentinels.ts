@@ -60,6 +60,10 @@ export const sentinels: BossDef = {
   // Big room on purpose — the tanks have to hold the two golems 40+ yards apart
   // all pull, and the floor needs to be able to hold that split.
   arenaRadius: 44,
+  entities: [
+    { id: 'breath', name: "Breath of Ula'tek", npcId: 258557, start: { x: -13, y: 0 } },
+    { id: 'blood', name: "Blood of Ula'tek", npcId: 258558, start: { x: 13, y: 0 } },
+  ],
   maxHp: 1,
   loopIntervalSec: 6,
   // "They share an energy bar; at 100 energy both channel Vitriolic Stasis."
@@ -84,7 +88,8 @@ export const sentinels: BossDef = {
     {
       id: 'marks',
       name: 'Mark of Acid / Mark of Blood',
-      spellId: 1284500,              // Nature half; 1284506 is Blood's Shadow half
+      spellId: 1284500,
+      from: 'breath',              // Nature half; 1284506 is Blood's Shadow half
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -99,7 +104,8 @@ export const sentinels: BossDef = {
     {
       id: 'stasis',
       name: 'Vitriolic Stasis',
-      spellId: 1284606,              // Breath's channel; 1284588 is Blood's
+      spellId: 1284606,
+      from: 'breath',              // Breath's channel; 1284588 is Blood's
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2500,
       origin: 'boss',
@@ -115,6 +121,7 @@ export const sentinels: BossDef = {
       id: 'helical',
       name: 'Helical Toxins',
       spellId: 1284590,
+      from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       // The real debuff runs 28s; compressed here to a 10s window because the
       // decision — find your group and combine — is made in the first seconds
@@ -133,6 +140,7 @@ export const sentinels: BossDef = {
       id: 'protovenom',
       name: 'Protovenom Eruption',
       spellId: 1296962,
+      from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
       // "damage in 10yd plus knockback". Modelled as ground to avoid, because no
@@ -151,6 +159,7 @@ export const sentinels: BossDef = {
       id: 'slam',
       name: 'Empowering Slam',
       spellId: 1284458,
+      from: 'breath',
       roles: ['tank'],
       telegraphMs: 1500,
       origin: 'boss',
@@ -164,6 +173,7 @@ export const sentinels: BossDef = {
       id: 'droplets',
       name: 'Toxic Droplets',
       spellId: 1284434,
+      from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1800,
       shape: { kind: 'circle', radius: 5 },
@@ -178,6 +188,8 @@ export const sentinels: BossDef = {
       id: 'noxious',
       name: 'Noxious Blast',
       spellId: 1284452,
+      lethal: true,
+      from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 16000,            // "each erupts into Noxious Blast after 16s"
       shape: { kind: 'circle', radius: 10 },
@@ -193,6 +205,7 @@ export const sentinels: BossDef = {
       id: 'livingvenom',
       name: 'Living Venom',
       spellId: 1284207,
+      from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,             // "returns to the golem after 4s"
       // The return path, drawn as a line out of the golem. Boss-origin lines
@@ -209,6 +222,7 @@ export const sentinels: BossDef = {
       id: 'coagulation',
       name: 'Venom Coagulation',
       spellId: 1284251,
+      from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,
       shape: { kind: 'circle', radius: 10 },
@@ -227,6 +241,7 @@ export const sentinels: BossDef = {
       id: 'blighted',
       name: 'Blighted Blood',
       spellId: 1284471,
+      from: 'blood',
       roles: ['healer'],
       telegraphMs: 6000,
       shape: { kind: 'circle', radius: 5 },
@@ -242,6 +257,7 @@ export const sentinels: BossDef = {
       id: 'bloodvenom',
       name: 'Blood Venom',
       spellId: 1284208,
+      from: 'blood',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 10000,
       shape: { kind: 'circle', radius: 8 },
@@ -259,6 +275,8 @@ export const sentinels: BossDef = {
       id: 'miasma',
       name: 'Unstable Miasma',
       spellId: 1288282,
+      lethal: true,
+      from: 'blood',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 8000,             // "after ~8s it erupts"
       shape: { kind: 'circle', radius: 7.5 },   // "7.5yd" per wowhead

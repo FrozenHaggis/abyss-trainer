@@ -635,6 +635,25 @@ function resolveInstance(w: World, inst: Instance) {
       break
   }
 
+  // Anything that lands on the floor sets off the orbs it covers.
+  //
+  // This is the Coiled Altar, expressed: "it is arena management, not reflexes:
+  // every orb left where an axe or a tank cone will destroy it is a Rupture
+  // waiting to happen." Sever's own note says it "also destroys Coalesced Venom
+  // in its path", and Axegrinder's ricochets do the same. Nothing connected the
+  // two, so orbs were only ever detonated by shooting them — and the fight's
+  // central tension, where you point your cone, did nothing at all.
+  if (def.shape) {
+    for (const add of w.adds) {
+      if (!add.alive || add.def.job !== 'leave') continue
+      if (!isInside(inst, add.pos)) continue
+      add.alive = false
+      recordAddFailure(w, add.def)
+      w.raidHealth -= 0.16
+      w.shake = Math.min(1, w.shake + 0.5)
+    }
+  }
+
   if (def.spawns) {
     const child = w.boss.mechanics.find(m => m.id === def.spawns!.defId)
     if (child) {

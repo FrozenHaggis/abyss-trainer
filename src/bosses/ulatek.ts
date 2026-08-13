@@ -125,6 +125,21 @@ export const ulatek: BossDef = {
       failText: 'Vicious Echoes stunned the raid',
     },
     {
+      // The fourth Heroic add-kick in the raid. It was catalogued in ADDS.md
+      // and then never authored. "VERIFIED InterruptFlags 45 (kickable) AND
+      // DispelType 1 (Magic) ... KICK FIRST — the stun is raid-wide, so
+      // dispellers are usually stunned too."
+      //
+      // Its other cast, Dread Roar, is a 20 second raid stun and "a wipe if it
+      // lands" — InterruptFlags 41, NOT kickable, "prevented only by weakening
+      // the Doomscale first". Anguished Cry is what the weakened form casts, so
+      // getting it to the kickable state is itself the job.
+      id: 'doomscale', name: 'Ravenous Doomscale', npcId: 0, spellId: 1305650,
+      job: 'kick', count: 1, hp: 11, fuseSec: 25, castEverySec: 11, spawnRadius: 28,
+      good: 'Weaken it before it hatches, then kick Anguished Cry — the stun is raid-wide.',
+      failText: 'Anguished Cry went uninterrupted — raid stunned',
+    },
+    {
       id: 'clutch', name: 'Blightscale Clutch', npcId: 0, spellId: 1289962,
       job: 'kill', count: 1, hp: 10, fuseSec: 16, spawnRadius: 24,
       good: 'Break the clutch before gestation completes — the channel is not kickable.',

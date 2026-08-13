@@ -1,0 +1,310 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@500&display=swap');
+
+/* Venom palette lifted from RaidLens, with its semantic rule intact:
+   green and violet are the interface, red is danger. In the arena that becomes
+   the telegraph contract — red get out, green get in, violet go here. */
+:root {
+  --bg: #0a0714;
+  --bg2: #120d20;
+  --panel: #16102a;
+  --line: rgba(120, 220, 160, 0.14);
+  --text: #e9eef4;
+  --muted: #9aa7b6;
+  --accent: #2fe3a0;
+  --accent-soft: rgba(47, 227, 160, 0.08);
+  --accent-line: rgba(47, 227, 160, 0.35);
+  --venom: #b6ff5c;
+  --violet: #7c4dff;
+  --danger: #f85149;
+  --good: #3fb950;
+  --font-display: 'Roboto Condensed', system-ui, sans-serif;
+  --font-body: 'Roboto', system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background:
+    radial-gradient(1200px 700px at 78% -8%, rgba(124, 77, 255, 0.20), transparent 60%),
+    radial-gradient(1000px 800px at 12% 8%, rgba(47, 227, 160, 0.13), transparent 55%),
+    linear-gradient(180deg, #0a0714 0%, #120d20 40%, #0a0714 100%);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ───────────────────────────── menu shell ───────────────────────────── */
+
+.shell { max-width: 1000px; margin: 0 auto; padding: 40px 24px 64px; }
+
+.title h1 {
+  font-family: var(--font-display);
+  font-size: 40px; margin: 0; letter-spacing: 0.5px;
+  background: linear-gradient(100deg, var(--venom), var(--accent) 45%, var(--violet));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.tag { color: var(--muted); margin: 6px 0 28px; }
+
+.pick h2 {
+  font-family: var(--font-display); font-size: 15px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--muted); margin: 24px 0 10px;
+}
+
+.cards { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.card {
+  flex: 1 1 220px; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; font-family: var(--font-body);
+  transition: border-color .15s, background .15s, transform .12s;
+}
+.card:hover { transform: translateY(-1px); border-color: var(--accent-line); background: var(--accent-soft); }
+.card.on { border-color: var(--accent); background: var(--accent-soft); }
+.card-title { font-family: var(--font-display); font-size: 18px; text-transform: capitalize; }
+.card-sub { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.card-keys { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.card-keys em {
+  font-style: normal; font-family: var(--font-mono); font-size: 11px;
+  color: var(--accent); background: rgba(47,227,160,.10);
+  border: 1px solid var(--accent-line); border-radius: 4px; padding: 1px 6px;
+}
+
+.controls-help {
+  margin: 26px 0 18px; color: var(--muted); font-size: 13px;
+  border-left: 3px solid var(--violet); padding-left: 12px; line-height: 1.6;
+}
+
+.btn {
+  cursor: pointer; font-family: var(--font-body); font-size: 14px;
+  background: rgba(255,255,255,0.06); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 18px;
+  transition: background .15s, border-color .15s;
+}
+.btn:hover { background: var(--accent-soft); border-color: var(--accent-line); }
+.btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--venom); }
+.btn.primary:hover { background: rgba(47,227,160,.16); }
+.btn.big { font-size: 17px; padding: 13px 30px; font-family: var(--font-display); letter-spacing: .04em; }
+
+/* ───────────────────────────── arena ───────────────────────────── */
+
+.arena { position: fixed; inset: 0; overflow: hidden; }
+.arena-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.hud { position: absolute; left: 0; right: 0; padding: 14px 20px; pointer-events: none; }
+.hud-top { top: 0; display: flex; align-items: center; gap: 18px; }
+.hud-bottom { bottom: 0; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+
+.bar { display: flex; align-items: center; gap: 9px; }
+.bar-boss { flex: 1; max-width: 460px; }
+.bar-label {
+  font-family: var(--font-display); font-size: 12px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); min-width: 42px;
+}
+.bar-track {
+  flex: 1; min-width: 120px; height: 9px; border-radius: 5px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--line); overflow: hidden;
+}
+.bar-fill { display: block; height: 100%; transition: width .1s linear; }
+.bar-fill.energy { background: linear-gradient(90deg, var(--violet), var(--venom)); }
+.bar-fill.hp { background: linear-gradient(90deg, var(--danger), var(--venom)); }
+.bar-fill.raid { background: linear-gradient(90deg, var(--violet), var(--accent)); }
+.bar-num { font-family: var(--font-mono); font-size: 11px; color: var(--muted); min-width: 74px; }
+
+.timer {
+  margin-left: auto; font-family: var(--font-mono); font-size: 22px;
+  color: var(--venom); text-shadow: 0 0 14px rgba(182,255,92,.5);
+}
+
+.bars { display: flex; flex-direction: column; gap: 7px; min-width: 260px; }
+
+.abilities { display: flex; gap: 10px; pointer-events: none; }
+.ability {
+  position: relative; overflow: hidden;
+  width: 76px; height: 62px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--accent-line);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.ability.on-cd { border-color: var(--line); opacity: .55; }
+.ability-key { font-family: var(--font-mono); font-size: 15px; color: var(--venom); }
+.ability-name { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.ability-cd {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 20px; color: var(--text); z-index: 2;
+}
+.ability-sweep {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.55); z-index: 1;
+}
+
+/* Teaching callout — fires once, the first time a mechanic appears. */
+.callout {
+  position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+  background: rgba(22,16,42,.94); border: 1px solid var(--violet);
+  border-radius: 10px; padding: 12px 20px; max-width: 620px; text-align: center;
+  box-shadow: 0 8px 34px rgba(0,0,0,.55); animation: pop .25s ease-out;
+}
+.callout-name {
+  font-family: var(--font-display); font-size: 19px; color: var(--venom);
+  letter-spacing: .03em; margin-bottom: 3px;
+}
+.callout-good { font-size: 13px; color: var(--text); line-height: 1.5; }
+@keyframes pop { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+.dead-banner {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 84px; letter-spacing: .12em;
+  color: var(--danger); text-shadow: 0 0 40px rgba(248,81,73,.6);
+  background: rgba(10,7,20,.5); pointer-events: none;
+}
+
+/* ───────────────────────────── debrief ───────────────────────────── */
+
+.debrief { max-width: 780px; margin: 0 auto; }
+.debrief-head { margin-bottom: 20px; }
+.debrief-verdict { font-family: var(--font-display); font-size: 38px; letter-spacing: .03em; }
+.debrief-verdict.ok { color: var(--accent); }
+.debrief-verdict.bad { color: var(--danger); }
+.debrief-sub { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+.debrief-stats { display: flex; gap: 12px; margin-bottom: 22px; }
+.stat {
+  flex: 1; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 3px;
+}
+.stat-num { font-family: var(--font-mono); font-size: 26px; color: var(--venom); }
+.stat-lab { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+
+.debrief-clean {
+  background: var(--accent-soft); border: 1px solid var(--accent-line);
+  border-radius: 10px; padding: 16px; color: var(--accent); font-size: 15px;
+}
+
+.debrief-table { width: 100%; border-collapse: collapse; }
+.debrief-table th {
+  text-align: left; font-family: var(--font-display); font-size: 12px;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.debrief-table td { padding: 11px 10px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 14px; }
+.debrief-table .mech { font-weight: 600; }
+.debrief-table .count { font-family: var(--font-mono); color: var(--danger); width: 70px; }
+.debrief-table .why { color: var(--muted); }
+
+.debrief-actions { display: flex; gap: 12px; margin-top: 26px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .callout { animation: none; }
+  .card { transition: none; }
+}
+
+/* Parody name over real name — the joke is on the boss, the training is real. */
+.card-real {
+  font-family: var(--font-mono); font-size: 11px; color: var(--violet);
+  text-transform: none; letter-spacing: .02em;
+}
+
+.boss-block { flex: 1; max-width: 520px; display: flex; flex-direction: column; gap: 5px; }
+.boss-name {
+  font-family: var(--font-display); font-size: 17px; letter-spacing: .03em;
+  color: var(--venom); text-shadow: 0 0 12px rgba(182,255,92,.35);
+}
+.bar-track.tall { height: 15px; border-radius: 7px; }
+.bar-fill.boss { background: linear-gradient(90deg, #8b1f2b, var(--danger) 60%, #ff9d3c); }
+.dead-banner.win { color: var(--accent); text-shadow: 0 0 40px rgba(47,227,160,.6); }
+
+/* Tank watch — the one thing a tank must never lose track of. */
+.tankwatch {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  padding: 6px 12px; border-radius: 8px;
+  background: rgba(22,16,42,.8); border: 1px solid var(--line);
+}
+.tankwatch.mine { border-color: #c69b3a; background: rgba(198,155,58,.12); }
+.tankwatch-lab {
+  font-family: var(--font-display); font-size: 11px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.tankwatch.mine .tankwatch-lab { color: #e8c46a; }
+.tankwatch-stacks { font-family: var(--font-mono); font-size: 18px; color: var(--danger); }
+
+/* Role glyphs: shield (tank), cross (healer), sword (dps) — same silhouettes
+   the arena draws, so the picker teaches you what to look for on screen. */
+.role-icon { vertical-align: middle; flex-shrink: 0; }
+.card-title.with-icon { display: flex; align-items: center; gap: 9px; }
+.bar-label.with-icon { display: flex; align-items: center; gap: 5px; min-width: 56px; }
+.legend { display: flex; gap: 16px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.legend span { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+
+/* ── Teaching layer ── */
+/* One instruction at a time. A wall of competing advice teaches nothing. */
+.prompt {
+  position: absolute; left: 50%; bottom: 21%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 26px; border-radius: 12px; pointer-events: none;
+  background: rgba(22,16,42,.86); border: 2px solid var(--accent);
+  box-shadow: 0 0 26px rgba(47,227,160,.28);
+}
+.prompt.urgent {
+  border-color: var(--danger);
+  box-shadow: 0 0 34px rgba(248,81,73,.5);
+  animation: prompt-pulse .38s ease-in-out infinite alternate;
+}
+@keyframes prompt-pulse { from { transform: translateX(-50%) scale(1); } to { transform: translateX(-50%) scale(1.045); } }
+.prompt-verb {
+  font-family: var(--font-display); font-size: 30px; letter-spacing: .06em;
+  color: var(--venom); line-height: 1;
+}
+.prompt.urgent .prompt-verb { color: #ffb3ae; }
+.prompt-mech { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+
+/* Immediate failure feedback — the lesson lands while you remember the moment. */
+.fail-toast {
+  position: absolute; left: 50%; bottom: 33%; transform: translateX(-50%);
+  padding: 8px 18px; border-radius: 8px; pointer-events: none; max-width: 70vw;
+  text-align: center; font-size: 14px;
+  background: rgba(60,14,16,.92); border: 1px solid var(--danger); color: #ffd0cd;
+  animation: toast-in .18s ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Anticipation. An invented cadence has to be readable, or it is whack-a-mole. */
+.next-up {
+  position: absolute; top: 96px; right: 20px; display: flex; flex-direction: column;
+  align-items: flex-end; gap: 4px; pointer-events: none;
+}
+.next-lab {
+  font-family: var(--font-display); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted);
+}
+.next-item {
+  font-size: 12px; color: var(--muted); background: rgba(22,16,42,.7);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px;
+}
+.next-item.soon { color: var(--text); border-color: var(--accent-line); }
+.next-item em { font-style: normal; font-family: var(--font-mono); color: var(--venom); margin-left: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt.urgent, .fail-toast { animation: none; }
+}
+
+/* Spoken callouts toggle — voice is the sort of thing people want off later. */
+.voice-toggle {
+  pointer-events: auto; cursor: pointer; font-size: 17px; line-height: 1;
+  background: rgba(22,16,42,.8); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; margin-left: 10px;
+}
+.voice-toggle.on { border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* While a mechanic is being explained the arena runs at ~16% speed. The veil
+   makes that read as deliberate rather than as the game hitching. */
+.teaching-veil {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, transparent 30%, rgba(10,7,20,.55) 100%);
+  animation: veil-in .2s ease-out;
+}
+@keyframes veil-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .teaching-veil { animation: none; } }

@@ -1,0 +1,1046 @@
+import type {
+  Ability, Ally, BossDef, FailureRow, Instance, MechanicDef,
+  PlayerState, Prompt, Role, RunResult, Vec,
+} from './types'
+
+// The simulation. Deliberately framework-free and side-effect-free so it can be
+// stepped by a test as easily as by requestAnimationFrame.
+//
+// The one rule that matters: a mechanic is judged ONCE, at its resolve moment.
+// No per-frame scoring. That keeps the debrief unambiguous — a failure is a
+// specific instance of a specific mechanic, not an accumulation of frames.
+
+export const TICK_MS = 1000 / 60
+const PLAYER_SPEED = 14 // yards/sec, roughly a WoW run speed
+const MELEE_RANGE = 5
+/** Range at which you can damage the boss. Generous — dodging is the game. */
+const ATTACK_RANGE = 32
+const BURST_WINDOW_MS = 10000
+
+export interface Input {
+  up: boolean; down: boolean; left: boolean; right: boolean
+  pressed: Ability[] // abilities pressed since the last tick
+}
+
+export interface World {
+  boss: BossDef
+  player: PlayerState
+  /** The rest of the raid. Simulated so group mechanics have bodies. */
+  allies: Ally[]
+  /** Ally id the boss is currently tanking, or 0 when it is on the player. */
+  bossTargetId: number
+  /** How long the current tank has been over the swap threshold, in ms. */
+  overStackMs: number
+  alliesLost: number
+  instances: Instance[]
+  /** Boss position and facing. Facing drives `faceAway`. */
+  bossPos: Vec
+  bossAngle: number
+  bossEnergy: number // 0..100
+  bossHp: number     // 0..1 — you win by emptying it
+  killed: boolean
+  elapsedMs: number
+  raidHealth: number // 0..1, the abstract raid the healer keeps up
+  raidHealthLow: number
+  failures: Map<string, FailureRow>
+  resolvedCount: number
+  /** Mechanic ids already introduced, so the teaching callout fires once. */
+  seen: Set<string>
+  /** Set when a mechanic should be announced this tick. */
+  announce: MechanicDef | null
+  deathCause: string | null
+  nextUid: number
+  loopIndex: number
+  loopTimerMs: number
+  ambientTimerMs: number
+  /** Screen-shake impulse, purely cosmetic. */
+  shake: number
+  /** Tank stacks on the player, mirroring Ally.stacks. */
+  playerStacks: number
+  /** What the player should be doing this instant, or null. */
+  prompt: Prompt | null
+  /** The most recent failure, for an immediate toast. */
+  lastFailure: { name: string; failText: string; atMs: number } | null
+}
+
+const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
+  tank: ['taunt', 'defensive', 'interrupt', 'burst'],
+  healer: ['dispel', 'raidcd', 'defensive', 'interrupt'],
+  dps: ['interrupt', 'defensive', 'burst', 'dispel'],
+}
+
+export const COOLDOWN_MS: Record<Ability, number> = {
+  interrupt: 12000, dispel: 8000, defensive: 90000,
+  taunt: 10000, burst: 120000, raidcd: 100000,
+}
+
+export function abilitiesFor(role: Role): Ability[] {
+  return ABILITIES_BY_ROLE[role]
+}
+
+/**
+ * The raid: one co-tank, four healers, fourteen dps. If the player is the tank
+ * the co-tank is the one they swap with; otherwise both tanks are AI and handle
+ * it themselves.
+ */
+function makeAllies(playerRole: Role): Ally[] {
+  const out: Ally[] = []
+  const comp: Role[] = [
+    'tank',
+    ...Array<Role>(4).fill('healer'),
+    ...Array<Role>(14).fill('dps'),
+  ]
+  // A second AI tank when the player is not tanking, so swaps still happen.
+  if (playerRole !== 'tank') comp.push('tank')
+  comp.forEach((r, i) => {
+    out.push({
+      id: i + 1, role: r,
+      pos: { x: 0, y: 0 }, want: { x: 0, y: 0 },
+      health: 1, alive: true, stacks: 0, debuff: null, debuffMs: 0,
+    })
+  })
+  return out
+}
+
+export function createWorld(boss: BossDef, role: Role): World {
+  const allies = makeAllies(role)
+  // Boss opens on the co-tank, so a player tank's first job is to taunt it off.
+  const coTank = allies.find(a => a.role === 'tank')!
+  return {
+    boss,
+    allies,
+    bossTargetId: coTank.id,
+    overStackMs: 0,
+    alliesLost: 0,
+    player: {
+      pos: { x: 0, y: 12 }, role, health: 1, alive: true,
+      carrying: {}, cooldowns: {}, aloft: 0,
+    },
+    instances: [],
+    bossPos: { x: 0, y: 0 },
+    bossAngle: -Math.PI / 2,
+    bossEnergy: 0,
+    bossHp: 1,
+    killed: false,
+    elapsedMs: 0,
+    raidHealth: 1,
+    raidHealthLow: 1,
+    failures: new Map(),
+    resolvedCount: 0,
+    seen: new Set(),
+    announce: null,
+    deathCause: null,
+    nextUid: 1,
+    loopIndex: 0,
+    loopTimerMs: 0,
+    ambientTimerMs: 0,
+    shake: 0,
+    playerStacks: 0,
+    prompt: null,
+    lastFailure: null,
+  }
+}
+
+/** Where the boss currently is, in world terms. */
+export function currentTank(w: World): { pos: Vec; stacks: number; isPlayer: boolean } {
+  if (w.bossTargetId === 0) return { pos: w.player.pos, stacks: w.playerStacks, isPlayer: true }
+  const a = w.allies.find(x => x.id === w.bossTargetId)
+  return a
+    ? { pos: a.pos, stacks: a.stacks, isPlayer: false }
+    : { pos: w.bossPos, stacks: 0, isPlayer: false }
+}
+
+const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y)
+const lenOf = (v: Vec) => Math.hypot(v.x, v.y)
+
+/** Shortest signed angle from a to b, in radians. */
+function angleDelta(a: number, b: number): number {
+  let d = b - a
+  while (d > Math.PI) d -= Math.PI * 2
+  while (d < -Math.PI) d += Math.PI * 2
+  return d
+}
+
+/** Is the player inside this instance's telegraph? */
+export function isInside(inst: Instance, p: Vec): boolean {
+  const s = inst.def.shape
+  if (!s) return false
+  const dx = p.x - inst.pos.x
+  const dy = p.y - inst.pos.y
+  const d = Math.hypot(dx, dy)
+  switch (s.kind) {
+    case 'circle':
+      return d <= s.radius
+    case 'annulus':
+      return d >= s.inner && d <= s.outer
+    case 'cone': {
+      if (d > s.radius) return false
+      const to = Math.atan2(dy, dx)
+      return Math.abs(angleDelta(inst.angle, to)) <= (s.arcDeg * Math.PI) / 360
+    }
+    case 'line': {
+      // Project onto the line's axis; inside if within length and half-width.
+      const ca = Math.cos(inst.angle)
+      const sa = Math.sin(inst.angle)
+      const along = dx * ca + dy * sa
+      const across = -dx * sa + dy * ca
+      return along >= 0 && along <= s.length && Math.abs(across) <= s.width / 2
+    }
+  }
+}
+
+function def_scored(w: World, def: MechanicDef): boolean {
+  return def.roles.includes(w.player.role)
+}
+
+function recordFailure(w: World, def: MechanicDef) {
+  if (def.failText) {
+    w.lastFailure = { name: def.name, failText: def.failText, atMs: w.elapsedMs }
+  }
+  const row = w.failures.get(def.id)
+  if (row) row.count++
+  else w.failures.set(def.id, { mechanicId: def.id, name: def.name, failText: def.failText, count: 1 })
+}
+
+const MAX_SINGLE_HIT = 0.55
+
+function hurt(w: World, amount: number, cause: string) {
+  // Cap any one hit. You should be able to eat a mechanic, see the failure, and
+  // carry on — three mistakes in quick succession is what kills you, not one.
+  const capped = Math.min(amount, MAX_SINGLE_HIT)
+  const mitigated = w.player.cooldowns.defensive && w.player.cooldowns.defensive > COOLDOWN_MS.defensive - 8000
+    ? capped * 0.4
+    : capped
+  w.player.health -= mitigated
+  w.shake = Math.min(1, w.shake + mitigated * 2)
+  if (w.player.health <= 0 && w.player.alive) {
+    w.player.alive = false
+    w.player.health = 0
+    w.deathCause = cause
+  }
+}
+
+function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
+  let pos: Vec
+  switch (def.origin) {
+    case 'boss': pos = { ...w.bossPos }; break
+    case 'player': pos = { ...w.player.pos }; break
+    case 'targeted': {
+      // Mechanics that pick a raider pick YOU most of the time. This is a
+      // trainer: watching an ally carry a debuff teaches nothing, and a DPS
+      // whose only job is dodging circles is not learning the fight.
+      const onPlayer = Math.random() < 0.72
+      if (onPlayer) pos = { ...w.player.pos }
+      else {
+        const live = w.allies.filter(a => a.alive)
+        const a = live[Math.floor(Math.random() * Math.max(1, live.length))]
+        pos = a ? { ...a.pos } : { ...w.player.pos }
+      }
+      break
+    }
+    case 'edge': {
+      const a = Math.random() * Math.PI * 2
+      const r = w.boss.arenaRadius
+      pos = { x: Math.cos(a) * r, y: Math.sin(a) * r }
+      break
+    }
+    default: {
+      const a = Math.random() * Math.PI * 2
+      const r = Math.random() * w.boss.arenaRadius * 0.85
+      pos = { x: Math.cos(a) * r, y: Math.sin(a) * r }
+    }
+  }
+  if (at) pos = { ...at }
+
+  // Cones and lines from the boss point at the player, which is what makes
+  // `faceAway` a real decision for a tank.
+  let ang = angle ?? 0
+  if (angle === undefined && def.origin === 'boss') {
+    ang = Math.atan2(w.player.pos.y - pos.y, w.player.pos.x - pos.x)
+  } else if (angle === undefined) {
+    ang = Math.random() * Math.PI * 2
+  }
+
+  const inst: Instance = {
+    uid: w.nextUid++, def, pos, angle: ang,
+    timer: def.telegraphMs, resolved: false, answered: false,
+    // Did this land on the player? Drives both the "it follows you" behaviour
+    // and where its pool drops.
+    carriedByPlayer:
+      def.origin === 'player' ||
+      (def.origin === 'targeted' && Math.hypot(pos.x - w.player.pos.x, pos.y - w.player.pos.y) < 0.01),
+  }
+  if (def.driftSpeed) {
+    const a = Math.random() * Math.PI * 2
+    inst.drift = { x: Math.cos(a) * def.driftSpeed, y: Math.sin(a) * def.driftSpeed }
+  }
+  w.instances.push(inst)
+
+  if (!w.seen.has(def.id)) {
+    w.seen.add(def.id)
+    w.announce = def
+  }
+}
+
+/** Fire a mechanic by id. Exported so bosses can chain mechanics. */
+export function fire(w: World, id: string, at?: Vec, angle?: number) {
+  const def = w.boss.mechanics.find(m => m.id === id)
+  if (def) spawn(w, def, at, angle)
+}
+
+function resolveInstance(w: World, inst: Instance) {
+  const { def } = inst
+  inst.resolved = true
+  w.resolvedCount++
+  const scored = def.roles.includes(w.player.role)
+  const inside = isInside(inst, w.player.pos)
+
+  switch (def.rule.type) {
+    case 'avoid':
+      if (inside) {
+        if (scored) recordFailure(w, def)
+        hurt(w, def.damage ?? 0.3, def.name)
+      }
+      break
+
+    case 'beInside':
+      if (!inside) {
+        if (scored) recordFailure(w, def)
+        // Missing a shared soak hurts the raid, not you.
+        w.raidHealth -= 0.12
+      }
+      break
+
+    case 'faceAway': {
+      // Fails if the cone sweeps the arena centre, where the raid stands.
+      const toCentre = Math.atan2(-inst.pos.y, -inst.pos.x)
+      const arc = def.shape?.kind === 'cone' ? (def.shape.arcDeg * Math.PI) / 360 : 0.5
+      if (Math.abs(angleDelta(inst.angle, toCentre)) <= arc) {
+        if (scored) recordFailure(w, def)
+        w.raidHealth -= 0.1
+      }
+      if (inside) hurt(w, def.damage ?? 0.25, def.name)
+      break
+    }
+
+    case 'press':
+      if (!inst.answered) {
+        if (scored) recordFailure(w, def)
+        if (def.damage) hurt(w, def.damage, def.name)
+        else w.raidHealth -= 0.08
+      }
+      break
+
+    case 'carryOut': {
+      const d = lenOf(w.player.pos)
+      if (w.player.carrying[def.id] !== undefined && d < def.rule.minDistance) {
+        if (scored) recordFailure(w, def)
+        w.raidHealth -= 0.1
+      }
+      delete w.player.carrying[def.id]
+      break
+    }
+
+    case 'survive':
+      if (inside && def.knockbackYards) {
+        const away = Math.atan2(w.player.pos.y - inst.pos.y, w.player.pos.x - inst.pos.x)
+        let nx = w.player.pos.x + Math.cos(away) * def.knockbackYards
+        let ny = w.player.pos.y + Math.sin(away) * def.knockbackYards
+        const r = Math.hypot(nx, ny)
+        const rim = w.boss.arenaRadius - 1.5
+        if (r > rim) {
+          // Clamped to the rim, and it counts as a failure: you were standing
+          // somewhere the knock could not survive.
+          nx = (nx / r) * rim
+          ny = (ny / r) * rim
+          if (scored) recordFailure(w, def)
+          hurt(w, def.damage ?? 0.25, def.name)
+        }
+        w.player.pos.x = nx
+        w.player.pos.y = ny
+        w.player.aloft = 1200
+        w.shake = 1
+      }
+      break
+
+    case 'tankSwap':
+      // Applies a stack to whoever is currently holding the boss. The failure
+      // is checked continuously in step(), not here.
+      if (w.bossTargetId === 0) w.playerStacks += 1
+      else {
+        const t = w.allies.find(a => a.id === w.bossTargetId)
+        if (t) t.stacks += 1
+      }
+      break
+
+    case 'raidDamage':
+      // Never a per-player failure. Handled continuously in step().
+      break
+  }
+
+  if (def.spawns) {
+    const child = w.boss.mechanics.find(m => m.id === def.spawns!.defId)
+    if (child) {
+      // A carried debuff leaves its pool wherever the carrier is standing when
+      // it expires — that is the point of running it out.
+      const carried = def.rule.type === 'carryOut' && inst.carriedByPlayer
+      const at = carried ? { ...w.player.pos } : inst.pos
+      spawn(w, child, at, inst.angle)
+      if (carried) {
+        // Give the carrier a beat to walk clear. Without it the pool lands on
+        // top of you and resolves in the same frame, which is not a mechanic —
+        // it is an ambush.
+        const dropped = w.instances[w.instances.length - 1]
+        if (dropped && dropped.timer < 1200) dropped.timer = 1200
+      }
+    }
+  }
+}
+
+const ALLY_SPEED = 12
+const SWAP_GRACE_MS = 2500
+
+/**
+ * Ally AI. Deliberately assignment-based rather than emergent: when a mechanic
+ * telegraphs, each ally is handed one destination and walks to it. Emergent
+ * flocking looks clever and fails unpredictably, which would leave the player
+ * unable to tell their own mistakes from the raid's.
+ *
+ * Allies are competent on purpose. If they missed soaks at random, a failed
+ * pull would teach nothing.
+ */
+/**
+ * A point INSIDE a mechanic's shape, for an ally assigned to soak it.
+ *
+ * This matters more than it looks. A cone is anchored at the boss, so its
+ * `pos` is the apex — sending soakers to `inst.pos` walked them into the boss
+ * instead of into the cone. Soakers have to stand in the body of the shape,
+ * fanned out so they do not stack in one spot.
+ */
+function soakPoint(inst: Instance, slot: number, of: number): Vec {
+  const sh = inst.def.shape
+  if (!sh) return { ...inst.pos }
+  // Fan the soakers across the shape rather than piling them on one pixel.
+  const t = of <= 1 ? 0.5 : slot / (of - 1)
+  switch (sh.kind) {
+    case 'cone': {
+      const half = (sh.arcDeg * Math.PI) / 360
+      const ang = inst.angle + (t - 0.5) * half * 1.3
+      const r = sh.radius * (0.5 + 0.22 * ((slot % 2) ? 1 : -1))
+      return { x: inst.pos.x + Math.cos(ang) * r, y: inst.pos.y + Math.sin(ang) * r }
+    }
+    case 'circle': {
+      const ang = t * Math.PI * 2
+      const r = sh.radius * 0.55
+      return { x: inst.pos.x + Math.cos(ang) * r, y: inst.pos.y + Math.sin(ang) * r }
+    }
+    case 'line': {
+      const along = sh.length * (0.3 + 0.4 * t)
+      return { x: inst.pos.x + Math.cos(inst.angle) * along, y: inst.pos.y + Math.sin(inst.angle) * along }
+    }
+    case 'annulus': {
+      const ang = t * Math.PI * 2
+      const r = (sh.inner + sh.outer) / 2
+      return { x: inst.pos.x + Math.cos(ang) * r, y: inst.pos.y + Math.sin(ang) * r }
+    }
+  }
+}
+
+/** Is this point inside the shape, treated generously so allies keep clear? */
+function threatAt(inst: Instance, x: number, y: number): number {
+  const sh = inst.def.shape
+  if (!sh) return 0
+  const dx = x - inst.pos.x
+  const dy = y - inst.pos.y
+  const d = Math.hypot(dx, dy) || 0.001
+  switch (sh.kind) {
+    case 'circle': return d < sh.radius + 5 ? (sh.radius + 5) - d : 0
+    case 'annulus': return d > sh.inner - 2 ? d - (sh.inner - 2) : 0
+    case 'cone': {
+      if (d > sh.radius + 4) return 0
+      const to = Math.atan2(dy, dx)
+      let a = to - inst.angle
+      while (a > Math.PI) a -= Math.PI * 2
+      while (a < -Math.PI) a += Math.PI * 2
+      return Math.abs(a) <= (sh.arcDeg * Math.PI) / 360 + 0.15 ? (sh.radius + 4) - d : 0
+    }
+    case 'line': {
+      const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
+      const along = dx * ca + dy * sa
+      const across = -dx * sa + dy * ca
+      return along > -3 && along < sh.length + 3 && Math.abs(across) < sh.width / 2 + 4
+        ? (sh.width / 2 + 4) - Math.abs(across) : 0
+    }
+  }
+}
+
+/**
+ * Ally AI. Assignment-based rather than emergent: each ally is handed one
+ * destination per tick and walks to it. Emergent flocking looks clever and
+ * fails unpredictably, which would leave the player unable to tell their own
+ * mistakes from the raid's.
+ *
+ * Priority, highest first: get out of what will hurt you, then soak what needs
+ * soaking, then hold formation. Allies are competent on purpose — if they
+ * missed soaks at random, a failed pull would teach nothing.
+ */
+function allyThink(w: World) {
+  const arena = w.boss.arenaRadius
+
+  // Soak slots. All but one are filled by allies; the last is the player's, so
+  // a group mechanic is always personally consequential.
+  const soaks: { inst: Instance; slots: number; taken: number }[] = []
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.def.rule.type !== 'beInside') continue
+    soaks.push({ inst, slots: Math.max(1, (inst.def.soakers ?? 4) - 1), taken: 0 })
+  }
+
+  const offTankId = w.allies.find(a => a.role === 'tank' && a.id !== w.bossTargetId)?.id
+
+  for (const a of w.allies) {
+    if (!a.alive) continue
+
+    // 1. Formation. Melee on a tight ring, ranged further out, all of it
+    //    drifting slowly so the raid never looks frozen in place.
+    // Fixed station per raider, derived from their id. No time term: raiders
+    // hold their spot and only move when a mechanic makes them, which is what
+    // a real raid looks like. An orbiting drift made them circle forever.
+    const isMelee = a.role === 'tank' || a.id % 3 === 0
+    const ringR = isMelee ? 9 : 21 + (a.id % 4) * 2.5
+    const spread = (a.id / Math.max(1, w.allies.length)) * Math.PI * 2
+    a.want.x = w.bossPos.x + Math.cos(spread) * ringR
+    a.want.y = w.bossPos.y + Math.sin(spread) * ringR
+
+    // 2. Tanks. The one holding the boss plants itself so the cone stays put and
+    //    points away from the raid; the off-tank waits behind the boss, clear of
+    //    the frontal, ready to take the swap.
+    if (a.id === w.bossTargetId) {
+      a.want.x = w.bossPos.x + Math.cos(w.bossAngle) * 5
+      a.want.y = w.bossPos.y + Math.sin(w.bossAngle) * 5
+    } else if (a.id === offTankId) {
+      a.want.x = w.bossPos.x - Math.cos(w.bossAngle) * 7
+      a.want.y = w.bossPos.y - Math.sin(w.bossAngle) * 7
+    }
+
+    // 3. Soak, if a slot is going spare. Tanks stay on the boss.
+    if (a.role !== 'tank') {
+      for (const sk of soaks) {
+        if (sk.taken >= sk.slots) continue
+        const pt = soakPoint(sk.inst, sk.taken, sk.slots)
+        a.want.x = pt.x
+        a.want.y = pt.y
+        sk.taken++
+        break
+      }
+    }
+
+    // 3b. Demonstrate the rest of the mechanic vocabulary. A raid standing
+    //     still through a knockback or a debuff teaches nothing, so each rule
+    //     type gets a legible group movement you can copy.
+    for (const inst of w.instances) {
+      if (inst.resolved) continue
+      const rt = inst.def.rule.type
+
+      if (rt === 'carryOut') {
+        // Carriers walk it out. A third of the raid plays carrier so the
+        // "run to the edge, drop it, come back" shape is visible.
+        if (a.id % 3 === 0 && a.role !== 'tank') {
+          const r = Math.hypot(a.pos.x, a.pos.y) || 1
+          const out = Math.min(arena * 0.82, inst.def.rule.minDistance + 6)
+          a.want.x = (a.pos.x / r) * out
+          a.want.y = (a.pos.y / r) * out
+        }
+      } else if (rt === 'survive') {
+        // A knockback is coming: spread out and stand where the push carries
+        // you ACROSS the platform, not off it. Everyone drifts inward first.
+        const r = Math.hypot(a.pos.x, a.pos.y) || 1
+        const safe = arena * 0.42
+        a.want.x = (a.pos.x / r) * safe + Math.cos(a.id) * 5
+        a.want.y = (a.pos.y / r) * safe + Math.sin(a.id) * 5
+      } else if (rt === 'press' && inst.def.rule.ability === 'dispel') {
+        // A drifting hazard: the raid gives it a wide berth rather than
+        // walking through it.
+        if (inst.def.shape?.kind === 'circle') {
+          const dx = a.pos.x - inst.pos.x
+          const dy = a.pos.y - inst.pos.y
+          const d = Math.hypot(dx, dy) || 1
+          if (d < inst.def.shape.radius + 8) {
+            a.want.x = inst.pos.x + (dx / d) * (inst.def.shape.radius + 11)
+            a.want.y = inst.pos.y + (dy / d) * (inst.def.shape.radius + 11)
+          }
+        }
+      }
+    }
+
+    // 4. Get clear of anything lethal. Highest priority, overrides the above —
+    //    and checked against where they ARE as well as where they are going, so
+    //    a hazard landing on a standing ally makes them move.
+    for (const inst of w.instances) {
+      if (!inst.def.shape || inst.def.rule.type !== 'avoid') continue
+      const sh = inst.def.shape
+      const threatWant = threatAt(inst, a.want.x, a.want.y)
+      const threatNow = threatAt(inst, a.pos.x, a.pos.y)
+      if (threatWant <= 0 && threatNow <= 0) continue
+
+      if (sh.kind === 'annulus') {
+        // The ring is the danger, so safety is inward. Running "away" from an
+        // annulus runs you off the platform.
+        const dx = a.pos.x - inst.pos.x
+        const dy = a.pos.y - inst.pos.y
+        const d = Math.hypot(dx, dy) || 1
+        const safe = Math.max(2, sh.inner - 6)
+        a.want.x = inst.pos.x + (dx / d) * safe
+        a.want.y = inst.pos.y + (dy / d) * safe
+        continue
+      }
+      // Push out from wherever they currently stand, so the escape is a real
+      // move away rather than a teleport to the far side.
+      let dx = a.pos.x - inst.pos.x
+      let dy = a.pos.y - inst.pos.y
+      let d = Math.hypot(dx, dy)
+      if (d < 0.5) {
+        // Standing on the origin: no direction to flee, so pick one away from
+        // the arena centre.
+        const r = Math.hypot(a.pos.x, a.pos.y) || 1
+        dx = a.pos.x / r; dy = a.pos.y / r; d = 1
+      }
+      const clear = (sh.kind === 'circle' ? sh.radius : sh.kind === 'cone' ? sh.radius * 0.75 : 12) + 7
+      a.want.x = inst.pos.x + (dx / d) * clear
+      a.want.y = inst.pos.y + (dy / d) * clear
+    }
+
+    // 5. Clean floor. If the station is now sitting in a lingering pool, walk
+    //    to the nearest clear ground. This is what keeps the raid moving between
+    //    mechanics: pools accumulate, so the group steadily relocates.
+    let fouled = 0
+    for (const inst of w.instances) {
+      if (!inst.resolved || !inst.def.lingerMs || !inst.def.shape) continue
+      fouled += threatAt(inst, a.want.x, a.want.y) > 0 ? 1 : 0
+    }
+    if (fouled > 0) {
+      // Sample a ring of candidate spots and take the cleanest one nearest home.
+      let bestX = a.want.x, bestY = a.want.y, bestScore = Infinity
+      for (let i = 0; i < 12; i++) {
+        const ang = (i / 12) * Math.PI * 2 + a.id
+        for (const dist2 of [10, 18, 26]) {
+          const cx = a.want.x + Math.cos(ang) * dist2
+          const cy = a.want.y + Math.sin(ang) * dist2
+          if (Math.hypot(cx, cy) > arena * 0.86) continue
+          let bad = 0
+          for (const inst of w.instances) {
+            if (!inst.def.shape) continue
+            if (!inst.resolved && inst.def.rule.type !== 'avoid') continue
+            if (threatAt(inst, cx, cy) > 0) bad += inst.resolved ? 1 : 2
+          }
+          const score = bad * 100 + dist2
+          if (score < bestScore) { bestScore = score; bestX = cx; bestY = cy }
+        }
+      }
+      a.want.x = bestX
+      a.want.y = bestY
+    }
+
+    // 6. A small idle sway so a raider at station never looks switched off.
+    //    Deliberately tiny — a couple of yards, not an orbit.
+    a.want.x += Math.sin(w.elapsedMs / 2600 + a.id * 1.7) * 1.6
+    a.want.y += Math.cos(w.elapsedMs / 3100 + a.id * 2.3) * 1.6
+
+    // 7. Never walk off the platform.
+    const r = Math.hypot(a.want.x, a.want.y)
+    if (r > arena * 0.9) {
+      a.want.x *= (arena * 0.9) / r
+      a.want.y *= (arena * 0.9) / r
+    }
+  }
+}
+
+function allyMove(w: World, dt: number) {
+  for (const a of w.allies) {
+    if (!a.alive) continue
+    // Reaction time, staggered by id: a raid does not move as one object.
+    // Deterministic rather than random so playtests stay reproducible.
+    const lag = 0.06 + (a.id % 5) * 0.035
+    const ease = Math.min(1, dt / Math.max(0.016, lag))
+    const dx = (a.want.x - a.pos.x) * ease
+    const dy = (a.want.y - a.pos.y) * ease
+    const d = Math.hypot(dx, dy)
+    // Deadzone: close enough is close enough, but small enough that the idle
+    // sway still reads as a living raider rather than a statue.
+    if (d > 0.6) {
+      const stepLen = Math.min(d, ALLY_SPEED * dt)
+      a.pos.x += (dx / d) * stepLen
+      a.pos.y += (dy / d) * stepLen
+    }
+    if (a.debuffMs > 0) {
+      a.debuffMs -= dt * 1000
+      if (a.debuffMs <= 0) { a.debuff = null; a.debuffMs = 0 }
+    }
+    if (a.health < 1 && a.health > 0) a.health = Math.min(1, a.health + 0.06 * dt)
+  }
+}
+
+/**
+ * What should the player do right now?
+ *
+ * Ordered by how quickly it will hurt: a kick you are about to miss beats a
+ * puddle you are standing in. Only one instruction is ever shown — a wall of
+ * competing advice teaches nothing.
+ */
+function computePrompt(w: World): Prompt | null {
+  let best: Prompt | null = null
+  let bestRank = Infinity
+  const consider = (p: Prompt, rank: number) => {
+    if (rank >= bestRank) return
+    bestRank = rank
+    best = { ...p, urgency: Math.max(0, Math.min(1, p.urgency)) }
+  }
+
+  // Tank swap: the boss has been on one tank too long and you are the other.
+  const swapDef = w.boss.mechanics.find(m => m.rule.type === 'tankSwap')
+  if (swapDef && swapDef.rule.type === 'tankSwap' && w.player.role === 'tank') {
+    const tank = currentTank(w)
+    if (!tank.isPlayer && tank.stacks >= swapDef.rule.maxStacks) {
+      consider({ verb: 'TAUNT', mechanic: swapDef.name, urgency: 1 }, 0)
+    }
+  }
+
+  for (const inst of w.instances) {
+    if (inst.resolved) continue
+    const { def } = inst
+    const t = def.telegraphMs > 0 ? 1 - inst.timer / def.telegraphMs : 1
+    const inside = isInside(inst, w.player.pos)
+    const mine = def.roles.includes(w.player.role)
+
+    switch (def.rule.type) {
+      case 'press':
+        if (!inst.answered && mine) {
+          const verb = def.rule.ability === 'interrupt' ? 'KICK IT' : 'DISPEL'
+          consider({ verb, mechanic: def.name, urgency: t }, 1)
+        }
+        break
+      case 'beInside':
+        if (!inside) consider({ verb: 'GET IN', mechanic: def.name, urgency: t }, 2)
+        break
+      case 'carryOut':
+        if (inst.carriedByPlayer) {
+          const d = Math.hypot(w.player.pos.x, w.player.pos.y)
+          if (d < def.rule.minDistance) {
+            consider({ verb: 'RUN IT OUT', mechanic: def.name, urgency: t }, 2)
+          }
+        }
+        break
+      case 'avoid':
+        if (inside) consider({ verb: 'MOVE OUT', mechanic: def.name, urgency: t }, 3)
+        break
+      case 'survive':
+        if (inside) consider({ verb: 'BRACE — KNOCKBACK', mechanic: def.name, urgency: t }, 4)
+        break
+      case 'faceAway':
+        if (w.player.role === 'tank' && w.bossTargetId === 0) {
+          consider({ verb: 'POINT IT AWAY', mechanic: def.name, urgency: t }, 2)
+        }
+        break
+      default:
+        break
+    }
+  }
+  return best
+}
+
+/** The next few mechanics the loop will fire, for the anticipation strip. */
+export function upcoming(w: World, count = 3): { name: string; inSec: number }[] {
+  const out: { name: string; inSec: number }[] = []
+  const period = w.boss.loopIntervalSec * 1000
+  let untilNext = period - w.loopTimerMs
+  for (let i = 0; i < count; i++) {
+    const id = w.boss.loop[(w.loopIndex + i) % w.boss.loop.length]
+    const def = w.boss.mechanics.find(m => m.id === id)
+    if (def) out.push({ name: def.name, inSec: (untilNext + i * period) / 1000 })
+  }
+  return out
+}
+
+/** One fixed timestep. dtMs is always TICK_MS. */
+export function step(w: World, input: Input, dtMs: number) {
+  if (!w.player.alive) return
+  w.announce = null
+  w.elapsedMs += dtMs
+  const dt = dtMs / 1000
+
+  // ── movement ──
+  let mx = (input.right ? 1 : 0) - (input.left ? 1 : 0)
+  let my = (input.down ? 1 : 0) - (input.up ? 1 : 0)
+  if (mx || my) {
+    const m = Math.hypot(mx, my)
+    mx /= m; my /= m
+    // Airborne from a knockback: you drift, you do not steer. This is what
+    // makes Sszorak's wind dangerous rather than an inconvenience.
+    const speed = w.player.aloft > 0 ? PLAYER_SPEED * 0.25 : PLAYER_SPEED
+    w.player.pos.x += mx * speed * dt
+    w.player.pos.y += my * speed * dt
+  }
+  if (w.player.aloft > 0) w.player.aloft -= dtMs
+
+  // Falling off the platform. On Sszorak this is the single biggest killer in
+  // the real logs, so it is a hard fail rather than a soft push-back.
+  if (lenOf(w.player.pos) > w.boss.arenaRadius) {
+    w.player.alive = false
+    w.player.health = 0
+    w.deathCause = 'Fell off the platform'
+    recordFailure(w, {
+      id: 'falling', name: 'Falling', spellId: 3, roles: [w.player.role],
+      telegraphMs: 0, origin: 'random', rule: { type: 'avoid' },
+      good: 'Move with the wind and never let it carry you past the edge.',
+      failText: 'Blown off the platform',
+    })
+    return
+  }
+
+  // ── cooldowns and carried debuffs ──
+  for (const k of Object.keys(w.player.cooldowns) as Ability[]) {
+    const v = w.player.cooldowns[k]!
+    w.player.cooldowns[k] = v - dtMs <= 0 ? undefined : v - dtMs
+  }
+  for (const id of Object.keys(w.player.carrying)) {
+    w.player.carrying[id] -= dtMs
+    if (w.player.carrying[id] <= 0) delete w.player.carrying[id]
+  }
+
+  // ── abilities ──
+  for (const ab of input.pressed) {
+    if (!abilitiesFor(w.player.role).includes(ab)) continue
+    if (w.player.cooldowns[ab]) continue
+    w.player.cooldowns[ab] = COOLDOWN_MS[ab]
+    if (ab === 'raidcd') {
+      w.raidHealth = Math.min(1, w.raidHealth + 0.35)
+      for (const a of w.allies) if (a.alive) a.health = Math.min(1, a.health + 0.4)
+    }
+    if (ab === 'taunt') { w.bossTargetId = 0; w.overStackMs = 0 }
+    if (ab === 'dispel') {
+      // Clear the nearest debuffed ally — the healer's actual job.
+      let bestAlly: Ally | null = null
+      let bd = 40
+      for (const a of w.allies) {
+        if (!a.alive || !a.debuff) continue
+        const d = dist(a.pos, w.player.pos)
+        if (d < bd) { bd = d; bestAlly = a }
+      }
+      if (bestAlly) { bestAlly.debuff = null; bestAlly.debuffMs = 0 }
+    }
+    // Answer the nearest unresolved mechanic that wants this ability.
+    let best: Instance | null = null
+    for (const inst of w.instances) {
+      if (inst.resolved || inst.answered) continue
+      if (inst.def.rule.type !== 'press' || inst.def.rule.ability !== ab) continue
+      if (!best || inst.timer < best.timer) best = inst
+    }
+    if (best) best.answered = true
+  }
+
+  // ── the raid ──
+  allyThink(w)
+  allyMove(w, dt)
+
+  // ── tank swap ──
+  // The boss stacks its debuff on whoever holds it; the off-tank taunts before
+  // it turns lethal. That is only YOUR job when you are the tank — otherwise the
+  // two AI tanks swap between themselves and it is never scored against you.
+  const swapDef = w.boss.mechanics.find(m => m.rule.type === 'tankSwap')
+  if (swapDef && swapDef.rule.type === 'tankSwap') {
+    const tank = currentTank(w)
+    const playerIsTank = w.player.role === 'tank'
+    if (tank.stacks >= swapDef.rule.maxStacks) {
+      w.overStackMs += dtMs
+      if (!playerIsTank) {
+        if (w.overStackMs > 800) {
+          const other = w.allies.find(a => a.role === 'tank' && a.id !== w.bossTargetId && a.alive)
+          if (other) { w.bossTargetId = other.id; w.overStackMs = 0 }
+        }
+      } else if (w.overStackMs > SWAP_GRACE_MS) {
+        recordFailure(w, swapDef)
+        w.overStackMs = 0
+        if (tank.isPlayer) hurt(w, 0.3, swapDef.name)
+        // The co-tank covers for you so the pull carries on.
+        const other = w.allies.find(a => a.role === 'tank' && a.id !== w.bossTargetId && a.alive)
+        if (other) w.bossTargetId = other.id
+        else if (!tank.isPlayer) w.bossTargetId = 0
+      }
+    } else {
+      w.overStackMs = 0
+    }
+    // Stacks fall off whoever is not holding the boss.
+    for (const a of w.allies) {
+      if (a.id !== w.bossTargetId && a.stacks > 0) a.stacks = Math.max(0, a.stacks - 0.35 * dt)
+    }
+    if (w.bossTargetId !== 0 && w.playerStacks > 0) {
+      w.playerStacks = Math.max(0, w.playerStacks - 0.35 * dt)
+    }
+  }
+
+  // ── the raid covers what is not your job ──
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.answered) continue
+    if (inst.def.rule.type !== 'press') continue
+    // Can the player actually press this? If not, it is not their job, whatever
+    // the boss file's `roles` says.
+    if (abilitiesFor(w.player.role).includes(inst.def.rule.ability)) continue
+    const need: Role = inst.def.rule.ability === 'dispel' ? 'healer' : 'dps'
+    // React late enough that you can see them do it, early enough to be safe.
+    if (inst.timer < inst.def.telegraphMs * 0.45 && w.allies.some(a => a.alive && a.role === need)) {
+      inst.answered = true
+    }
+  }
+
+  // ── boss ──
+  // Faces the player unless a tank is holding it: a tank who stays put keeps
+  // the cone pointed away from centre, which is the whole `faceAway` game.
+  const tankPos = currentTank(w).pos
+  const toTank = Math.atan2(tankPos.y - w.bossPos.y, tankPos.x - w.bossPos.x)
+  const turn = angleDelta(w.bossAngle, toTank)
+  w.bossAngle += Math.max(-1.4 * dt, Math.min(1.4 * dt, turn))
+  w.bossEnergy = Math.min(100, w.bossEnergy + w.boss.energyPerSec * dt)
+
+  // ── scheduler ──
+  w.loopTimerMs += dtMs
+  if (w.loopTimerMs >= w.boss.loopIntervalSec * 1000) {
+    w.loopTimerMs = 0
+    const id = w.boss.loop[w.loopIndex % w.boss.loop.length]
+    w.loopIndex++
+    fire(w, id)
+  }
+  if (w.bossEnergy >= 100 && w.boss.atFullEnergy) {
+    w.bossEnergy = 0
+    fire(w, w.boss.atFullEnergy)
+  }
+
+  // Ambient attrition ticks continuously — the healer's baseline problem.
+  for (const id of w.boss.ambient ?? []) {
+    const def = w.boss.mechanics.find(m => m.id === id)
+    if (def?.rule.type === 'raidDamage') {
+      w.raidHealth -= (def.rule.dps / 100) * dt
+      if (!w.seen.has(def.id)) { w.seen.add(def.id); w.announce = def }
+    }
+  }
+  // Healers regenerate the raid passively; other roles rely on their raid CD.
+  const regen = w.player.role === 'healer' ? 0.045 : 0.03
+  w.raidHealth = Math.max(0, Math.min(1, w.raidHealth + regen * dt))
+  // Ambient attrition is shared, so the raid visibly suffers when it is unhealed.
+  for (const a of w.allies) {
+    if (!a.alive) continue
+    if (w.raidHealth < 0.75) a.health -= (0.75 - w.raidHealth) * 0.09 * dt
+    if (a.health <= 0) { a.alive = false; a.health = 0; w.alliesLost++ }
+  }
+  w.raidHealthLow = Math.min(w.raidHealthLow, w.raidHealth)
+
+  // You are being healed. There are healers in the fiction even though they are
+  // not on screen, and without this every scratch is permanent — one mistake in
+  // the first 20s would doom a pull, which teaches nothing. Healing scales with
+  // the raid bar, so letting the raid drop makes your own mistakes bite harder.
+  if (w.player.health < 1) {
+    const throughput = 0.062 * (0.35 + 0.65 * w.raidHealth)
+    w.player.health = Math.min(1, w.player.health + throughput * dt)
+  }
+
+  // ── instances ──
+  let pooledThisTick = false
+  for (const inst of w.instances) {
+    if (inst.drift && !inst.resolved) {
+      inst.pos.x += inst.drift.x * dt
+      inst.pos.y += inst.drift.y * dt
+      if (lenOf(inst.pos) > w.boss.arenaRadius) {
+        inst.drift.x *= -1; inst.drift.y *= -1
+      }
+    }
+    // A cone from the boss tracks its facing ONLY when the tracking is the
+    // mechanic — that is, a tank frontal you are meant to point away.
+    //
+    // An `avoid` frontal must NOT track. The boss faces whoever is tanking it,
+    // so a tracking avoid-cone follows you forever: the game tells you to move
+    // out of something it has glued to you, then fails you for not doing the
+    // impossible. Real frontals fire where they were aimed and you sidestep.
+    if (!inst.resolved && inst.def.origin === 'boss' && inst.def.shape?.kind !== 'circle') {
+      inst.pos = { ...w.bossPos }
+      if (inst.def.rule.type === 'faceAway') inst.angle = w.bossAngle
+    }
+    // A carried debuff rides its carrier. Anchoring it where it landed meant the
+    // marker stayed on the floor while you ran, and the pool then dropped where
+    // you were when you got it rather than where you took it — which is exactly
+    // backwards, since walking it out IS the mechanic.
+    if (!inst.resolved && inst.def.rule.type === 'carryOut' && inst.carriedByPlayer) {
+      inst.pos = { ...w.player.pos }
+      w.player.carrying[inst.def.id] = inst.timer
+    }
+
+    inst.timer -= dtMs
+    if (!inst.resolved && inst.timer <= 0) resolveInstance(w, inst)
+
+    // Lingering hazards keep hurting anyone standing in them.
+    if (inst.resolved && inst.def.lingerMs && isInside(inst, w.player.pos)) {
+      if (inst.def.popsOnContact) {
+        // "pops on contact for damage and a 30% slow" — one hit, then it is
+        // gone. Modelling it as a persistent field instead made it the leading
+        // cause of death in playtesting, which is not what the fight does.
+        if (!inst.answered) {
+          inst.answered = true
+          inst.timer = -1e9          // retire it
+          if (def_scored(w, inst.def)) recordFailure(w, inst.def)
+          hurt(w, inst.def.damage ?? 0.15, inst.def.name)
+        }
+      } else if (!pooledThisTick) {
+        // Only the worst pool you are standing in ticks. Overlapping pools used
+        // to multiply, which is how a player with three failures ended up dead.
+        pooledThisTick = true
+        hurt(w, (inst.def.damage ?? 0.15) * 0.5 * dt, inst.def.name)
+      }
+    }
+  }
+  w.instances = w.instances.filter(i =>
+    !i.resolved || (i.def.lingerMs !== undefined && -i.timer < i.def.lingerMs))
+
+  // ── your damage ──
+  // You contribute while alive and in range. A tank does less, a dps more; the
+  // point is that dodging well kills the boss faster, not that you play a rotation.
+  if (dist(w.player.pos, w.bossPos) <= ATTACK_RANGE) {
+    // Tuned from headless playtests so all three roles can clear a clean pull
+    // inside the enrage, with dps fastest and healer slowest — but nobody
+    // locked out of a kill for picking the "wrong" role.
+    const base = w.player.role === 'dps' ? 1.0 : w.player.role === 'tank' ? 0.82 : 0.75
+    const bursting = (w.player.cooldowns.burst ?? 0) > COOLDOWN_MS.burst - BURST_WINDOW_MS
+    const rate = base * (bursting ? 3 : 1)
+    w.bossHp -= (rate / w.boss.pullLengthSec) * dt * 1.45
+  }
+  if (w.bossHp <= 0 && !w.killed) {
+    w.bossHp = 0
+    w.killed = true
+  }
+
+  // Melee-range mechanics: raid damage if the raid bar empties.
+  if (w.raidHealth <= 0 && w.player.alive) {
+    w.player.alive = false
+    w.deathCause = 'Raid wiped — healing could not keep up'
+  }
+
+  w.shake = Math.max(0, w.shake - dt * 3)
+  w.prompt = computePrompt(w)
+}
+
+export function isInMelee(w: World): boolean {
+  return dist(w.player.pos, w.bossPos) <= MELEE_RANGE
+}
+
+export function buildResult(w: World): RunResult {
+  const survived = w.elapsedMs / 1000
+  return {
+    bossKey: w.boss.key,
+    role: w.player.role,
+    survivedSec: Math.round(survived),
+    pullLengthSec: w.boss.pullLengthSec,
+    cleared: w.killed,
+    bossHpLeft: w.bossHp,
+    deathCause: w.deathCause,
+    failures: [...w.failures.values()].sort((a, b) => b.count - a.count),
+    mechanicsResolved: w.resolvedCount,
+    raidHealthLow: w.raidHealthLow,
+    alliesLost: w.alliesLost,
+  }
+}

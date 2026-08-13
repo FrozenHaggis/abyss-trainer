@@ -1,0 +1,6 @@
+node_modules
+dist
+.playtest
+
+# Personal music copy — kept local so a published build never redistributes it.
+public/music/*.mp3

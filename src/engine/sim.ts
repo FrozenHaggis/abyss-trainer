@@ -1085,8 +1085,13 @@ function computePrompt(w: World): Prompt | null {
  * was the one that killed you.
  */
 export function unlockedCount(w: World): number {
-  const every = w.boss.introEverySec ?? 14
-  const n = 1 + Math.floor(w.elapsedMs / 1000 / every)
+  // A clean pull kills in roughly 0.46 x pullLengthSec — about 69 seconds on
+  // most of these bosses. At the old 14-second cadence that unlocked only five
+  // of a twelve-mechanic loop before the boss died, so you could burst it to
+  // 20% having seen almost none of the fight. Five seconds gets the whole loop
+  // in play inside a minute while still introducing them one at a time.
+  const every = w.boss.introEverySec ?? 5
+  const n = 2 + Math.floor(w.elapsedMs / 1000 / every)
   return Math.max(1, Math.min(w.boss.loop.length, n))
 }
 
@@ -1367,9 +1372,25 @@ export function step(w: World, input: Input, dtMs: number) {
     const unit = bossUnitFor(w, swapDef.from)
     const tank = currentTank(w, unit)
     const playerIsTank = w.player.role === 'tank'
-    const freeTank = () => w.allies.find(a =>
-      a.role === 'tank' && a.alive && a.id !== unit.targetId
-      && !w.bosses.some(b => b !== unit && b.targetId === a.id))
+    /**
+     * Hand `unit` to the other tank.
+     *
+     * When every entity is already tanked — Entombed Sentinels, Twin Fangs —
+     * there IS no free tank, and looking for one meant the swap silently never
+     * fired. The fight's own answer is a trade: "Breath tanks swap" and "Blood
+     * tanks trade" are two halves of the same exchange, with each tank taking
+     * the golem the other just put down.
+     */
+    const handOff = (): Ally | undefined => {
+      const other = w.allies.find(a =>
+        a.role === 'tank' && a.alive && a.id !== unit.targetId)
+      if (!other) return undefined
+      const theirs = w.bosses.find(b => b !== unit && b.targetId === other.id)
+      // Whoever had `unit` picks up whatever the other tank was holding.
+      if (theirs) theirs.targetId = unit.targetId
+      return other
+    }
+    const freeTank = handOff
     if (tank.stacks >= swapDef.rule.maxStacks) {
       w.overStackMs += dtMs
       if (tank.isPlayer) {

@@ -75,8 +75,17 @@ export const sentinels: BossDef = {
     },
   ],
   entities: [
-    { id: 'breath', name: "Breath of Ula'tek", npcId: 258557, start: { x: -13, y: 0 } },
-    { id: 'blood', name: "Blood of Ula'tek", npcId: 258558, start: { x: 13, y: 0 } },
+    // Both golems are tanked, and held apart. "Tanks hold them 40+ yards apart
+    // all pull" — Ula'tek's Dominance gives both 99% damage reduction within
+    // ~25yd of each other. Each golem has its own tank mechanic (Empowering
+    // Slam on Breath, Bloodvenom Injection on Blood), so the two tanks TRADE
+    // golems rather than passing one between them.
+    //
+    // They sat 26 yards apart here — barely outside the Dominance threshold and
+    // nowhere near the 40 the fight asks for. The trainer was parked in the
+    // failure state all pull, with both tanks on Breath and Blood untanked.
+    { id: 'breath', name: "Breath of Ula'tek", npcId: 258557, start: { x: -22, y: 0 }, tankedApart: true },
+    { id: 'blood', name: "Blood of Ula'tek", npcId: 258558, start: { x: 22, y: 0 }, tankedApart: true },
   ],
   maxHp: 1,
   loopIntervalSec: 6,

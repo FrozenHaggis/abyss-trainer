@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ability, BossDef, MechanicDef, Prompt, Role, RunResult } from '../engine/types'
-import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createWorld, currentTank, step, upcoming } from '../engine/sim'
+import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createDrill, createWorld, currentTank, step, upcoming } from '../engine/sim'
 import type { Input, World } from '../engine/sim'
 import { makeCamera, render } from '../engine/render'
 import RoleIcon from './RoleIcon'
@@ -26,17 +26,20 @@ interface HudSample {
   raidAlive: number
   prompt: Prompt | null
   next: { name: string; inSec: number }[]
+  drillReps: number
+  drillClean: number
 }
 
-export default function Arena({ boss, role, onEnd, onQuit }: {
-  boss: BossDef; role: Role; onEnd: (r: RunResult) => void; onQuit: () => void
+export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
+  boss: BossDef; role: Role; drillId?: string
+  onEnd: (r: RunResult) => void; onQuit: () => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const worldRef = useRef<World | null>(null)
   const [hud, setHud] = useState<HudSample>({
     health: 1, raid: 1, bossHp: 1, energy: 0, elapsed: 0, cooldowns: {},
     alive: true, stacks: 0, tanking: false, raidAlive: 0,
-    prompt: null, next: [],
+    prompt: null, next: [], drillReps: 0, drillClean: 0,
   })
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   const [voiceOn, setVoiceOn] = useState(voiceEnabled())
@@ -46,7 +49,7 @@ export default function Arena({ boss, role, onEnd, onQuit }: {
   useEffect(() => {
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
-    const world = createWorld(boss, role)
+    const world = drillId ? createDrill(boss, role, drillId) : createWorld(boss, role)
     worldRef.current = world
     startMusic()
     initVoice()
@@ -172,6 +175,8 @@ export default function Arena({ boss, role, onEnd, onQuit }: {
           raidAlive: world.allies.filter(a => a.alive).length,
           prompt: world.prompt,
           next: upcoming(world, 3),
+          drillReps: world.drillReps,
+          drillClean: world.drillClean,
         })
       }
       raf = requestAnimationFrame(frame)
@@ -189,7 +194,7 @@ export default function Arena({ boss, role, onEnd, onQuit }: {
       stopMusic()
       stopVoice()
     }
-  }, [boss, role, onEnd, abilities])
+  }, [boss, role, drillId, onEnd, abilities])
 
   useEffect(() => {
     if (!toast) return
@@ -243,7 +248,15 @@ export default function Arena({ boss, role, onEnd, onQuit }: {
             <span className="tankwatch-stacks">{Math.floor(hud.stacks)} stacks</span>
           </div>
         )}
-        <div className="timer">{Math.ceil(remaining)}s</div>
+        {drillId ? (
+          // A drill has no clock. What matters is how many clean reps you have
+          // strung together.
+          <div className="timer drill-score">
+            {hud.drillClean}<span>/{hud.drillReps} clean</span>
+          </div>
+        ) : (
+          <div className="timer">{Math.ceil(remaining)}s</div>
+        )}
         {voiceSupported() && (
           <button
             className={`voice-toggle${voiceOn ? ' on' : ''}`}

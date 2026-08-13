@@ -194,6 +194,30 @@ for (const [key, dir] of present) {
     }
   })
 
+  test(`${key}: every add is a real add from abilities.json`, () => {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const block = src.match(/\n {2}adds:\s*\[([\s\S]*?)\n {2}\],/)
+    if (!block) return                       // a boss with no adds is allowed
+    const raw = JSON.parse(readFileSync(join(ABILITIES, `${dir}.json`), 'utf8'))
+    // spellId -> the add entry that owns it, from the real data.
+    const owner = new Map()
+    for (const a of raw.adds ?? []) {
+      for (const s of a.spells ?? []) if (!owner.has(s.spellId)) owner.set(s.spellId, a)
+    }
+    const authored = [...block[1].matchAll(
+      /name: '([^']+)', npcId: (\d+), spellId: (\d+),\s*\n\s*job: '([^']+)'/g)]
+    assert.ok(authored.length > 0, 'adds block parsed no entries')
+    for (const [, name, npcId, spellId, job] of authored) {
+      const real = owner.get(Number(spellId))
+      assert.ok(real, `add "${name}" uses spellId ${spellId}, which no add in ${dir}/abilities.json casts`)
+      if (Number(npcId) !== 0) {
+        assert.equal(Number(npcId), real.npcId,
+          `add "${name}" has npcId ${npcId} but abilities.json says ${real.npcId}`)
+      }
+      assert.ok(['kill', 'kick', 'intercept', 'leave'].includes(job), `add "${name}" has unknown job ${job}`)
+    }
+  })
+
   test(`${key}: every referenced mechanic id resolves`, () => {
     const { src, mechanics } = readBoss(key)
     const ids = new Set(mechanics.map(m => m.id))
@@ -264,6 +288,48 @@ test('a contact hazard cannot kill on the frame it spawns', () => {
   assert.ok(/inside\s*&&\s*!def\.popsOnContact/.test(body),
     'avoid resolves without excluding contact hazards — a Deadly orb with a 1ms ' +
     'telegraph can then spawn on top of you and kill you with no reaction window')
+})
+
+// The Coiled Altar orbs are the one add in the raid where shooting it is the
+// mistake. A trainer that quietly rewarded killing everything on screen would
+// drill in exactly the habit that fight punishes hardest.
+test('shooting a "leave" add is a failure, not a kill', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("if (add.def.job === 'leave')")
+  assert.ok(i > 0, 'sim.ts no longer special-cases "leave" adds when a shot connects')
+  const body = sim.slice(i, i + 500)
+  assert.ok(body.includes('recordAddFailure'),
+    'destroying a "leave" add records no failure — Venom Rupture is the biggest killer on that boss')
+  assert.ok(!/w\.addsKilled\+\+/.test(body),
+    'destroying a "leave" add counts as a kill — it must never read as progress')
+})
+
+// Caustic Globule: "un-soaked ruptures only, never soakers". Running over one
+// is the job, and the engine must have no way to score it against you.
+test('eating a pickup can never be a failure', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'collect':")
+  assert.ok(i > 0, "sim.ts no longer handles 'collect'")
+  const body = sim.slice(i, i + sim.slice(i).indexOf('break'))
+  assert.ok(/if \(!inst\.answered\)/.test(body),
+    'collect resolves without checking whether it was picked up — the soaker would be blamed')
+  assert.ok(!body.includes('killPlayer'),
+    'a ruptured pickup kills the player outright; it ruptures onto the raid')
+})
+
+test('pickups are drawn as pickups, not as ground to avoid', () => {
+  const render = readFileSync('src/engine/render.ts', 'utf8')
+  assert.ok(/case 'collect': return GREEN/.test(render),
+    'collect telegraphs are not green — red reads as "do not stand here", the opposite of the mechanic')
+  assert.ok(render.includes("inst.def.rule.type === 'collect') continue"),
+    'collect instances also fall through to the generic telegraph draw, so they render as one big shape')
+})
+
+test('adds cannot pile up faster than they can be cleared', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  assert.ok(/w\.adds\.length < MAX_CONCURRENT_ADDS/.test(sim),
+    'the wave scheduler has no concurrency cap — waves landing on uncleared waves ' +
+    'is a wipe you cannot play out of, and it teaches nothing except that the trainer is unfair')
 })
 
 test('avoid frontals do not track the player', () => {

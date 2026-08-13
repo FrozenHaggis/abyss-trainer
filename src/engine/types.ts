@@ -22,6 +22,20 @@ export type Rule =
   | { type: 'avoid' }
   /** Outside the shape at resolve = failure. Soaks, and "stay in melee". */
   | { type: 'beInside' }
+  /**
+   * Several small pickups that vanish the instant someone runs over them.
+   * Anything still on the floor when the timer expires ruptures onto the raid.
+   *
+   * Distinct from `beInside`, which is one shape you stand in and get judged on
+   * at a single resolve moment. Caustic Globule is not that: "each splash leaves
+   * a globule that ruptures after 10s onto the whole raid, unless one player
+   * walks in first and eats it alone". Drawing that as one big circle taught the
+   * opposite of the mechanic — it read as ground to avoid.
+   *
+   * Eating one is always correct play and can never be a failure. The tactic
+   * file is explicit: report "un-soaked ruptures only, never soakers".
+   */
+  | { type: 'collect'; count: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */
   | { type: 'faceAway' }
   /** Press an ability inside the window. Kicks, dispels, taunts. */
@@ -78,6 +92,62 @@ export interface BossEntityDef {
    * would teach a raider to waste a pull on a target that cannot die.
    */
   untargetable?: boolean
+}
+
+/**
+ * What an add asks of you. Catalogued in ADDS.md from the `adds[]` arrays in the
+ * real ability data: "kill it fast" is the right answer for only about a third
+ * of the 40 adds in this raid, which is exactly why the trainer needs more than
+ * one verb for them.
+ */
+export type AddJob =
+  /** Shoot it down before its fuse runs out. */
+  | 'kill'
+  /** It repeats a cast; interrupt it. Only four of these exist at Heroic. */
+  | 'kick'
+  /** It walks somewhere. Stand in its way — killing it is not the job. */
+  | 'intercept'
+  /**
+   * Leave it completely alone. Coiled Altar's orbs: destroying one detonates
+   * Venom Rupture, which took 58 Mythic killing blows — more than everything
+   * else in that fight combined. Shooting it IS the failure.
+   */
+  | 'leave'
+
+export interface AddDef {
+  id: string
+  name: string
+  /** Real NPC id from the boss's abilities.json `adds[]`. */
+  npcId: number
+  /** The ability that makes it dangerous — real spell id. */
+  spellId: number
+  job: AddJob
+  /** How many spawn together. */
+  count: number
+  /** Shots to kill, once any shield is down. */
+  hp: number
+  /**
+   * An absorb that must break before the add can be damaged at all. Restless
+   * Amani's is 25% of its health; Shrouded Venom's is a full 100%. Burning an
+   * add without breaking its shield is wasted damage, and the bar shows it.
+   */
+  shieldHp?: number
+  /** Seconds before its threat lands — the clock you are racing. */
+  fuseSec: number
+  /** Raid damage per second for as long as it is alive. */
+  auraDps?: number
+  /** Where it spawns, in yards from the arena centre. */
+  spawnRadius?: number
+  /** `intercept` adds walk to the centre; arriving is the failure. */
+  marchSpeed?: number
+  /** `kick` adds cast this often, in seconds. */
+  castEverySec?: number
+  /** Teaching line, shown and spoken the first time one appears. */
+  good: string
+  /** What went wrong. Empty means it can never be a personal failure. */
+  failText: string
+  /** Its threat landing kills rather than chips. */
+  lethal?: boolean
 }
 
 export interface MechanicDef {
@@ -165,6 +235,13 @@ export interface BossDef {
    */
   entities?: BossEntityDef[]
   mechanics: MechanicDef[]
+  /**
+   * Adds this fight spawns. On Ula'tek these ARE the fight — "the adds set the
+   * clock" — so a trainer without them teaches a different encounter.
+   */
+  adds?: AddDef[]
+  /** Seconds between add waves. Omit when the boss has no adds. */
+  addEverySec?: number
   /**
    * Recurrence intervals are NOT in the source data, so the fight is driven off
    * an energy bar — which is how several of these bosses genuinely work. `loop`
@@ -284,4 +361,6 @@ export interface RunResult {
   alliesLost: number
   shotsFired: number
   shotsHit: number
+  addsKilled: number
+  addsLeaked: number
 }

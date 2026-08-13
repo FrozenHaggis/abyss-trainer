@@ -10,7 +10,7 @@ import BossSigil from './ui/BossSigil'
 
 type Screen =
   | { s: 'pick' }
-  | { s: 'play'; boss: BossDef; role: Role; nonce: number }
+  | { s: 'play'; boss: BossDef; role: Role; nonce: number; drillId?: string }
   | { s: 'done'; boss: BossDef; role: Role; result: RunResult }
 
 const ROLE_BLURB: Record<Role, string> = {
@@ -38,6 +38,7 @@ export default function App() {
         key={screen.nonce}
         boss={screen.boss}
         role={screen.role}
+        drillId={screen.drillId}
         onEnd={onEnd}
         onQuit={onQuit}
       />
@@ -103,9 +104,38 @@ export default function App() {
           ))}
         </div>
 
-        <div className="controls-help">
-          <strong>WASD</strong> to move · <strong>1–4</strong> for abilities ·
-          the arena edge is lethal, and everything on screen is your job
+        <h2>Controls</h2>
+        <div className="controls">
+          <div className="ctrl"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></div>
+          <div className="ctrl"><kbd>Mouse</kbd><span>Aim</span></div>
+          <div className="ctrl"><kbd>Hold LMB</kbd><span>Shoot</span></div>
+          <div className="ctrl"><kbd>Space</kbd><span>Shoot nearest</span></div>
+          <div className="ctrl"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>Abilities</span></div>
+          <div className="ctrl"><kbd>Esc</kbd><span>Leave pull</span></div>
+        </div>
+        <p className="controls-note">
+          The boss only dies from shots you land, so every second spent dodging is a
+          second off the kill. The arena edge is lethal, and everything on screen is
+          your job.
+        </p>
+
+        <h2>Drill one mechanic</h2>
+        <p className="controls-note">
+          A full pull gives you two reps of a mechanic. A drill gives you twenty:
+          one mechanic on loop, no enrage, and dying just puts you back on your feet.
+        </p>
+        <div className="drills">
+          {boss.mechanics
+            .filter(m => m.rule.type !== 'raidDamage' && m.shape)
+            .map(m => (
+              <button
+                key={m.id}
+                className="drill"
+                onClick={() => setScreen({ s: 'play', boss, role, nonce: Date.now(), drillId: m.id })}
+              >
+                {m.name}
+              </button>
+            ))}
         </div>
 
         <h2>Music</h2>

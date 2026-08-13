@@ -60,6 +60,17 @@ export const sentinels: BossDef = {
   // Big room on purpose — the tanks have to hold the two golems 40+ yards apart
   // all pull, and the floor needs to be able to hold that split.
   arenaRadius: 44,
+  // No kick exists on this fight: no guide lists Contaminate as interruptible
+  // and the log recorded zero interrupts. Cast count proxies add kill speed.
+  addEverySec: 30,
+  adds: [
+    {
+      id: 'coagulation_add', name: 'Venom Coagulation', npcId: 260766, spellId: 1284257,
+      job: 'kill', count: 2, hp: 11, fuseSec: 17, auraDps: 0.5, spawnRadius: 26,
+      good: 'Kill it quickly — Contaminate cannot be interrupted, only outpaced.',
+      failText: 'A Venom Coagulation contaminated the raid',
+    },
+  ],
   entities: [
     { id: 'breath', name: "Breath of Ula'tek", npcId: 258557, start: { x: -13, y: 0 } },
     { id: 'blood', name: "Blood of Ula'tek", npcId: 258558, start: { x: 13, y: 0 } },

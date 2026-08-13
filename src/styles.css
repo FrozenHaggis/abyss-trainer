@@ -291,6 +291,39 @@ body {
   .prompt.urgent, .fail-toast { animation: none; }
 }
 
+/* Controls, on the title screen. A raider should never have to find out what
+   shoots by dying to a boss while looking for it. */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 4px 0 10px;
+}
+.ctrl { display: flex; align-items: center; gap: 6px; }
+.ctrl span {
+  font-family: 'Rajdhani', system-ui, sans-serif; font-size: 14px;
+  letter-spacing: .03em; opacity: .78; margin-left: 2px;
+}
+.ctrl kbd {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1;
+  padding: 6px 8px; border-radius: 6px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--line);
+  border-bottom-width: 2px; min-width: 12px; text-align: center;
+}
+.controls-note {
+  font-size: 13px; opacity: .62; max-width: 62ch; margin: 0 0 6px;
+}
+
+/* Mechanic drills — one mechanic on loop, no enrage. */
+.drills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.drill {
+  cursor: pointer; font-family: 'Rajdhani', system-ui, sans-serif;
+  font-size: 13px; font-weight: 600; letter-spacing: .03em; color: inherit;
+  padding: 7px 12px; border-radius: 999px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--line);
+  transition: background .15s, border-color .15s;
+}
+.drill:hover { background: var(--accent-soft); border-color: var(--accent-line); }
+
+.drill-score span { font-size: .55em; opacity: .6; margin-left: 3px; }
+
 /* Bail out of a pull. Bottom-left, clear of the top HUD, so it is always
    reachable but never sits under the cursor while you are aiming. */
 .arena-quit {

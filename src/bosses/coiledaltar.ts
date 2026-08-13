@@ -50,6 +50,32 @@ export const coiledaltar: BossDef = {
   realName: 'The Coiled Altar',
   blurb: 'Venom Rupture is more killing blows than everything else combined. Arena management, not reflexes.',
   arenaRadius: 44,
+  // Three different jobs on one boss, which is why this fight is the hardest to
+  // learn. The orbs must NOT be destroyed — Venom Rupture took 58 Mythic killing
+  // blows, more than everything else in the fight combined — while the Soulcoiler
+  // must be kicked and the Fragments must be body-blocked.
+  addEverySec: 22,
+  adds: [
+    {
+      id: 'orbadd', name: 'Coalesced Venom', npcId: 268042, spellId: 1282408,
+      job: 'leave', count: 2, hp: 1, fuseSec: 30, auraDps: 0.35, lethal: true,
+      spawnRadius: 22,
+      good: 'Never shoot an orb. Keep them clear of the axe path and let them sit.',
+      failText: 'Destroyed a Coalesced Venom orb — Venom Rupture',
+    },
+    {
+      id: 'soulcoiler', name: 'Spiteful Soulcoiler', npcId: 0, spellId: 1286399,
+      job: 'kick', count: 1, hp: 10, fuseSec: 26, castEverySec: 12, spawnRadius: 27,
+      good: 'Kick Wail of Terror — a 7s cast that fears the whole raid for 5s.',
+      failText: 'Wail of Terror went off — raid feared',
+    },
+    {
+      id: 'fragment', name: 'Fragment of Malacrass', npcId: 0, spellId: 1287718,
+      job: 'intercept', count: 2, hp: 3, fuseSec: 22, marchSpeed: 3.2, spawnRadius: 34,
+      good: "Step on every fragment before it reaches Zul'jan and casts Reclaim Essence.",
+      failText: "A Fragment reached Zul'jan — Reclaim Essence",
+    },
+  ],
   entities: [
     { id: 'zuljan', name: "Zul'jan", npcId: 257911, start: { x: -10, y: 0 } },
     { id: 'malacrass', name: "Hex Lord Malacrass", npcId: 259854, start: { x: 13, y: -7 } },

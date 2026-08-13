@@ -53,6 +53,18 @@ export const explorers: BossDef = {
   realName: 'The Lost Explorers',
   blurb: 'A three-body council with one real kick. Blast Wave took more killing blows than any other ability in the fight.',
   arenaRadius: 44,
+  // Relic Rupture took 6 killing blows and hit 20 players on the Mythic PTR
+  // sample. Deaths here are a crate-cleave failure, not a positioning one — the
+  // junk piles up and has to be cleared.
+  addEverySec: 24,
+  adds: [
+    {
+      id: 'junk', name: 'Useless Junk', npcId: 272110, spellId: 1310027,
+      job: 'kill', count: 2, hp: 5, fuseSec: 19, spawnRadius: 24,
+      good: 'Cleave the crates down before they rupture.',
+      failText: 'Relic Rupture — a crate was left standing',
+    },
+  ],
   entities: [
     { id: 'iku', name: "Scrollsage Iku", npcId: 261843, start: { x: 0, y: -12 } },
     { id: 'nama', name: "First Mate Nama", npcId: 261835, start: { x: -17, y: 4 } },

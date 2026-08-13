@@ -32,6 +32,7 @@ const toPx = (cam: Camera, v: Vec) => ({ x: cam.cx + v.x * cam.scale, y: cam.cy 
 function ruleColour(inst: Instance): string {
   switch (inst.def.rule.type) {
     case 'beInside': return GREEN
+    case 'collect': return GREEN
     case 'carryOut': return VIOLET
     case 'press': return VIOLET
     case 'survive': return VIOLET
@@ -153,9 +154,31 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.setLineDash([])
   }
 
+  // ── pickups ──
+  // Drawn as small solid globs with a collection ring, deliberately unlike a
+  // ground hazard. Rendering these as a big filled circle read as "do not stand
+  // here", which is the exact opposite of the mechanic.
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.answered || inst.def.rule.type !== 'collect') continue
+    const p = toPx(cam, inst.pos)
+    const r = (inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 2.5) * cam.scale
+    const t = progress(inst)
+    // Tightens as it nears rupture, so an untouched globule visibly runs out.
+    const ring = r * (1.9 - 0.7 * t)
+    ctx.beginPath(); ctx.arc(p.x, p.y, ring, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${GREEN}, ${0.35 + 0.45 * t})`
+    ctx.setLineDash([3, 4]); ctx.lineWidth = 2; ctx.stroke()
+    ctx.setLineDash([]); ctx.lineWidth = 1
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${GREEN}, 0.55)`; ctx.fill()
+    ctx.strokeStyle = `rgba(${GREEN}, 0.95)`; ctx.lineWidth = 2; ctx.stroke()
+    ctx.lineWidth = 1
+  }
+
   // ── active telegraphs ──
   for (const inst of w.instances) {
     if (inst.resolved || !inst.def.shape) continue
+    if (inst.def.rule.type === 'collect') continue   // drawn above as pickups
     const col = ruleColour(inst)
     const t = progress(inst)
     pathShape(ctx, cam, inst)
@@ -256,6 +279,66 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       ctx.fillStyle = 'rgba(201, 182, 255, 0.92)'
       ctx.fillText(b.def.name, bp.x, bp.y + size * 0.65 + 14)
       ctx.textAlign = 'start'
+    }
+  }
+
+  // ── adds ──
+  // Shape encodes the job the same way telegraph colour encodes the verb:
+  // red hexagon = kill it, violet ring = block it, gold = kicking target,
+  // and a hazard-striped circle = do not shoot this under any circumstances.
+  for (const add of w.adds) {
+    if (!add.alive) continue
+    const p = toPx(cam, add.pos)
+    const d = add.def
+    const R = d.job === 'leave' ? 11 : 13
+
+    if (d.job === 'leave') {
+      // Deliberately drawn like a hazard, not like a target.
+      ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(210, 153, 34, 0.20)'; ctx.fill()
+      ctx.setLineDash([4, 3])
+      ctx.strokeStyle = 'rgba(210, 153, 34, 0.95)'; ctx.lineWidth = 2; ctx.stroke()
+      ctx.setLineDash([]); ctx.lineWidth = 1
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(210, 153, 34, 0.95)'; ctx.fill()
+    } else {
+      const col = d.job === 'kick' ? '198, 155, 58' : d.job === 'intercept' ? VIOLET : RED
+      ctx.beginPath()
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 - Math.PI / 2
+        const x = p.x + Math.cos(a) * R, y = p.y + Math.sin(a) * R
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+      }
+      ctx.closePath()
+      ctx.fillStyle = `rgba(${col}, 0.22)`; ctx.fill()
+      ctx.strokeStyle = `rgba(${col}, 0.95)`; ctx.lineWidth = 2; ctx.stroke()
+      ctx.lineWidth = 1
+
+      // Health, and the shield above it. An add whose shield is still up shows
+      // a second bar so "your damage is doing nothing yet" is visible rather
+      // than something you have to infer.
+      const bw = 26
+      const frac = Math.max(0, add.hp / Math.max(1, d.hp))
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'
+      ctx.fillRect(p.x - bw / 2, p.y + R + 4, bw, 3)
+      ctx.fillStyle = `rgba(${col}, 0.95)`
+      ctx.fillRect(p.x - bw / 2, p.y + R + 4, bw * frac, 3)
+      if (add.shield > 0 && d.shieldHp) {
+        const sf = Math.max(0, add.shield / d.shieldHp)
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'
+        ctx.fillRect(p.x - bw / 2, p.y + R + 8, bw, 3)
+        ctx.fillStyle = 'rgba(160, 200, 255, 0.95)'
+        ctx.fillRect(p.x - bw / 2, p.y + R + 8, bw * sf, 3)
+      }
+
+      // A kicking add winds up visibly, so the kick has a target to read.
+      if (d.job === 'kick' && add.castMs >= 0 && !add.kicked) {
+        const t = 1 - add.castMs / ((d.castEverySec ?? 8) * 1000)
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, R + 6, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2)
+        ctx.strokeStyle = 'rgba(248, 81, 73, 0.95)'; ctx.lineWidth = 3; ctx.stroke()
+        ctx.lineWidth = 1
+      }
     }
   }
 

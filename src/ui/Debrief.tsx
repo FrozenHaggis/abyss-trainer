@@ -36,6 +36,12 @@ export default function Debrief({ result, onRetry, onQuit }: {
           </span>
           <span className="stat-lab">shots on target</span>
         </div>
+        {(result.addsKilled > 0 || result.addsLeaked > 0) && (
+          <div className="stat">
+            <span className="stat-num">{result.addsLeaked}</span>
+            <span className="stat-lab">adds leaked</span>
+          </div>
+        )}
       </div>
 
       {clean ? (

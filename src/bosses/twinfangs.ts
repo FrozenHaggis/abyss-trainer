@@ -37,6 +37,19 @@ export const twinfangs: BossDef = {
   realName: 'The Twin Fangs',
   blurb: 'Nothing to kick, nothing to dispel. Venom never washes off — the soaks are the only relief.',
   arenaRadius: 44,
+  // "A permanent channel pulsing the raid every 4s and gaining +15% of its own
+  // damage per pulse — a soft enrage with no interrupt, so kill the add."
+  // 12 killing blows on Heroic PTR. There is nothing to kick on this boss.
+  addEverySec: 30,
+  adds: [
+    {
+      id: 'mass', name: 'Bloodcurdled Mass', npcId: 268668, spellId: 1302695,
+      job: 'kill', count: 1, hp: 9, fuseSec: 26, auraDps: 0.5, lethal: true,
+      spawnRadius: 28,
+      good: 'Kill it fast — Bloody Expulsion cannot be interrupted and grows every pulse.',
+      failText: 'Bloodcurdled Mass channelled Bloody Expulsion to the end',
+    },
+  ],
   entities: [
     { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -19, y: 0 }, tankedApart: true },
     { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 19, y: 0 }, tankedApart: true },
@@ -111,15 +124,19 @@ export const twinfangs: BossDef = {
       // the soakers, and the engine's ally AI never sends a tank to a soak.
       roles: ['dps', 'healer'],
       telegraphMs: 10000,            // "ruptures after 10s"
-      shape: { kind: 'circle', radius: 6 },
+      shape: { kind: 'circle', radius: 2.6 },
       origin: 'random',
-      // The inverse of everything else on this fight: being OUT is the failure.
-      // "unless one player walks in first and eats it alone" — so the smallest
-      // honest soak count is 1. The engine still walks one ally in alongside
-      // you (it reserves slots as soakers-1, floored at one), which is close
-      // enough to the rotating soaker pair a raid actually runs.
-      rule: { type: 'beInside' },
-      soakers: 1,
+      // "Each splash leaves a globule that ruptures after 10s onto the whole
+      // raid, unless one player walks in first and eats it alone." That is a
+      // pickup, not a stand-in-it soak: several small globs scattered on the
+      // floor, each cleared by one player running over it.
+      //
+      // It was modelled as a single 6-yard `beInside` circle, which drew as one
+      // big shape and read as ground to avoid — teaching the exact opposite of
+      // the mechanic. Eating one is correct play and can never be a failure;
+      // the tactic file's own reporting line is "un-soaked ruptures only,
+      // never soakers".
+      rule: { type: 'collect', count: 3 },
       good: 'Named low-stack players intercept every globule; soaking is correct play, not a failure.',
       failText: 'Missed the globule soak — it ruptured on the whole raid',
     },

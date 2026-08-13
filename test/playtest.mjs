@@ -41,6 +41,18 @@ function play(boss, role, smart) {
         const reach = (i.def.shape.radius ?? 8) + 6
         if (d < reach) { tx += (dx / d) * (reach / d) * weight; ty += (dy / d) * (reach / d) * weight }
       }
+      // Run over pickups — a globule nobody eats ruptures on the whole raid.
+      let near = null, nd = Infinity
+      for (const i of w.instances) {
+        if (i.resolved || i.answered || i.def.rule.type !== 'collect') continue
+        const d = Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
+        if (d < nd) { nd = d; near = i }
+      }
+      if (near) {
+        tx += (near.pos.x - w.player.pos.x) / (nd || 1) * 4
+        ty += (near.pos.y - w.player.pos.y) / (nd || 1) * 4
+      }
+
       for (const i of w.instances) {
         if (i.resolved || i.def.rule.type !== 'beInside') continue
         // A Deadly soak is as urgent as a Deadly puddle. Weighting only the
@@ -64,12 +76,27 @@ function play(boss, role, smart) {
       input.right = tx > 0.1; input.left = tx < -0.1
       input.down = ty > 0.1; input.up = ty < -0.1
 
-      // Shoot whenever there is nothing more urgent. The boss no longer dies on
-      // its own, so a bot that never fires would report every fight as an
-      // enrage and tell us nothing about dodging.
+      // Adds come first. A real player swaps to them the moment they land, and
+      // a bot that ignores them measures nothing except how fast the raid bar
+      // empties — which is what it did when adds were first switched on.
+      let target = null
+      let td = Infinity
+      for (const a of w.adds) {
+        if (!a.alive || a.def.job === 'leave') continue   // never shoot an orb
+        const d = Math.hypot(a.pos.x - w.player.pos.x, a.pos.y - w.player.pos.y)
+        // Intercept adds are blocked with your body, not shot.
+        if (a.def.job === 'intercept') {
+          if (d < td) { td = d; tx += (a.pos.x - w.player.pos.x) / (d || 1) * 3; ty += (a.pos.y - w.player.pos.y) / (d || 1) * 3 }
+          continue
+        }
+        if (d < td) { td = d; target = a }
+      }
       input.firing = true
-      input.aim = null   // null aims at the nearest entity
+      input.aim = target ? { x: target.pos.x, y: target.pos.y } : null
 
+      // Kick on sight when an add is winding up, otherwise tick over.
+      const casting = w.adds.some(a => a.alive && a.def.job === 'kick' && a.castMs >= 0 && !a.kicked)
+      if (casting) input.pressed.push('interrupt')
       if (w.elapsedMs % 900 < TICK_MS) input.pressed.push('dispel', 'interrupt')
     }
     step(w, input, TICK_MS)

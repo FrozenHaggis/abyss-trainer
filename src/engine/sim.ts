@@ -1,5 +1,5 @@
 import type {
-  Ability, Ally, BossDef, BossEntityDef, FailureRow, Instance, MechanicDef,
+  Ability, AddDef, Ally, BossDef, BossEntityDef, FailureRow, Instance, MechanicDef,
   PlayerState, Prompt, Role, RunResult, Vec,
 } from './types'
 
@@ -13,8 +13,6 @@ import type {
 export const TICK_MS = 1000 / 60
 const PLAYER_SPEED = 14 // yards/sec, roughly a WoW run speed
 const MELEE_RANGE = 5
-/** Range at which you can damage the boss. Generous — dodging is the game. */
-const ATTACK_RANGE = 32
 const BURST_WINDOW_MS = 10000
 /** Shot travel speed in yards/sec — fast enough to feel instant at melee range. */
 const SHOT_SPEED = 62
@@ -22,6 +20,8 @@ const SHOTS_PER_SEC = 5
 const FIRE_INTERVAL_MS = 1000 / SHOTS_PER_SEC
 /** How close a shot must pass to an entity to count. Generous: aiming is not the skill being taught. */
 const BOSS_HIT_RADIUS = 4.5
+/** Adds are smaller targets than a boss, so they take real aim. */
+const ADD_HIT_RADIUS = 2.8
 
 export interface Input {
   up: boolean; down: boolean; left: boolean; right: boolean
@@ -30,6 +30,22 @@ export interface Input {
   aim: Vec | null
   /** Trigger held. */
   firing: boolean
+}
+
+/** A live add. */
+export interface Add {
+  uid: number
+  def: AddDef
+  pos: Vec
+  hp: number
+  shield: number
+  /** ms until its threat lands. */
+  fuse: number
+  /** `kick` adds: ms until the current cast completes, or -1 when not casting. */
+  castMs: number
+  /** The current cast was interrupted. */
+  kicked: boolean
+  alive: boolean
 }
 
 /** A shot in flight. The boss only dies from these. */
@@ -68,6 +84,12 @@ export interface World {
   overStackMs: number
   alliesLost: number
   instances: Instance[]
+  /** Live adds. */
+  adds: Add[]
+  addTimerMs: number
+  addWave: number
+  addsKilled: number
+  addsLeaked: number
   /** Shots in flight. */
   shots: Shot[]
   /** ms until the weapon can fire again. */
@@ -100,6 +122,11 @@ export interface World {
   prompt: Prompt | null
   /** The most recent failure, for an immediate toast. */
   lastFailure: { name: string; failText: string; atMs: number } | null
+  /** Set in drill mode: the one mechanic being practised. */
+  drillId: string | null
+  /** Drill mode only: reps attempted and reps survived. */
+  drillReps: number
+  drillClean: number
 }
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
@@ -206,6 +233,34 @@ function raidAnchor(w: World): Vec {
   return n ? { x: x / n, y: y / n } : { x: 0, y: 0 }
 }
 
+/**
+ * Drill mode: one mechanic, on loop, no enrage and no boss health.
+ *
+ * Dying to Blast Wave at 50 seconds and having to replay the whole pull to see
+ * it again is how raiders stay bad at a mechanic. A drill gives you twenty reps
+ * in the time a pull gives you two.
+ */
+export function createDrill(boss: BossDef, role: Role, mechanicId: string): World {
+  const w = createWorld(boss, role)
+  w.drillId = mechanicId
+  // Only the drilled mechanic fires, every few seconds, forever.
+  w.boss = {
+    ...boss,
+    loop: [mechanicId],
+    introEverySec: 1,
+    loopIntervalSec: Math.max(3.5, boss.loopIntervalSec * 0.7),
+    atFullEnergy: undefined,
+    // Ambient attrition and adds are the fight, not the mechanic — they would
+    // just kill you slowly while you practise something else.
+    ambient: [],
+    adds: [],
+    // No enrage. You leave a drill when you are done with it, not when a timer
+    // decides you are.
+    pullLengthSec: 3600,
+  }
+  return w
+}
+
 export function createWorld(boss: BossDef, role: Role): World {
   const allies = makeAllies(role)
   // Boss opens on the co-tank, so a player tank's first job is to taunt it off.
@@ -220,6 +275,11 @@ export function createWorld(boss: BossDef, role: Role): World {
       carrying: {}, cooldowns: {}, aloft: 0,
     },
     instances: [],
+    adds: [],
+    addTimerMs: 0,
+    addWave: 0,
+    addsKilled: 0,
+    addsLeaked: 0,
     shots: [],
     fireCooldown: 0,
     shotsFired: 0,
@@ -243,6 +303,9 @@ export function createWorld(boss: BossDef, role: Role): World {
     playerStacks: 0,
     prompt: null,
     lastFailure: null,
+    drillId: null,
+    drillReps: 0,
+    drillClean: 0,
   }
 }
 
@@ -408,7 +471,20 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
 /** Fire a mechanic by id. Exported so bosses can chain mechanics. */
 export function fire(w: World, id: string, at?: Vec, angle?: number) {
   const def = w.boss.mechanics.find(m => m.id === id)
-  if (def) spawn(w, def, at, angle)
+  if (!def) return
+  if (def.rule.type === 'collect') {
+    // Scattered pickups, not one shape. Each is its own instance so each can be
+    // eaten independently, which is what "one player walks in first and eats it
+    // alone" actually means.
+    const n = def.rule.count
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + w.elapsedMs / 3000
+      const r = w.boss.arenaRadius * (0.28 + 0.42 * ((i % 3) / 2))
+      spawn(w, def, { x: Math.cos(a) * r, y: Math.sin(a) * r })
+    }
+    return
+  }
+  spawn(w, def, at, angle)
 }
 
 function resolveInstance(w: World, inst: Instance) {
@@ -433,6 +509,16 @@ function resolveInstance(w: World, inst: Instance) {
         // Deadly means deadly. Everything else is damage you get healed through.
         if (def.lethal) killPlayer(w, def.name)
         else hurt(w, def.damage ?? 0.3, def.name)
+      }
+      break
+
+    case 'collect':
+      // `answered` means somebody ran over it in time. Only the ones nobody
+      // reached rupture, and only those are ever reported — eating one is
+      // correct play, so a soaker can never appear as a failure.
+      if (!inst.answered) {
+        if (scored) recordFailure(w, def)
+        w.raidHealth -= def.lethal ? 0.16 : 0.09
       }
       break
 
@@ -652,6 +738,13 @@ function allyThink(w: World) {
     soaks.push({ inst, slots: Math.max(1, (inst.def.soakers ?? 4) - 1), taken: 0 })
   }
 
+  // Pickups. Raiders run over all but one of them; the last is yours, so a
+  // collect mechanic is always personally consequential without being scripted.
+  const pickups = w.instances.filter(i =>
+    !i.resolved && !i.answered && i.def.rule.type === 'collect')
+  const claimable = pickups.slice(0, Math.max(0, pickups.length - 1))
+  let claimed = 0
+
   for (const a of w.allies) {
     if (!a.alive) continue
 
@@ -681,7 +774,14 @@ function allyThink(w: World) {
       a.want.y = p.pos.y - Math.sin(p.angle) * 7
     }
 
-    // 3. Soak, if a slot is going spare. Tanks stay on the boss.
+    // 3. Go and eat a globule if one is unclaimed. Tanks stay on the boss.
+    if (a.role !== 'tank' && claimed < claimable.length) {
+      const p = claimable[claimed++]
+      a.want.x = p.pos.x
+      a.want.y = p.pos.y
+    }
+
+    // 3a. Soak, if a slot is going spare. Tanks stay on the boss.
     if (a.role !== 'tank') {
       for (const sk of soaks) {
         if (sk.taken >= sk.slots) continue
@@ -876,6 +976,28 @@ function computePrompt(w: World): Prompt | null {
     }
   }
 
+  // Adds first — a cast landing in two seconds beats any floor telegraph.
+  for (const add of w.adds) {
+    if (!add.alive) continue
+    const d = add.def
+    if (d.job === 'kick' && add.castMs >= 0 && !add.kicked) {
+      const t = 1 - add.castMs / ((d.castEverySec ?? 8) * 1000)
+      if (abilitiesFor(w.player.role).includes('interrupt')) {
+        consider({ verb: 'KICK IT', mechanic: d.name, urgency: t }, 0)
+      }
+    } else if (d.job === 'intercept') {
+      const t = 1 - lenOf(add.pos) / Math.max(1, w.boss.arenaRadius)
+      consider({ verb: 'BLOCK IT', mechanic: d.name, urgency: t }, 1)
+    } else if (d.job === 'kill') {
+      const t = 1 - add.fuse / Math.max(1, d.fuseSec * 1000)
+      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL IT', mechanic: d.name, urgency: t }, 2)
+    } else if (d.job === 'leave') {
+      if (dist(add.pos, w.player.pos) < 9) {
+        consider({ verb: 'DO NOT TOUCH', mechanic: d.name, urgency: 0.5 }, 2)
+      }
+    }
+  }
+
   for (const inst of w.instances) {
     if (inst.resolved) continue
     const { def } = inst
@@ -892,6 +1014,12 @@ function computePrompt(w: World): Prompt | null {
         break
       case 'beInside':
         if (!inside) consider({ verb: 'GET IN', mechanic: def.name, urgency: t }, 2)
+        break
+      case 'collect':
+        // Only prompt for the nearest one — a instruction per globule is noise.
+        if (!inst.answered && dist(inst.pos, w.player.pos) < 22) {
+          consider({ verb: 'RUN OVER IT', mechanic: def.name, urgency: t }, 2)
+        }
         break
       case 'carryOut':
         if (inst.carriedByPlayer) {
@@ -934,6 +1062,137 @@ export function unlockedCount(w: World): number {
   return Math.max(1, Math.min(w.boss.loop.length, n))
 }
 
+/** Spawn a wave of one add type. */
+function spawnAdds(w: World, def: AddDef) {
+  const r = def.spawnRadius ?? w.boss.arenaRadius * 0.72
+  for (let i = 0; i < def.count; i++) {
+    // Fanned around the rim so a wave arrives from several sides at once and
+    // has to be prioritised rather than cleaved down in one spot.
+    const a = (w.addWave * 1.7) + (i / def.count) * Math.PI * 2
+    w.adds.push({
+      uid: w.nextUid++,
+      def,
+      pos: { x: Math.cos(a) * r, y: Math.sin(a) * r },
+      hp: def.hp,
+      shield: def.shieldHp ?? 0,
+      fuse: def.fuseSec * 1000,
+      castMs: -1,
+      kicked: false,
+      alive: true,
+    })
+  }
+  if (!w.seen.has(def.id)) {
+    w.seen.add(def.id)
+    // Adds announce through the same teaching channel as mechanics, so the
+    // first Doomscale Warden gets explained rather than just appearing.
+    w.announce = {
+      id: def.id, name: def.name, spellId: def.spellId, roles: ['tank', 'healer', 'dps'],
+      telegraphMs: 0, origin: 'random', rule: { type: 'avoid' },
+      good: def.good, failText: def.failText,
+    }
+  }
+}
+
+const ADD_SHOT_DAMAGE = 1
+const MAX_CONCURRENT_ADDS = 5
+/** Raid health lost when an add gets where it was going. */
+const ADD_LEAK_COST = 0.11
+/** Raid health lost to a cast you failed to interrupt. */
+const ADD_KICK_COST = 0.09
+
+/**
+ * Adds. Four jobs, because the ability data says four jobs — see ADDS.md.
+ *
+ * The important one is `leave`: the Coiled Altar orbs must NOT be killed, and
+ * shooting one is the failure. A trainer that rewards killing everything on
+ * screen would teach precisely the habit that fight punishes hardest.
+ */
+function stepAdds(w: World, dtMs: number, dt: number) {
+  for (const add of w.adds) {
+    if (!add.alive) continue
+    const d = add.def
+
+    if (d.auraDps) w.raidHealth -= (d.auraDps / 100) * dt
+
+    if (d.job === 'intercept' && d.marchSpeed) {
+      // Walks to the centre. Standing in its path stops it; killing it is not
+      // the job and for some of these is not even possible.
+      const len = lenOf(add.pos) || 1
+      add.pos.x -= (add.pos.x / len) * d.marchSpeed * dt
+      add.pos.y -= (add.pos.y / len) * d.marchSpeed * dt
+      if (dist(add.pos, w.player.pos) < 3.5) {
+        add.alive = false
+        w.addsKilled++
+        continue
+      }
+      if (lenOf(add.pos) < 4) {
+        add.alive = false
+        w.addsLeaked++
+        recordAddFailure(w, d)
+        w.raidHealth -= ADD_LEAK_COST
+        continue
+      }
+    }
+
+    if (d.job === 'kick') {
+      // Casts on a cycle. Miss the kick and the cast lands.
+      if (add.castMs < 0) {
+        add.castMs = (d.castEverySec ?? 8) * 1000
+        add.kicked = false
+      }
+      add.castMs -= dtMs
+      if (add.castMs <= 0) {
+        if (!add.kicked) {
+          recordAddFailure(w, d)
+          if (d.lethal) killPlayer(w, d.name)
+          else w.raidHealth -= ADD_KICK_COST
+        }
+        add.castMs = -1
+      }
+    }
+
+    // Every add has a lifetime. Without one, `kick` and `leave` adds never left
+    // the field: they piled up wave on wave, each casting on its own cycle, and
+    // no amount of skill could keep up. That is a death spiral, not a mechanic.
+    add.fuse -= dtMs
+    if (add.fuse <= 0) {
+      add.alive = false
+      if (d.job === 'kill') {
+        // Only a `kill` add running its fuse out is a failure — that is the add
+        // getting where it was going. The rest simply despawn.
+        w.addsLeaked++
+        recordAddFailure(w, d)
+        if (d.lethal) killPlayer(w, d.name)
+        else w.raidHealth -= ADD_LEAK_COST
+      }
+    }
+  }
+  w.adds = w.adds.filter(a => a.alive)
+
+  // ── the wave scheduler ──
+  if (w.boss.adds?.length) {
+    w.addTimerMs += dtMs
+    const every = (w.boss.addEverySec ?? 22) * 1000
+    // Never more than a handful on the field. A wave landing on top of a wave
+    // you have not cleared is a wipe you cannot play out of, and it teaches
+    // nothing except that the trainer is unfair.
+    if (w.addTimerMs >= every && w.adds.length < MAX_CONCURRENT_ADDS) {
+      w.addTimerMs = 0
+      const list = w.boss.adds
+      spawnAdds(w, list[w.addWave % list.length])
+      w.addWave++
+    }
+  }
+}
+
+function recordAddFailure(w: World, d: AddDef) {
+  if (!d.failText) return
+  w.lastFailure = { name: d.name, failText: d.failText, atMs: w.elapsedMs }
+  const row = w.failures.get(d.id)
+  if (row) row.count++
+  else w.failures.set(d.id, { mechanicId: d.id, name: d.name, failText: d.failText, count: 1 })
+}
+
 /** The next few mechanics the loop will fire, for the anticipation strip. */
 export function upcoming(w: World, count = 3): { name: string; inSec: number }[] {
   const out: { name: string; inSec: number }[] = []
@@ -950,6 +1209,16 @@ export function upcoming(w: World, count = 3): { name: string; inSec: number }[]
 
 /** One fixed timestep. dtMs is always TICK_MS. */
 export function step(w: World, input: Input, dtMs: number) {
+  // Drill mode: a death is a rep, not the end of the session. You see what
+  // killed you, you get put back on your feet, and you go again — which is the
+  // entire reason drill mode exists.
+  if (w.drillId && !w.player.alive) {
+    w.player.alive = true
+    w.player.health = 1
+    w.player.pos = { x: 0, y: 12 }
+    w.deathCause = null
+    w.raidHealth = Math.max(w.raidHealth, 0.7)
+  }
   if (!w.player.alive) return
   w.announce = null
   w.elapsedMs += dtMs
@@ -1027,6 +1296,19 @@ export function step(w: World, input: Input, dtMs: number) {
       }
       if (bestAlly) { bestAlly.debuff = null; bestAlly.debuffMs = 0 }
     }
+    // Kick the nearest add that is mid-cast. Adds are checked before mechanics
+    // because an add casting at you now is more urgent than a telegraph.
+    if (ab === 'interrupt') {
+      let target: Add | null = null
+      let bd = 40
+      for (const add of w.adds) {
+        if (!add.alive || add.def.job !== 'kick' || add.castMs < 0 || add.kicked) continue
+        const d = dist(add.pos, w.player.pos)
+        if (d < bd) { bd = d; target = add }
+      }
+      if (target) target.kicked = true
+    }
+
     // Answer the nearest unresolved mechanic that wants this ability.
     let best: Instance | null = null
     for (const inst of w.instances) {
@@ -1040,6 +1322,9 @@ export function step(w: World, input: Input, dtMs: number) {
   // ── the raid ──
   allyThink(w)
   allyMove(w, dt)
+
+  // ── adds ──
+  stepAdds(w, dtMs, dt)
 
   // ── tank swap ──
   // The boss stacks its debuff on whoever holds it; the off-tank taunts before
@@ -1132,7 +1417,7 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
   // Healers regenerate the raid passively; other roles rely on their raid CD.
-  const regen = w.player.role === 'healer' ? 0.045 : 0.03
+  const regen = w.player.role === 'healer' ? 0.045 : 0.038
   w.raidHealth = Math.max(0, Math.min(1, w.raidHealth + regen * dt))
   // Ambient attrition is shared, so the raid visibly suffers when it is unhealed.
   for (const a of w.allies) {
@@ -1182,8 +1467,28 @@ export function step(w: World, input: Input, dtMs: number) {
       w.player.carrying[inst.def.id] = inst.timer
     }
 
+    // Pickups vanish the moment anyone touches them — you, or a raider doing
+    // their job. Seeing an ally eat one is half the lesson.
+    if (!inst.resolved && !inst.answered && inst.def.rule.type === 'collect') {
+      const r = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 2.5
+      if (dist(inst.pos, w.player.pos) <= r) {
+        inst.answered = true
+        inst.timer = 0
+      } else if (w.allies.some(a => a.alive && dist(inst.pos, a.pos) <= r)) {
+        inst.answered = true
+        inst.timer = 0
+      }
+    }
+
     inst.timer -= dtMs
-    if (!inst.resolved && inst.timer <= 0) resolveInstance(w, inst)
+    if (!inst.resolved && inst.timer <= 0) {
+      const before = w.failures.get(inst.def.id)?.count ?? 0
+      resolveInstance(w, inst)
+      if (w.drillId === inst.def.id) {
+        w.drillReps++
+        if ((w.failures.get(inst.def.id)?.count ?? 0) === before) w.drillClean++
+      }
+    }
 
     // Lingering hazards keep hurting anyone standing in them.
     if (inst.resolved && inst.def.lingerMs && isInside(inst, w.player.pos)) {
@@ -1221,7 +1526,10 @@ export function step(w: World, input: Input, dtMs: number) {
     w.shots.push({
       pos: { ...w.player.pos },
       vel: { x: Math.cos(a) * SHOT_SPEED, y: Math.sin(a) * SHOT_SPEED },
-      life: (ATTACK_RANGE / SHOT_SPEED) * 1000,
+      // Long enough to cross the arena. Tying this to ATTACK_RANGE meant shots
+      // expired at 32 yards on a 44-yard floor, so a ranged player physically
+      // could not hit the boss — accuracy fell to 2% on the wider fights.
+      life: ((w.boss.arenaRadius * 2.1) / SHOT_SPEED) * 1000,
     })
     w.shotsFired++
     w.fireCooldown = FIRE_INTERVAL_MS
@@ -1231,13 +1539,39 @@ export function step(w: World, input: Input, dtMs: number) {
   // fastest and healer slowest — nobody locked out of a kill for their role.
   const base = w.player.role === 'dps' ? 1.0 : w.player.role === 'tank' ? 0.82 : 0.75
   const bursting = (w.player.cooldowns.burst ?? 0) > COOLDOWN_MS.burst - BURST_WINDOW_MS
-  const perShot = (base * (bursting ? 3 : 1)) / (w.boss.pullLengthSec * SHOTS_PER_SEC * 0.62)
+  const perShot = (base * (bursting ? 3 : 1)) / (w.boss.pullLengthSec * SHOTS_PER_SEC * 0.46)
 
   for (const s of w.shots) {
     if (s.life <= 0) continue
     s.pos.x += s.vel.x * dt
     s.pos.y += s.vel.y * dt
     s.life -= dtMs
+
+    // Adds are checked first: they are closer, smaller, and the whole point of
+    // an add is that it competes with the boss for your damage.
+    let consumed = false
+    for (const add of w.adds) {
+      if (!add.alive || dist(s.pos, add.pos) > ADD_HIT_RADIUS) continue
+      s.life = 0
+      consumed = true
+      w.shotsHit++
+      if (add.def.job === 'leave') {
+        // Shooting it IS the failure. Coiled Altar's orbs detonate on being
+        // destroyed and that is the single biggest killer in the fight.
+        add.alive = false
+        recordAddFailure(w, add.def)
+        w.raidHealth -= 0.16
+        if (add.def.lethal) hurt(w, 0.4, add.def.name)
+        break
+      }
+      // Shields eat damage first and the add cannot be hurt until one breaks.
+      if (add.shield > 0) add.shield -= ADD_SHOT_DAMAGE
+      else add.hp -= ADD_SHOT_DAMAGE
+      if (add.hp <= 0) { add.alive = false; w.addsKilled++ }
+      break
+    }
+    if (consumed) continue
+
     for (const b of w.bosses) {
       if (b.def.untargetable) continue
       if (dist(s.pos, b.pos) > BOSS_HIT_RADIUS) continue
@@ -1284,5 +1618,7 @@ export function buildResult(w: World): RunResult {
     alliesLost: w.alliesLost,
     shotsFired: w.shotsFired,
     shotsHit: w.shotsHit,
+    addsKilled: w.addsKilled,
+    addsLeaked: w.addsLeaked,
   }
 }

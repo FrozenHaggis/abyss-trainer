@@ -101,6 +101,35 @@ export const ulatek: BossDef = {
   realName: "Ula'tek",
   blurb: 'Four kickable casts and a healing floor that only ever rises. Missed kicks and un-leeched bites end pulls.',
   arenaRadius: 46,
+  // The kick fight. Three of the raid's four Heroic add-kicks live here, and
+  // "the adds set the clock". Malice is the highest-value kick in the fight.
+  addEverySec: 20,
+  adds: [
+    {
+      id: 'warden', name: 'Doomscale Warden', npcId: 0, spellId: 1290779,
+      job: 'kick', count: 1, hp: 12, fuseSec: 26, castEverySec: 13, spawnRadius: 26,
+      good: 'Kick Malice — 1.5s cast for 6s of raid-wide Nature, the highest-value kick here.',
+      failText: 'Malice went uninterrupted',
+    },
+    {
+      id: 'viper', name: 'Blightscale Viper', npcId: 0, spellId: 1301800,
+      job: 'kick', count: 2, hp: 6, fuseSec: 24, castEverySec: 15, spawnRadius: 30,
+      good: 'Kick Acidic Burst. It is Poison-dispellable too, but the kick is the answer.',
+      failText: 'Acidic Burst went uninterrupted',
+    },
+    {
+      id: 'shrieker', name: 'Blightscale Shrieker', npcId: 0, spellId: 1310764,
+      job: 'kick', count: 1, hp: 8, fuseSec: 24, castEverySec: 14, spawnRadius: 33,
+      good: 'Kick Vicious Echoes — unlimited range, so distance is no excuse.',
+      failText: 'Vicious Echoes stunned the raid',
+    },
+    {
+      id: 'clutch', name: 'Blightscale Clutch', npcId: 0, spellId: 1289962,
+      job: 'kill', count: 1, hp: 10, fuseSec: 16, spawnRadius: 24,
+      good: 'Break the clutch before gestation completes — the channel is not kickable.',
+      failText: 'A Blightscale Clutch completed its gestation',
+    },
+  ],
   maxHp: 1,
   loopIntervalSec: 5.5,        // slightly faster than the others — it is the last boss
   energyPerSec: 2.2,           // ~45s between platform collapses

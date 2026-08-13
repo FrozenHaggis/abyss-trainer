@@ -43,6 +43,26 @@ export const vashnik: BossDef = {
   realName: 'Vashnik the Malignant',
   blurb: 'Nothing here is kickable. A living venom that reaches the Cavity is what actually wipes raids.',
   arenaRadius: 42,
+  // Two different lessons. The Shrouded Venom's absorb is worth 100% of its max
+  // health, so damage does literally nothing until it breaks. The Clotting Venom
+  // is immune to Disarm, Disorient, Fear, Slow, Root and Stun — "cannot be kited
+  // or CC'd, only killed" — and splits on death, each split still walking for
+  // the Malignant Cavity.
+  addEverySec: 28,
+  adds: [
+    {
+      id: 'shrouded', name: 'Shrouded Venom', npcId: 0, spellId: 1312366,
+      job: 'kill', count: 1, hp: 8, shieldHp: 8, fuseSec: 16, spawnRadius: 30,
+      good: 'Break Miasmic Coating first — until it drops, the add takes no damage at all.',
+      failText: 'A Shrouded Venom survived its window',
+    },
+    {
+      id: 'clotting', name: 'Clotting Venom', npcId: 259408, spellId: 1286631,
+      job: 'kill', count: 2, hp: 7, fuseSec: 14, spawnRadius: 32,
+      good: 'Kill them before they reach the Cavity — they cannot be slowed, rooted or feared.',
+      failText: 'A Clotting Venom reached the Malignant Cavity',
+    },
+  ],
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,          // Imbibe at 100 energy — roughly every 45s

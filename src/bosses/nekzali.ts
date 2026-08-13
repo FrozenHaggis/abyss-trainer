@@ -43,6 +43,18 @@ export const nekzali: BossDef = {
   realName: "Nek'zali the Soulcoiler",
   blurb: 'Nothing one-shots. The raid bar bleeds to Rite stacks, and everyone who misses a Pyre soak burns.',
   arenaRadius: 44,
+  // Every spirit that reaches the Soulcoil Well fires a Soulcoil Rite: raid-wide
+  // Shadow, a permanent stacking DoT, and 5 energy to Nek'zali. The shield is
+  // the lesson — while Gravebound Advance holds, the add cannot die at all.
+  addEverySec: 26,
+  adds: [
+    {
+      id: 'amani', name: 'Restless Amani', npcId: 261509, spellId: 1287533,
+      job: 'kill', count: 2, hp: 9, shieldHp: 5, fuseSec: 15, spawnRadius: 30,
+      good: 'Break the Gravebound Advance absorb, then kill it before it reaches the Well.',
+      failText: 'A Restless Amani reached the Soulcoil Well',
+    },
+  ],
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,          // ~45s of bar per Soulcoil Well surge

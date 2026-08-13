@@ -5,6 +5,7 @@ import { BOSSES } from './bosses/registry'
 import Arena from './ui/Arena'
 import Debrief from './ui/Debrief'
 import RoleIcon from './ui/RoleIcon'
+import { clearLocalTrack, localTrackName, useLocalTrack } from './engine/audio'
 import BossSigil from './ui/BossSigil'
 
 type Screen =
@@ -20,6 +21,7 @@ const ROLE_BLURB: Record<Role, string> = {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ s: 'pick' })
+  const [track, setTrack] = useState<string | null>(localTrackName())
   const [boss, setBoss] = useState<BossDef>(BOSSES[0])
   const [role, setRole] = useState<Role>('dps')
 
@@ -101,6 +103,32 @@ export default function App() {
           <strong>WASD</strong> to move · <strong>1–4</strong> for abilities ·
           the arena edge is lethal, and everything on screen is your job
         </div>
+
+        <h2>Music</h2>
+        <div className="musicpick">
+          <label className="btn musicbtn">
+            {track ? 'Change track' : 'Load a track from your PC'}
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={e => {
+                const f = e.target.files?.[0]
+                if (f) { useLocalTrack(f); setTrack(f.name) }
+              }}
+            />
+          </label>
+          {track && (
+            <>
+              <span className="musicname">♪ {track}</span>
+              <button className="btn" onClick={() => { clearLocalTrack(); setTrack(null) }}>Clear</button>
+            </>
+          )}
+        </div>
+        <p className="musicnote">
+          Plays on pull and ducks under the callouts. The file is read in your browser
+          and never uploaded — nothing is shared with anyone else, so your own copy of a
+          soundtrack works here. Each raider loads their own.
+        </p>
 
         <p className="credits">
           Boss and role art from <a href="https://game-icons.net" target="_blank" rel="noreferrer">game-icons.net</a>,

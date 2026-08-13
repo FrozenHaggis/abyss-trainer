@@ -37,16 +37,18 @@ npm run playtest   # headless balance check, 8 bosses x 3 roles
 
 ## Music
 
-**No music ships with this repo**, and `public/music/*.mp3` is gitignored so a
-personal copy of a commercial track can never be published to Pages by accident.
+**Load your own on the title screen.** Pick any audio file from your PC and it
+plays on pull, ducks under the voice callouts, and fades at the end. The file is
+read straight into the browser via an object URL — it is **never uploaded**, so
+nothing is hosted or shared, and your own copy of a soundtrack works fine on the
+deployed site. Every raider loads their own; the choice is remembered per browser.
 
-Drop a file at `public/music/pull.mp3` and it plays on pull, ducks under the
-voice callouts, and fades at the end. Without it the game runs silently — no
-errors, no missing-asset warnings.
+**No music ships with the repo.** `public/music/*.mp3` is gitignored so a personal
+copy can never be published by accident. If you want a default track baked into
+the deployed site for everyone, it has to be one you may redistribute — see
+[ATTRIBUTION.md](ATTRIBUTION.md). Drop it at `public/music/pull.mp3`.
 
-If you want music on the **deployed** site, it has to be something you are
-allowed to redistribute. See [ATTRIBUTION.md](ATTRIBUTION.md) for CC0 and CC-BY
-sources.
+Without either, the game runs silently — no errors, no missing-asset warnings.
 
 ## Why the mechanics are trustworthy
 

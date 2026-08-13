@@ -102,6 +102,21 @@ export const coiledaltar: BossDef = {
 
   mechanics: [
     {
+      id: 'soulbound',
+      name: 'Deathguard & Soulbound',
+      spellId: 1309987,
+      from: 'malacrass',
+      roles: ['tank', 'dps', 'healer'],
+      telegraphMs: 0,
+      origin: 'boss',
+      // The entities do not share a health pool, so leaving one far behind is
+      // the failure this rule scores. Judged continuously from the moment the
+      // first one dies.
+      rule: { type: 'syncKill', withinSec: 12 },
+      good: 'Health pools stay level and both bosses die together.',
+      failText: 'Health pools drifted apart — killing one berserks the other',
+    },
+    {
       id: 'fangs',
       name: 'Fangs of the Coiled Altar',
       spellId: 1282512,

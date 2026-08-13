@@ -89,6 +89,12 @@ function play(boss, role, smart) {
           if (d < td) { td = d; tx += (a.pos.x - w.player.pos.x) / (d || 1) * 3; ty += (a.pos.y - w.player.pos.y) / (d || 1) * 3 }
           continue
         }
+        // Only URGENT adds pull damage off the boss: one whose fuse is running
+        // out, or one that still has a shield to break. A bot that shot every
+        // add on sight never touched the boss at all on the add-heavy fights —
+        // 98% accuracy and 98% boss health, because every shot went into crates.
+        const urgent = a.def.fuseSec >= 900 ? false : (a.fuse ?? 0) < 9000 || a.shield > 0
+        if (!urgent) continue
         if (d < td) { td = d; target = a }
       }
       input.firing = true

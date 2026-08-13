@@ -71,6 +71,9 @@ export interface BossUnit {
    * `tankedApart` is tanked — this raid has exactly two tanks.
    */
   targetId: number
+  /** 0..1. Twin Fangs "do NOT share a health pool", and neither does the Altar. */
+  hp: number
+  alive: boolean
 }
 
 export interface World {
@@ -123,6 +126,8 @@ export interface World {
   /** The most recent failure, for an immediate toast. */
   lastFailure: { name: string; failText: string; atMs: number } | null
   /** ms remaining in a burn window, and what it multiplies your damage by. */
+  /** ms since the first of a pair died, for the synchronised-kill check. */
+  soloMs: number
   burnMs: number
   burnMult: number
   /** The burn window's mechanic id, and whether you used burst inside it. */
@@ -200,6 +205,8 @@ function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
       pos: { ...d.start },
       angle: -Math.PI / 2,
       targetId: wants && nextTank < tanks.length ? tanks[nextTank++] : -1,
+      hp: 1,
+      alive: true,
     }
   })
 }
@@ -220,6 +227,11 @@ export function nearestBoss(w: World, p: Vec): BossUnit {
   let best = w.bosses[0]
   let bd = Infinity
   for (const b of w.bosses) {
+    // Never auto-aim at a corpse or at something that cannot be damaged.
+    // Mor'zahi sits closest to the raid on the Lost Explorers and is
+    // untargetable, so unfiltered this pointed every shot at him and accuracy
+    // collapsed to half on a fight nobody could then kill.
+    if (b.def.untargetable || !b.alive) continue
     const d = dist(b.pos, p)
     if (d < bd) { bd = d; best = b }
   }
@@ -312,6 +324,7 @@ export function createWorld(boss: BossDef, role: Role): World {
     playerStacks: 0,
     prompt: null,
     lastFailure: null,
+    soloMs: 0,
     burnMs: 0,
     burnMult: 1,
     burnId: null,
@@ -667,7 +680,7 @@ function resolveInstance(w: World, inst: Instance) {
       if (!isInside(inst, add.pos)) continue
       add.alive = false
       recordAddFailure(w, add.def)
-      w.raidHealth -= 0.16
+      w.raidHealth -= 0.09
       w.shake = Math.min(1, w.shake + 0.5)
     }
   }
@@ -1235,7 +1248,7 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // Aura pressure compounds with how many you have let live. One add up is a
     // nuisance; four is the raid drowning — that escalation is what "the adds
     // set the clock" means, and a flat per-add drain never conveyed it.
-    if (d.auraDps) w.raidHealth -= (d.auraDps / 100) * dt * (1 + 0.35 * (w.adds.length - 1))
+    if (d.auraDps) w.raidHealth -= (d.auraDps / 100) * dt * (1 + 0.2 * (w.adds.length - 1))
 
     if (d.job === 'intercept' && d.marchSpeed) {
       // Walks to the centre. Standing in its path stops it; killing it is not
@@ -1549,6 +1562,7 @@ export function step(w: World, input: Input, dtMs: number) {
   // Faces the player unless a tank is holding it: a tank who stays put keeps
   // the cone pointed away from centre, which is the whole `faceAway` game.
   for (const b of w.bosses) {
+    if (!b.alive) continue
     // An untanked entity — a stationary caster — faces the raid instead.
     const face = b.targetId >= 0 ? currentTank(w, b).pos : raidAnchor(w)
     const turn = angleDelta(b.angle, Math.atan2(face.y - b.pos.y, face.x - b.pos.x))
@@ -1583,7 +1597,7 @@ export function step(w: World, input: Input, dtMs: number) {
     // a three-body council with two tanks, and United Defense keys on any pair
     // being close: "all three explorers take 99% reduced damage while within
     // 30 yds of each other".
-    const held = w.bosses.filter(b => !b.def.untargetable)
+    const held = w.bosses.filter(b => !b.def.untargetable && b.alive)
     let closest = Infinity
     for (let i = 0; i < held.length; i++) {
       for (let j = i + 1; j < held.length; j++) {
@@ -1646,7 +1660,7 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
   // Healers regenerate the raid passively; other roles rely on their raid CD.
-  const regen = w.player.role === 'healer' ? 0.045 : 0.038
+  const regen = w.player.role === 'healer' ? 0.052 : 0.046
   w.raidHealth = Math.max(0, Math.min(1, w.raidHealth + regen * dt))
   // Ambient attrition is shared, so the raid visibly suffers when it is unhealed.
   for (const a of w.allies) {
@@ -1807,20 +1821,51 @@ export function step(w: World, input: Input, dtMs: number) {
     if (consumed) continue
 
     for (const b of w.bosses) {
-      if (b.def.untargetable) continue
+      if (b.def.untargetable || !b.alive) continue
       if (dist(s.pos, b.pos) > BOSS_HIT_RADIUS) continue
       s.life = 0
       w.shotsHit++
-      // 99% damage reduction while the pair is linked.
-      w.bossHp -= (w.bossesLinked ? perShot * 0.01 : perShot) * (w.burnMs > 0 ? w.burnMult : 1)
+      // Damage lands on the entity you actually hit. A shared pool let you
+      // ignore one of a pair completely and still "kill them together", which
+      // is the one thing Twin Fangs and the Altar's third stage forbid.
+      //
+      // Scaled by the number of targetable entities so a two-boss fight still
+      // takes about as long overall — the lesson is that your damage has to be
+      // SPLIT, not that these encounters last twice as long. 99% damage
+      // reduction applies while a pair is linked.
+      const live = w.bosses.filter(x => !x.def.untargetable).length || 1
+      b.hp -= (w.bossesLinked ? perShot * 0.01 : perShot) * (w.burnMs > 0 ? w.burnMult : 1) * live
+      if (b.hp <= 0) { b.hp = 0; b.alive = false }
       break
     }
   }
   w.shots = w.shots.filter(s => s.life > 0)
 
-  if (w.bossHp <= 0 && !w.killed) {
+  const targetable = w.bosses.filter(b => !b.def.untargetable)
+  w.bossHp = targetable.reduce((n, b) => n + Math.max(0, b.hp), 0) / Math.max(1, targetable.length)
+  if (targetable.every(b => !b.alive) && !w.killed) {
     w.bossHp = 0
     w.killed = true
+  }
+
+  // ── they have to die together ──
+  // "Only Uncoiled Wrath, the uncapped rage the survivor gains when the first
+  // dies, forces a synchronised kill." Leaving one far behind is the failure.
+  const syncDef = w.boss.mechanics.find(m => m.rule.type === 'syncKill')
+  if (syncDef && syncDef.rule.type === 'syncKill' && targetable.length > 1) {
+    const anyDead = targetable.some(b => !b.alive)
+    if (anyDead && !w.killed) {
+      w.soloMs += dtMs
+      if (!w.seen.has(syncDef.id)) { w.seen.add(syncDef.id); w.announce = syncDef }
+      if (w.soloMs > syncDef.rule.withinSec * 1000) {
+        w.soloMs = 0
+        if (syncDef.roles.includes(w.player.role)) recordFailure(w, syncDef)
+        // The survivor's rage is uncapped, so it compounds rather than ticking.
+        w.raidHealth -= 0.2
+      }
+    } else {
+      w.soloMs = 0
+    }
   }
 
   // Melee-range mechanics: raid damage if the raid bar empties.

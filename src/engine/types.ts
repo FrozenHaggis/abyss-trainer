@@ -61,6 +61,15 @@ export type Rule =
    * that actually have burst on their bar.
    */
   | { type: 'burnWindow'; multiplier: number; durationMs: number }
+  /**
+   * Several entities that must die within seconds of each other.
+   *
+   * Twin Fangs: "Vexhul and Ithraz ... do NOT share a health pool — only
+   * Uncoiled Wrath, the uncapped rage the survivor gains when the first dies,
+   * forces a synchronised kill." The Coiled Altar links its pair the same way
+   * in Stage Three: "killing one berserks the other".
+   */
+  | { type: 'syncKill'; withinSec: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */
   | { type: 'faceAway' }
   /** Press an ability inside the window. Kicks, dispels, taunts. */

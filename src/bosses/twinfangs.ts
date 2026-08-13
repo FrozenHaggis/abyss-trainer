@@ -81,6 +81,21 @@ export const twinfangs: BossDef = {
 
   mechanics: [
     {
+      id: 'uncoiled',
+      name: 'Uncoiled Wrath',
+      spellId: 1308583,
+      from: 'ithraz',
+      roles: ['tank', 'dps', 'healer'],
+      telegraphMs: 0,
+      origin: 'boss',
+      // The entities do not share a health pool, so leaving one far behind is
+      // the failure this rule scores. Judged continuously from the moment the
+      // first one dies.
+      rule: { type: 'syncKill', withinSec: 12 },
+      good: 'Both serpents die within seconds of each other.',
+      failText: 'Killed one serpent far ahead of the other — Uncoiled Wrath',
+    },
+    {
       id: 'venom',
       name: 'Eternal Venom',
       spellId: 1290480,

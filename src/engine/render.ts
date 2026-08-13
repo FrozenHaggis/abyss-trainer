@@ -322,7 +322,7 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       ctx.save()
       ctx.translate(bp.x - size / 2, bp.y - size / 2)
       ctx.scale(k, k)
-      ctx.fillStyle = isPrimary ? '#b79bff' : '#9a86e0'
+      ctx.fillStyle = !b.alive ? '#4a4458' : isPrimary ? '#b79bff' : '#9a86e0'
       ctx.fill(sig)
       ctx.restore()
     } else {
@@ -351,13 +351,24 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([])
     }
 
+    // Its own health. These fights do not share a pool, so one bar in the HUD
+    // cannot show you that a pair is drifting apart — which is the whole
+    // synchronised-kill problem.
+    if (multi) {
+      const bw = 44
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'
+      ctx.fillRect(bp.x - bw / 2, bp.y + size * 0.65 + 2, bw, 4)
+      ctx.fillStyle = b.alive ? 'rgba(183,155,255,0.95)' : 'rgba(120,120,120,0.7)'
+      ctx.fillRect(bp.x - bw / 2, bp.y + size * 0.65 + 2, bw * Math.max(0, b.hp), 4)
+    }
+
     // Name them, but only when there is more than one — on a single-boss fight
     // the name is already in the HUD and a floating label is just clutter.
     if (multi) {
       ctx.font = '600 11px Rajdhani, system-ui, sans-serif'
       ctx.textAlign = 'center'
       ctx.fillStyle = 'rgba(201, 182, 255, 0.92)'
-      ctx.fillText(b.def.name, bp.x, bp.y + size * 0.65 + 14)
+      ctx.fillText(b.def.name, bp.x, bp.y + size * 0.65 + 20)
       ctx.textAlign = 'start'
     }
   }

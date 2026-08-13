@@ -76,6 +76,13 @@ data. Tests run on every build and every deploy:
 - on multi-boss fights, **every entity and its npcId** must match
   `abilities.json`, and each mechanic must be cast by the entity that really
   owns it — re-derived from the data on every run
+- **no 300-yard raid-wide ability may be scored as a player failure.** Every
+  tactic file with one says the same thing: "a per-player hit leaderboard would
+  name the whole raid"
+- **entities that must be kept apart must start apart** — further than their own
+  link radius, so a fight never opens inside its own failure state
+- eating a pickup, and holding the boss while your own stacks are up, can never
+  be scored against you — those are the co-tank's job and the soaker's job
 
 ## Adding a boss
 
@@ -92,13 +99,21 @@ them, and a tank dying to a dispel they cannot cast.
 
 ## Known gaps
 
-- **Arena sizes are measured; shapes are still circles.** Radii come from 863k
-  player positions across 301 PTR pulls (see below), so the floors are the right
-  size. Seven of the eight read as circles or near-circles, but Twin Fangs
-  (corner/axis 1.19) and Coiled Altar (1.27) sit between a circle (1.00) and a
-  square (1.41) — probably octagonal, and drawn as circles for now.
-- **Ula'tek's arena is unknown.** Zero logs exist for it in 625 PTR reports; it
-  was never publicly tested. Its radius is still a placeholder.
+Recorded honestly rather than quietly left out.
+
+- **Arena shapes are still circles.** The sizes are measured (below) but Twin
+  Fangs (corner/axis 1.19) and Coiled Altar (1.27) sit between a circle (1.00)
+  and a square (1.41) — probably octagonal. Drawn as circles until live logs
+  settle it.
+- **Ula'tek's arena is unknown.** Zero logs across 625 PTR reports; it was never
+  publicly tested. Its radius is a placeholder.
+- **Frostfire Volley's element pairing** (opposing Fire/Frost patches detonate on
+  contact) is folded into a generic Fire Patch entry. It is a polarity mechanic
+  and the engine has no polarity primitive.
+- **Turbulent Gusts** (Sszorak) — being aloft is a movement state with no
+  mid-air collision. Two-body airborne physics, deliberately deferred.
+- **Mythic content is excluded on purpose.** This is a Heroic trainer and a test
+  enforces it.
 
 ## Arena geometry
 

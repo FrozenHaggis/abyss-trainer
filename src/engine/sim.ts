@@ -679,6 +679,8 @@ const SWAP_GRACE_MS = 2500
 const BOSS_FOLLOW_SPEED = 7
 /** How long the pair may sit inside the link range before it is scored. */
 const LINK_GRACE_MS = 2500
+/** How long a resolved instance is kept so the impact flash can draw. */
+export const IMPACT_FLASH_MS = 260
 /**
  * How long the co-tank takes to taunt off you once your stacks are up. Long
  * enough that you see the stacks climb and understand why the swap happened,
@@ -1667,7 +1669,12 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
   w.instances = w.instances.filter(i =>
-    !i.resolved || (i.def.lingerMs !== undefined && -i.timer < i.def.lingerMs))
+    !i.resolved
+    // Held for a beat after resolving so the impact flash has something to draw.
+    // Without this a mechanic vanished on the frame it landed and the only
+    // evidence it had gone off was your health bar moving.
+    || -i.timer < IMPACT_FLASH_MS
+    || (i.def.lingerMs !== undefined && -i.timer < i.def.lingerMs))
 
   // ── your damage ──
   // The boss only dies from shots you actually land. Passive HP drain meant you

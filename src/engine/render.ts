@@ -47,13 +47,21 @@ function progress(inst: Instance): number {
   return Math.min(1, 1 - inst.timer / total)
 }
 
-function pathShape(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance) {
+/**
+ * Path a mechanic's shape, optionally scaled about its own origin.
+ *
+ * `k > 1` draws the contracting timing ring: a copy of the shape sitting
+ * outside it that shrinks onto the real edge as the cast completes. That is the
+ * language WoW's own ground markers use, and without it a telegraph told you
+ * where something would land but nothing at all about when.
+ */
+function pathShape(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance, k = 1) {
   const p = toPx(cam, inst.pos)
   const s = inst.def.shape!
   ctx.beginPath()
   switch (s.kind) {
     case 'circle':
-      ctx.arc(p.x, p.y, s.radius * cam.scale, 0, Math.PI * 2)
+      ctx.arc(p.x, p.y, s.radius * k * cam.scale, 0, Math.PI * 2)
       break
     case 'annulus':
       ctx.arc(p.x, p.y, s.outer * cam.scale, 0, Math.PI * 2)
@@ -62,13 +70,13 @@ function pathShape(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance) {
     case 'cone': {
       const half = (s.arcDeg * Math.PI) / 360
       ctx.moveTo(p.x, p.y)
-      ctx.arc(p.x, p.y, s.radius * cam.scale, inst.angle - half, inst.angle + half)
+      ctx.arc(p.x, p.y, s.radius * k * cam.scale, inst.angle - half, inst.angle + half)
       ctx.closePath()
       break
     }
     case 'line': {
       const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
-      const hw = (s.width / 2) * cam.scale
+      const hw = (s.width / 2) * k * cam.scale
       const L = s.length * cam.scale
       ctx.moveTo(p.x - sa * hw, p.y + ca * hw)
       ctx.lineTo(p.x + ca * L - sa * hw, p.y + sa * L + ca * hw)
@@ -186,6 +194,56 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.fill()
     ctx.strokeStyle = `rgba(${col}, ${0.5 + t * 0.5})`
     ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.lineWidth = 1
+
+    // The timing ring: a copy of the shape contracting onto its own edge as the
+    // cast lands. Alpha alone told you where a mechanic would go off but never
+    // when, so every telegraph looked equally urgent right up to the moment it
+    // killed you.
+    if (inst.def.telegraphMs > 400 && t < 0.995) {
+      pathShape(ctx, cam, inst, 1 + 1.15 * (1 - t))
+      ctx.strokeStyle = `rgba(${col}, ${0.22 + 0.5 * t})`
+      ctx.lineWidth = 2
+      ctx.setLineDash([7, 6])
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+    }
+
+    // A drifting hazard spins, so it reads as something moving under its own
+    // power rather than a puddle that happens to be sliding.
+    if (inst.def.driftSpeed && inst.def.shape.kind === 'circle') {
+      const p = toPx(cam, inst.pos)
+      const r = inst.def.shape.radius * cam.scale
+      ctx.save()
+      ctx.translate(p.x, p.y)
+      ctx.rotate((w.elapsedMs / 380) % (Math.PI * 2))
+      ctx.strokeStyle = `rgba(${col}, 0.85)`
+      ctx.lineWidth = 2
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath()
+        ctx.arc(0, 0, r * 0.62, (i / 3) * Math.PI * 2, (i / 3) * Math.PI * 2 + 1.1)
+        ctx.stroke()
+      }
+      ctx.restore()
+      ctx.lineWidth = 1
+    }
+  }
+
+  // ── impact flash ──
+  // A quarter-second bloom where something just landed, so a hit is an event
+  // you see rather than a number that changed.
+  for (const inst of w.instances) {
+    if (!inst.resolved || !inst.def.shape) continue
+    const since = -inst.timer
+    if (since > 260) continue
+    const f = 1 - since / 260
+    pathShape(ctx, cam, inst, 1 + 0.35 * (1 - f))
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.30 * f})`
+    ctx.fill()
+    ctx.strokeStyle = `rgba(${ruleColour(inst)}, ${0.9 * f})`
+    ctx.lineWidth = 3 * f + 1
     ctx.stroke()
     ctx.lineWidth = 1
   }

@@ -1,0 +1,518 @@
+{
+  "bossName": "Nek'zali the Soulcoiler",
+  "difficulty": "Heroic+Mythic",
+  "bosses": [
+    {
+      "name": "Nek'zali the Soulcoiler",
+      "npcId": 259927,
+      "spells": [
+        {
+          "name": "Soulcoil Rite",
+          "spellId": 1288772,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Raid-wide Shadow burst plus a stacking DoT every time a soul enters the well, and 5 energy to Nek'zali — unavoidable, so attribute deaths only, never a per-player failure"
+        },
+        {
+          "name": "Ritual Burn",
+          "spellId": 1297624,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Pure aura, +15% mechanic damage taken per stack for 1 min (guides frame it as Rite damage specifically) — no damage events of its own, stack count is the add-leak scoreboard"
+        },
+        {
+          "name": "Soulcoil Ignition",
+          "spellId": 1293664,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nek'zali stirs the well herself, invoking four Soulcoil Rites back to back — the scripted healing burst and the marker that separates scripted Rites from leaked ones"
+        },
+        {
+          "name": "Soulcoil Ignition",
+          "spellId": 1285681,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second Ignition ID firing 1:1 with 1293664 — the periodic sub-component driving the repeated Rites; marker only"
+        },
+        {
+          "name": "Anguished Echoes",
+          "spellId": 0,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — knockback circles raining from the well during Ignition, confirmed as a dodge check by method.gg and expcarry but no distinct ID isolated, so no detection fires yet"
+        },
+        {
+          "name": "Essence Rend",
+          "spellId": 1287434,
+          "category": "Healer",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Genuinely Magic-dispellable — wowhead lists Dispel Type: Magic, method.gg calls it dispellable and the log shows 37 healer dispels (wow.gg's table disagrees; it is the weaker source). 15s Shadow DoT that drops a Latent Cultist where it ends, so dispel position matters more than dispel speed"
+        },
+        {
+          "name": "Possession Barrage",
+          "spellId": 1284103,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast/target ID landing on the current tank — use it to identify the tank at each barrage; expcarry reports it also applying Hollowed on Heroic and above"
+        },
+        {
+          "name": "Possession Barrage",
+          "spellId": 1292034,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Impact damage with a 300yd radius — it hits the whole raid every cast and only the amount varies with distance, so a hit count is meaningless; report damage taken per player instead"
+        },
+        {
+          "name": "Hollowing Strikes",
+          "spellId": 1284109,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Tank melee DoT, 15s, stacking -5% healing and absorb received — wowhead confirms no dispel type. Some guides call the swing 'Sever' and the debuff 'Hollowed'"
+        },
+        {
+          "name": "Melee",
+          "spellId": 1,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Boss auto-attack — non-tank hits are a positioning failure before Uncoiled Rage and expected noise during it"
+        },
+        {
+          "name": "Soul Transfer",
+          "spellId": 1289902,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nek'zali's half of the Ritual of Awakening handoff — intermission start marker"
+        },
+        {
+          "name": "Hungering Pyre",
+          "spellId": 1305421,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wowhead shows this as a dummy/server-side script with no player-facing effect — internal trigger only, never reportable"
+        },
+        {
+          "name": "Residual Toll",
+          "spellId": 1305993,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wowhead shows this as a dummy/server-side script targeting the caster only — internal trigger, not damage; the real Toll damage is 1298696"
+        },
+        {
+          "name": "Uncoiling",
+          "spellId": 1292315,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Two soft enrage — ticking Shadow damage on the whole raid every second until she dies; unavoidable, informational plus deaths"
+        },
+        {
+          "name": "Uncoiled Rage",
+          "spellId": 0,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — hard enrage at 100 energy (+500% damage, +150% speed, taunt immune); the pull-over marker, described by method.gg, wow.gg and expcarry"
+        },
+        {
+          "name": "Invoke",
+          "spellId": 1299722,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Wowhead confirms an Interrupt Cast effect plus a Pacify & Silence aura on players; also commands the Latent Cultists to reposition (Entwined Step). Marker only — losing a cast to it is not a reportable failure"
+        },
+        {
+          "name": "Soulcoiled",
+          "spellId": 1290361,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wowhead shows mind control, pacify, silence, heal to full and +300% max health — the well taking a player over. Marker: log the application and whether a Rite followed"
+        },
+        {
+          "name": "Soul Exhaustion",
+          "spellId": 1300235,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "+300% damage taken for 1 min on players returning from the Immortal Coil — pure aura with no damage events; cross-reference deaths within 60s of an application"
+        }
+      ]
+    }
+  ],
+  "adds": [
+    {
+      "name": "Restless Amani",
+      "npcId": 261509,
+      "note": "Spirits possess the sarcophagus corpses and fixate on the Soulcoil Well. Wowhead lists NPC 261509 as 'Raised Amani'; the combat log name is 'Restless Amani'",
+      "spells": [
+        {
+          "name": "Gravebound Advance",
+          "spellId": 1287533,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Absorb shield worth 25% of the add's health — while it holds the add cannot die or be stopped. Guides call it a magic absorb broken by magic damage; wowhead's effect reads Absorb Damage (All), so treat the school requirement as unconfirmed"
+        },
+        {
+          "name": "Corpse Blight",
+          "spellId": 1307939,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stacking Nature/Shadow DoT on the whole raid every time an Amani dies — wowhead confirms no dispel type; unavoidable, the price of killing adds"
+        },
+        {
+          "name": "Corpse Blight",
+          "spellId": 1294729,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Eruption damage component of the same mechanic — informational"
+        }
+      ]
+    },
+    {
+      "name": "Summoner Jawae",
+      "npcId": 263473,
+      "note": "Loyal Soulcoiler who raises the Tethers of Awakening at 50% and shields Nek'zali for the intermission",
+      "spells": [
+        {
+          "name": "Soul Transfer",
+          "spellId": 1293211,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "15s channel transferring Jawae's essence into an Echo of Jawae — intermission spawn marker"
+        },
+        {
+          "name": "Tether of Awakening",
+          "spellId": 0,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — the link from each Echo of Jawae to the well that makes Nek'zali immune; severed by killing the Echo"
+        }
+      ]
+    },
+    {
+      "name": "Echo of Jawae",
+      "npcId": 263050,
+      "note": "Intermission add. Each Echo holds one Tether of Awakening — kill all of them to end the Ritual of Awakening. Wowhead lists a separate PTR NPC 271337 under the same name; 263050 is the ID in the combat log",
+      "spells": [
+        {
+          "name": "Soul Transfer",
+          "spellId": 1292248,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Echo-side half of the essence handoff — marker"
+        },
+        {
+          "name": "Soul Transfer",
+          "spellId": 1295085,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The burst at the end of the channel — wowhead gives it a 300yd radius, so it is raid-wide and NOT a positioning failure despite the guides' 'get out of the path' wording; deaths-attributed only"
+        },
+        {
+          "name": "Hungering Pyre",
+          "spellId": 1294742,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast ID for the soak circle — window marker for counting soakers"
+        },
+        {
+          "name": "Hungering Pyre",
+          "spellId": 1289855,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The 10yd Fire soak damage itself — taking this hit is correct play, so it is a head-count metric, never a failure"
+        },
+        {
+          "name": "Hungering Pyre",
+          "spellId": 1306666,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Debuff/soak-marker component — marker only"
+        },
+        {
+          "name": "Slithering Flame",
+          "spellId": 1294933,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "8s Fire DoT thrown at players who did not soak the Pyre — wowhead confirms no dispel type. Every application is a missed soak and it is the fight's biggest killer"
+        },
+        {
+          "name": "Cremation",
+          "spellId": 1289875,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "4yd Fire blast when Slithering Flame expires, burning Vessels of Awakening and Amani corpses in range — the flame carrier is expected in this data, everyone else is a failure"
+        }
+      ]
+    },
+    {
+      "name": "Soulcoil Well",
+      "npcId": 266756,
+      "note": "The centre of the room and the whole point of the fight. Absorbs any spirit that reaches its surface and any player who dies in it, invoking a Soulcoil Rite each time",
+      "spells": [
+        {
+          "name": "Residual Toll",
+          "spellId": 1298696,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Real Shadow damage at 300yd while the well siphons souls, leaving Hollowed after 16s — the encounter's baseline damage floor, informational"
+        },
+        {
+          "name": "Residual Toll",
+          "spellId": 1298698,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The siphon aura itself — marks that a Toll window is active"
+        },
+        {
+          "name": "Swirling Spirit",
+          "spellId": 1300239,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "5s Shadow DoT ticking every second on contact with a spirit inside the well — any application means somebody clipped the water"
+        },
+        {
+          "name": "Soulcoil Well",
+          "spellId": 1290390,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Standing-in-the-well Shadow tick — zero events is the target on every pull"
+        }
+      ]
+    },
+    {
+      "name": "Drowned Echo",
+      "npcId": 268204,
+      "note": "MYTHIC ONLY — the entity inside the Immortal Coil. Players dragged under by Grasping Depths enter a separate realm and must kill it to release the well",
+      "spells": [
+        {
+          "name": "Soulcoiler's Curse",
+          "spellId": 1300238,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Kickable — 10s Shadow cast on wowhead and 14 log interrupt events against 3 completions. On completion it coils the whole arena, ejects everyone and leaves them Soulcoiled"
+        },
+        {
+          "name": "Grasping Depths",
+          "spellId": 1293214,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Unlimited-range Shadow tick on everyone topside until the Drowned Echo dies — unavoidable, so deaths here read as kill-speed below, not a mistake above"
+        },
+        {
+          "name": "Immortal Coil",
+          "spellId": 1308227,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "The separate realm players are pulled into and the damage taken while inside — deaths attributed to the team below"
+        }
+      ]
+    },
+    {
+      "name": "Latent Cultist",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — never appeared as a caster in the sampled logs. Spawned where Essence Rend ends; explodes on spawn and leaves a persistent slow zone",
+      "spells": [
+        {
+          "name": "Latent Cultist",
+          "spellId": 1288554,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Spawn explosion plus a persistent puddle dealing Shadow damage per second and snaring 40% — wowhead confirmed; any hit on any player is a failure"
+        },
+        {
+          "name": "Entwined Step",
+          "spellId": 0,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — Stage Two Invoke commands the Cultists to dance their puddles around the well; described by method.gg and expcarry, no detection until the ID lands"
+        }
+      ]
+    }
+  ]
+}

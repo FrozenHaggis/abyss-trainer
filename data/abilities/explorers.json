@@ -1,0 +1,779 @@
+{
+  "bossName": "The Lost Explorers",
+  "difficulty": "Heroic+Mythic",
+  "bosses": [
+    {
+      "name": "Scrollsage Iku",
+      "npcId": 261843,
+      "spells": [
+        {
+          "name": "Icebound Flames",
+          "spellId": 1286922,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The only kick target in the fight (46 kicks vs 5 completions on Mythic PTR); wowhead lists the 12s DoT + 50% snare as dispel type Magic, but no healer is assigned to it — the answer is the kick."
+        },
+        {
+          "name": "Frostfire Volley",
+          "spellId": 1295891,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker for the missile barrage that applies the element debuffs and drops Fire/Frost patches."
+        },
+        {
+          "name": "Burning Flames",
+          "spellId": 1295928,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fire element marker, 1 min, no dispel type — the failure is colliding with a Piercing Frost carrier, not carrying it."
+        },
+        {
+          "name": "Piercing Frost",
+          "spellId": 1295954,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Frost element marker, 1 min, carries a movement slow, no dispel type — opposite pole to Burning Flames."
+        },
+        {
+          "name": "Elemental Explosion",
+          "spellId": 1295952,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Frostfire detonation when opposing elements meet — rare but 4 killing blows off one damaged player."
+        },
+        {
+          "name": "Fire Patch",
+          "spellId": 1297649,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Persistent fire ground left by Frostfire Volley — any tick on a player means they stood in it."
+        },
+        {
+          "name": "Frost Patch",
+          "spellId": 1297648,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Persistent frost ground left by Frostfire Volley — any tick on a player means they stood in it."
+        },
+        {
+          "name": "Spreading Flames",
+          "spellId": 1297650,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fire patch growth component — same rule as Fire Patch, 1 killing blow on Mythic PTR."
+        },
+        {
+          "name": "Blink Nova",
+          "spellId": 1296021,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker — Iku charges arcane power and blinks to a player."
+        },
+        {
+          "name": "Blink Nova",
+          "spellId": 1294334,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Arcane damage ID — wowhead shows a 300 yd radius with no distance falloff, so it is unavoidable raid damage; 6 killing blows means deaths only, never a positioning failure."
+        },
+        {
+          "name": "Shredding Shards",
+          "spellId": 1310616,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Primary tank channel — shards every 0.5s for 4s at the current target; damage on a non-tank is a positioning failure."
+        },
+        {
+          "name": "Shredding Shards",
+          "spellId": 1295854,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Secondary cast ID (encounter-journal canonical) — same rule as 1310616."
+        },
+        {
+          "name": "Shredding Shards",
+          "spellId": 1295858,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stacking +50% damage taken from Shredding Shards — this is the ID that drives the Iku tank swap."
+        },
+        {
+          "name": "Cataclysmic Invocation",
+          "spellId": 1291390,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Escalating raid explosion when an ally explorer dies — journal-confirmed, never cast in the PTR sample."
+        }
+      ]
+    },
+    {
+      "name": "First Mate Nama",
+      "npcId": 261835,
+      "spells": [
+        {
+          "name": "United Defense",
+          "spellId": 1297646,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Heroic+ only: all three explorers take 99% reduced damage while within 30 yds of each other — a boss buff, invisible to player-event detection."
+        },
+        {
+          "name": "Steady Strikes",
+          "spellId": 1291929,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Debuff on Nama's current target, +4% damage taken from Nama per melee for 30s — his tank-swap driver."
+        },
+        {
+          "name": "Shell Spin",
+          "spellId": 1296062,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker — three spinning shells hurled in a frontal cone."
+        },
+        {
+          "name": "Shell Spin",
+          "spellId": 1291918,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "4s stun on shell contact, no dispel type — any application on any player is a dodge failure."
+        },
+        {
+          "name": "Mighty Thud",
+          "spellId": 1296095,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Leap cast marker — Nama marks three players and leaps at each."
+        },
+        {
+          "name": "Mighty Thud",
+          "spellId": 1296135,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second leap cast ID — marker only."
+        },
+        {
+          "name": "Mighty Thud",
+          "spellId": 1296094,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Third leap cast ID — marker only."
+        },
+        {
+          "name": "Mighty Thud",
+          "spellId": 1296133,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fourth leap cast ID — marker only."
+        },
+        {
+          "name": "Mighty Thud",
+          "spellId": 1300237,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Impact damage split among everyone in the landing zone — a soak, so deaths mean too few bodies in the marker."
+        },
+        {
+          "name": "Aftershock",
+          "spellId": 1310500,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Quaking ground left where Mighty Thud landed, 10 dps Heroic / 20 dps Mythic — any tick after the soak means the crater was not cleared."
+        },
+        {
+          "name": "Relentless Escalation",
+          "spellId": 1296227,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Self-buff on Nama when an ally explorer dies (wowhead: self-cast proc aura) — an out-of-sync-kill marker, not a player-facing event."
+        }
+      ]
+    },
+    {
+      "name": "Trader Gebbo",
+      "npcId": 261848,
+      "spells": [
+        {
+          "name": "Throw Junk",
+          "spellId": 1291934,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Primary crate-toss cast marker (x238 Mythic) — spawns Useless Junk crates, not a failure."
+        },
+        {
+          "name": "Throw Junk",
+          "spellId": 1291933,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Encounter-journal canonical cast ID — marker only."
+        },
+        {
+          "name": "Throw Junk",
+          "spellId": 1306137,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Third crate-toss cast variant — marker only."
+        },
+        {
+          "name": "Throw Junk",
+          "spellId": 1306145,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fourth crate-toss cast variant — marker only."
+        },
+        {
+          "name": "Throw Junk",
+          "spellId": 1291935,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Crate impact damage — being under a landing crate is a positioning failure, 5 killing blows on Mythic PTR."
+        },
+        {
+          "name": "Splinters",
+          "spellId": 1308853,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stacking Physical bleed from clipping a crate, 8s, spreads on Mythic — wowhead lists NO dispel type, and the 17 log removals were all Cauterizing Flame, not a healer dispel."
+        },
+        {
+          "name": "Mushroom Toss",
+          "spellId": 1292104,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Spawns Bouncy Mushrooms — the tool used to dodge Blast Wave, never a threat."
+        },
+        {
+          "name": "Mushroom Toss",
+          "spellId": 1292105,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second Mushroom Toss cast ID — marker only."
+        },
+        {
+          "name": "Explosive Surprise",
+          "spellId": 1297625,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "10s bomb-carrier marker, no dispel type — identifies who Gebbo threw the bomb at, never a failure by itself."
+        },
+        {
+          "name": "Explosive Surprise",
+          "spellId": 1296245,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Bomb impact — 10 yd Physical hit on everyone near the drop point."
+        },
+        {
+          "name": "Concussive Blast",
+          "spellId": 1299947,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "12s Fire DoT in a 10 yd radius left by the bomb detonation (wowhead: periodic damage, NOT a knockback) — any application means standing in the drop zone."
+        },
+        {
+          "name": "Blast Wave",
+          "spellId": 1305844,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The deadliest ID in the fight (18 killing blows Mythic, 39 Normal) — ground-level fire wave, avoided only by being airborne on a Bouncy Mushroom."
+        },
+        {
+          "name": "Smashing Shovel",
+          "spellId": 1296252,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Self-buff on Gebbo when an ally explorer dies (wowhead: proc-trigger aura on the caster) — an out-of-sync-kill marker, it never lands as a player damage event."
+        },
+        {
+          "name": "Disgusting Fish",
+          "spellId": 0,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — the fish drops from broken crates and is fed to the controlled tortollan to stop Final Ascension; only its result (Fishy Feedback 1313303) is confirmed."
+        }
+      ]
+    },
+    {
+      "name": "Mor'zahi",
+      "npcId": 261584,
+      "spells": [
+        {
+          "name": "Final Ascension",
+          "spellId": 1297075,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The enrage channel — Shadow damage to the whole raid every 0.5s, broken only by feeding a Disgusting Fish, not by a kick."
+        },
+        {
+          "name": "Final Ascension",
+          "spellId": 1292779,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second Final Ascension cast ID."
+        },
+        {
+          "name": "Final Ascension",
+          "spellId": 1292780,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Damage ID — 17 killing blows on Normal PTR, zero on Mythic; any death here is a fish-delivery failure, not an individual mistake."
+        },
+        {
+          "name": "Dark Whispers",
+          "spellId": 1301667,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Possession marker, instant cast so not kickable — the log attributes the source to the possessed explorer, not Mor'zahi."
+        },
+        {
+          "name": "Mor'zahi's Command",
+          "spellId": 1297024,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Marker that Mor'zahi retook control and granted the possessed explorer a new ability set."
+        },
+        {
+          "name": "Mor'zahi's Command",
+          "spellId": 1297022,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second Command cast ID — marker only."
+        },
+        {
+          "name": "Mor'zahi's Command",
+          "spellId": 1296975,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Third Command cast ID — marker only."
+        },
+        {
+          "name": "Malevolent Presence",
+          "spellId": 1295450,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Unavoidable raid-wide Shadow tick every 2s all fight — never a failure, but 8 killing blows means it is what finishes players left low by other mistakes."
+        },
+        {
+          "name": "Fishy Feedback",
+          "spellId": 1313303,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow burst + 12s raid DoT, no dispel type — the price of every successful fish, so plan healing cooldowns around it."
+        },
+        {
+          "name": "Dark Unity",
+          "spellId": 1313126,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Applies Share Damage 100% between the explorers — journal-confirmed, effect on cleave priority unconfirmed on live."
+        },
+        {
+          "name": "Haunting Spirits",
+          "spellId": 1310561,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow DoT plus a silence, no dispel type — logged with source 'Environment', so caster and trigger are unconfirmed and it is surfaced informationally."
+        }
+      ]
+    }
+  ],
+  "adds": [
+    {
+      "name": "Creepy Statue",
+      "npcId": 264706,
+      "note": "Static hazard statues around the chamber — never targeted, they exist purely to shrink the safe floor.",
+      "spells": [
+        {
+          "name": "Evil Eyes",
+          "spellId": 1292758,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker and the most-cast ability in the fight (x700 Mythic) — the journal lists it under Mor'zahi but WCL attributes the cast to Creepy Statue."
+        },
+        {
+          "name": "Evil Eyes",
+          "spellId": 1292764,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Impact damage within 3 yds of each eye — any damage event means the player stood in one."
+        },
+        {
+          "name": "Creepy Flames",
+          "spellId": 1292796,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Ground-hazard spawn marker (wowhead: dummy aura + server-side script) — only casts appear in the logs, so its damage ID is unconfirmed and it cannot be scored as avoidable."
+        }
+      ]
+    },
+    {
+      "name": "Bouncy Mushroom",
+      "npcId": 268045,
+      "note": "Spawned by Mushroom Toss — a raid tool, not an enemy; bouncing off one launches you over Blast Wave, so do not kill them.",
+      "spells": [
+        {
+          "name": "Bounce",
+          "spellId": 1299855,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast ID fired when a player contacts the mushroom."
+        },
+        {
+          "name": "Bounce",
+          "spellId": 1299854,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Airborne debuff — its presence during a Blast Wave window is the SUCCESS signal, never a failure."
+        },
+        {
+          "name": "Fungal Burst",
+          "spellId": 0,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — Nature damage in 5 yds when a mushroom is triggered (warcraft.wiki.gg adventure guide), no matching ID in the PTR sample."
+        },
+        {
+          "name": "Falling",
+          "spellId": 3,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Generic environmental fall damage after a Bounce — too generic to score as avoidable, so surface it informationally and let the death report catch the 2 kills."
+        }
+      ]
+    },
+    {
+      "name": "Useless Junk",
+      "npcId": 272110,
+      "note": "Crate spawned by Throw Junk — walking into one applies Splinters, and it ruptures after ~25s if not destroyed, which is also how the Disgusting Fish drops.",
+      "spells": [
+        {
+          "name": "Relic Rupture",
+          "spellId": 1310028,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Rupture cast marker — count against Throw Junk casts to get the crate-cleave rate."
+        },
+        {
+          "name": "Relic Rupture",
+          "spellId": 1310027,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Rupture damage to the raid — deaths here are a crate-cleave failure, not a positioning failure."
+        },
+        {
+          "name": "Relic Rupture",
+          "spellId": 1311587,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second rupture damage ID — 20 players hit and 6 killing blows on Mythic PTR, same raid-level attribution."
+        }
+      ]
+    },
+    {
+      "name": "Useless Junk",
+      "npcId": 270001,
+      "note": "Second crate NPC ID seen in the same encounter — identical Relic Rupture behaviour, so both IDs must be counted.",
+      "spells": []
+    }
+  ]
+}

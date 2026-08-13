@@ -1,0 +1,971 @@
+{
+  "bossName": "The Coiled Altar",
+  "difficulty": "Heroic+Mythic",
+  "bosses": [
+    {
+      "name": "Zul'jan",
+      "npcId": 257911,
+      "note": "Stage One and Stage Three boss; 257911 is the raid combat unit that casts in logs (wowhead's 267797/259447 are questline versions).",
+      "spells": [
+        {
+          "name": "Fangs of the Coiled Altar",
+          "spellId": 1282487,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast ID for the poison self-infusion; journal name is 'Fangs of the Crucible'."
+        },
+        {
+          "name": "Fangs of the Coiled Altar",
+          "spellId": 1282512,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Unavoidable raid-wide Nature pulse every 1s for 8s — healing pressure, not positioning."
+        },
+        {
+          "name": "Twinfang Toxin",
+          "spellId": 1300322,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature DoT applied to the primary target by autoattacks that consume Fangs stacks."
+        },
+        {
+          "name": "Noxious Ground",
+          "spellId": 1283290,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Persistent poison pool ticking Nature damage every 1s; wowhead confirms a ground area effect."
+        },
+        {
+          "name": "Toxic Deluge",
+          "spellId": 1299960,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast/phase marker for the venom wave; not seen as a cast event in the PTR sample."
+        },
+        {
+          "name": "Toxic Deluge",
+          "spellId": 1300137,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Missile impact — Nature damage within 4 yards of each landing venom chunk."
+        },
+        {
+          "name": "Venom Rupture",
+          "spellId": 1299838,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fires when a Coalesced Venom orb is destroyed (Guillotine axe impact or Sever) — raid-wide Nature hit plus a stacking 10s DoT, and the single largest killer at 58 Mythic killing blows."
+        },
+        {
+          "name": "Volatile Venom",
+          "spellId": 1282419,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Debuff from touching floor venom that spawns a fresh Coalesced Venom orb when it expires; wowhead confirms no dispel type."
+        },
+        {
+          "name": "Volatile Venom",
+          "spellId": 1282288,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Pulse damage every 1s to players within 5 yards of the carrier for 5s."
+        },
+        {
+          "name": "Tainted Blood",
+          "spellId": 1310013,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only 10s vulnerability marker (wowhead lists +200% absorb taken); journal-only, unseen in logs."
+        },
+        {
+          "name": "Sever",
+          "spellId": 1299684,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Frontal Physical cleave that also destroys Coalesced Venom in its path; journal lists 1299680 but 1299684 fires in logs."
+        },
+        {
+          "name": "Sever",
+          "spellId": 1301690,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stacking +200% Sever damage taken for 30s — the tank-swap trigger."
+        },
+        {
+          "name": "Venomfang",
+          "spellId": 1282287,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker for the poison axe that bounces between several players."
+        },
+        {
+          "name": "Venomfang",
+          "spellId": 1306906,
+          "category": "Healer",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "GENUINE POISON DISPEL — wowhead confirms dispel type Poison, 14s Nature DoT, and logs show 58 healer dispels (Nature's Cure / Naturalize)."
+        },
+        {
+          "name": "Venomfang",
+          "spellId": 1306635,
+          "category": "Healer",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Secondary Venomfang ID, same mechanic — wowhead confirms dispel type Poison, 6s duration."
+        },
+        {
+          "name": "Axegrinder",
+          "spellId": 1283832,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker for spinning axes that ricochet around the arena; journal says Mythic-only but logs show it on all difficulties."
+        },
+        {
+          "name": "Axegrinder",
+          "spellId": 1285017,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Armour-ignoring Physical damage to anyone a wandering axe touches; on Mythic the axes never despawn."
+        },
+        {
+          "name": "Guillotine",
+          "spellId": 1283489,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast ID for the thrown axe; journal-only, unseen in the PTR sample."
+        },
+        {
+          "name": "Guillotine",
+          "spellId": 1283485,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Target marker on the axe recipient."
+        },
+        {
+          "name": "Guillotine",
+          "spellId": 1283594,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Split soak damage — being hit is the job, so report head count per cast and never per-player failures."
+        },
+        {
+          "name": "Guillotined",
+          "spellId": 1307425,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Soak vulnerability (+500% Guillotine damage taken, permanent on Mythic) — the soak-rotation ledger."
+        },
+        {
+          "name": "Guillotined",
+          "spellId": 1309944,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Journal's Mythic Guillotined variant; logs show 1307425 firing on Mythic instead."
+        },
+        {
+          "name": "Execution",
+          "spellId": 1283606,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Undersoak punishment when fewer than 5 players are inside the Guillotine radius — 16 Mythic killing blows."
+        },
+        {
+          "name": "Widow's Kiss",
+          "spellId": 1283623,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Guillotine near-band punishment — Nature damage to players within 40 yards of the axe."
+        },
+        {
+          "name": "Widow's Touch",
+          "spellId": 1283631,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Guillotine far-band punishment — Nature damage to players at least 40 yards from the axe."
+        },
+        {
+          "name": "Defilement of the Coiled Altar",
+          "spellId": 1298381,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three cast ID — the Shadow mirror of Fangs; journal name is 'Defilement of the Crucible'."
+        },
+        {
+          "name": "Defilement of the Coiled Altar",
+          "spellId": 1298594,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Raid-wide healing-absorption debuff; 1193 applications on the Normal PTR report."
+        },
+        {
+          "name": "Corrupted Toxin",
+          "spellId": 1298795,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three stacking Shadow tank DoT applied by autoattacks — the Stage Three swap trigger."
+        },
+        {
+          "name": "Defiled Ground",
+          "spellId": 1298591,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three ground hazard applying healing absorption every 1s while stood in it."
+        },
+        {
+          "name": "Grim Guillotine",
+          "spellId": 1299267,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three Guillotine — same 9-yard split soak plus healing absorption; journal-only, unseen in logs."
+        },
+        {
+          "name": "Grim Execution",
+          "spellId": 1299301,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three undersoak punishment; journal-only, unseen in logs."
+        },
+        {
+          "name": "Death's Embrace",
+          "spellId": 1299396,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three near-band range punishment; journal-only, unseen in logs."
+        },
+        {
+          "name": "Death's Whisper",
+          "spellId": 1299401,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three far-band range punishment; journal-only, unseen in logs."
+        },
+        {
+          "name": "Guillotined",
+          "spellId": 1307652,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic"
+          ],
+          "note": "Heroic Grim Guillotine vulnerability stack; journal-only, unseen in logs."
+        },
+        {
+          "name": "Guillotined",
+          "spellId": 1309940,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic Grim Guillotine vulnerability stack, permanent; journal-only, unseen in logs."
+        },
+        {
+          "name": "Blighted Sever",
+          "spellId": 1307292,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three frontal cone applying Gravebound and clearing venom and Manifestations; journal lists 1307279 but 1307292 fires in logs."
+        },
+        {
+          "name": "Blighted Sever",
+          "spellId": 1307403,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Blighted Sever vulnerability debuff — the Stage Three cone swap trigger."
+        }
+      ]
+    },
+    {
+      "name": "Hex Lord Malacrass",
+      "npcId": 259854,
+      "note": "Stage Two, Intermission and Stage Three boss entity; confirmed caster in the PTR logs and soulbound to Zul'jan in Stage Three.",
+      "spells": [
+        {
+          "name": "Dread Bolt",
+          "spellId": 1307184,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Filler Shadow nuke on the primary target — wowhead flags it 'AI Primary Ranged Attack', so any non-tank hit is a threat failure."
+        },
+        {
+          "name": "Dreadful Presence",
+          "spellId": 1288624,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Aura ID for the passive raid pulse; journal-only, unseen as a cast in logs."
+        },
+        {
+          "name": "Dreadful Presence",
+          "spellId": 1288635,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Unavoidable ramping Shadow damage every 2s while Malacrass is active — pure healing pressure."
+        },
+        {
+          "name": "Dreadmarch",
+          "spellId": 1285643,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Possession cast that warcraft.wiki flags INTERRUPTIBLE, but zero interrupt events appear in the PTR sample — confirm kickability before trusting a missed-kick table."
+        },
+        {
+          "name": "Dreadmarch",
+          "spellId": 1297445,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Absorb-and-pacify subjugation debuff (wowhead: not dispellable); breaking it frees the player and spawns 2 Manifestations of Dread."
+        },
+        {
+          "name": "Falling",
+          "spellId": 3,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Environmental fall death — cross-reference every occurrence with a 1297445 application in the preceding 20s."
+        },
+        {
+          "name": "Soul Sever",
+          "spellId": 1286620,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Frontal Shadow cone applying Gravebound and destroying Manifestations of Dread caught in it."
+        },
+        {
+          "name": "Soul Sever",
+          "spellId": 1307959,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Soul Sever vulnerability debuff — the Stage Two cone swap trigger."
+        },
+        {
+          "name": "Gravebound",
+          "spellId": 1286837,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Soul-fragmentation marker starting the 16s collection timer (wowhead: no dispel type) — the trigger, not the failure."
+        },
+        {
+          "name": "Gravebound",
+          "spellId": 1297906,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Gravebound expiry kill — the player failed to collect their Soul Fragments in 16s."
+        },
+        {
+          "name": "Gravebound",
+          "spellId": 1308330,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Secondary Gravebound damage ID."
+        },
+        {
+          "name": "Eternal Nightfall",
+          "spellId": 1286918,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "KICK TARGET — lethal raid-wide cast, kickable only once Veil of Twilight is destroyed; 13 interrupt events confirm it in logs."
+        },
+        {
+          "name": "Veil of Twilight",
+          "spellId": 1286912,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Absorb shield that gates the Eternal Nightfall kick — time-to-break is the metric that matters."
+        },
+        {
+          "name": "Suffocating Darkness",
+          "spellId": 1286947,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stacking healing absorption while the Veil holds (wowhead: not dispellable) — peak stacks proxy veil break speed."
+        },
+        {
+          "name": "Spiritcackle",
+          "spellId": 1286441,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Summons a Spiteful Soulcoiler; journal-only, unseen in logs."
+        },
+        {
+          "name": "Gloombomb",
+          "spellId": 1286895,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker for the bomb mark; warcraft.wiki attributes Gloombomb to Spiteful Soulcoiler, but logs record Malacrass as the caster."
+        },
+        {
+          "name": "Gloombomb",
+          "spellId": 1286901,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "5s bomb mark on the carrier (wowhead shows a size-modifier marker, no damage component under this ID) — the detonation damage ID is not yet identified, so this cannot drive a spread-failure count."
+        },
+        {
+          "name": "Gloombomb",
+          "spellId": 1310882,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal's Heroic+ Gloombomb variant; unseen in logs."
+        },
+        {
+          "name": "Soulbinding",
+          "spellId": 1304032,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Intermission ritual binding Malacrass to Zul'jan's corpse — a DPS race, not a kick; journal-only, unseen in logs."
+        },
+        {
+          "name": "Ghastly Regeneration",
+          "spellId": 1304033,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Heals 2% max HP every 1s for 35s while raising damage taken by 100%; journal-only, unseen in logs."
+        },
+        {
+          "name": "Deathguard",
+          "spellId": 1304028,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Malacrass absorbs stunned Manifestations and takes 99% reduced damage — damage logged here is wasted throughput."
+        },
+        {
+          "name": "Soulbound",
+          "spellId": 1309987,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stage Three link — killing one boss berserks the other for +500% damage and attack speed every 5s; journal-only, unseen in logs."
+        }
+      ]
+    }
+  ],
+  "adds": [
+    {
+      "name": "Coalesced Venom Stalker",
+      "npcId": 268042,
+      "note": "The venom orb seeded by Toxic Deluge and by expiring Volatile Venom; destroying it triggers Venom Rupture, so placement is the whole game.",
+      "spells": [
+        {
+          "name": "Coalesced Venom",
+          "spellId": 1282403,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The orb's aura, pulsing raid-wide Nature damage every 2s until destroyed — orbs alive over time is the core management metric."
+        },
+        {
+          "name": "Coalesced Venom",
+          "spellId": 1282408,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Pulse damage — deaths here mean too many orbs were left alive at once."
+        }
+      ]
+    },
+    {
+      "name": "Manifestation of Dread",
+      "npcId": 261218,
+      "note": "Spawned in pairs when a Dreadmarch shield breaks; immune to damage and cleared only by Soul Sever / Blighted Sever or by being stunned into Deathguard.",
+      "spells": [
+        {
+          "name": "Manifestation of Dread",
+          "spellId": 1290316,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Spawn marker."
+        },
+        {
+          "name": "Unassailable",
+          "spellId": 1285847,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Full damage immunity — any damage logged into this target is wasted throughput."
+        },
+        {
+          "name": "Unnerving Fixation",
+          "spellId": 1285911,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fixate — the Manifestation only moves while its target is not looking at it."
+        },
+        {
+          "name": "Despair",
+          "spellId": 1307009,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fires when a Manifestation reaches its fixated target — heavy Shadow damage plus a knockback that can throw the player off the platform."
+        },
+        {
+          "name": "Malevolent Resonance",
+          "spellId": 1310732,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only detonation when two Manifestations touch; journal-only, unseen in logs."
+        },
+        {
+          "name": "Spiritveil",
+          "spellId": 1312131,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only invisibility to everyone but the fixate target; journal-only, unseen in logs."
+        }
+      ]
+    },
+    {
+      "name": "Spiteful Soulcoiler",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — look up via WCL. Summoned by Spiritcackle on Heroic+; not reached in the PTR log sample.",
+      "spells": [
+        {
+          "name": "Wail of Terror",
+          "spellId": 1286399,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "KICK TARGET — 7s cast fearing the entire raid for 5s; warcraft.wiki and the journal both flag it interruptible, but no log evidence yet."
+        },
+        {
+          "name": "Retaliatory Malice",
+          "spellId": 1308323,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Passive Shadow damage to random players every 3s while the add lives; journal-only, unseen in logs."
+        },
+        {
+          "name": "Spirit Shield",
+          "spellId": 1309105,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only 99% damage reduction, stripped only by Gloombomb detonations; journal-only, unseen in logs."
+        }
+      ]
+    },
+    {
+      "name": "Virulent Cyst",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — look up via WCL. Mythic-only add that one Toxic Deluge orb mutates into; unseen in the PTR log sample.",
+      "spells": [
+        {
+          "name": "Caustic Secretion",
+          "spellId": 1309174,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only ground damage; journal-only, unseen in logs."
+        }
+      ]
+    },
+    {
+      "name": "Virulent Mutation",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — look up via WCL. Mythic-only add that some Toxic Deluge orbs warp into; its Mutagenic Venom IDs are confirmed in the Mythic logs.",
+      "spells": [
+        {
+          "name": "Virulent Mutation",
+          "spellId": 1310544,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only mutation marker on the add; journal-only, unseen in logs."
+        },
+        {
+          "name": "Mutagenic Venom",
+          "spellId": 1310498,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only carrier marker (wowhead: no dispel type); absent from Heroic and Normal, matching the journal's Mythic-only flag."
+        },
+        {
+          "name": "Mutagenic Venom",
+          "spellId": 1310691,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only Plague pulse every 1s within 8 yards for 5s — anyone other than the carrier taking it failed to spread."
+        }
+      ]
+    },
+    {
+      "name": "Fragment of Malacrass",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — look up via WCL. Soul fragments that rupture from Malacrass during the Soulbinding intermission and crawl toward Zul'jan.",
+      "spells": [
+        {
+          "name": "Spirit Erasure",
+          "spellId": 1287722,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Raid-wide Shadow damage when a player steps on a fragment — destroying fragments is the assigned job, so report simultaneous occurrences, never per-player failures."
+        },
+        {
+          "name": "Reclaim Essence",
+          "spellId": 1287718,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "A fragment that reaches Zul'jan heals him 1% max HP; journal-only, unseen in logs."
+        }
+      ]
+    },
+    {
+      "name": "Soul Fragment",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — look up via WCL. Pickups scattered by Gravebound that the debuffed player must collect within 16s; no abilities of their own.",
+      "spells": []
+    }
+  ]
+}

@@ -1,0 +1,766 @@
+{
+  "bossName": "Ula'tek",
+  "bossNpcId": 268956,
+  "bossNpcIdAlt": 253512,
+  "difficulty": "Heroic+Mythic",
+  "encounterId": 3492,
+  "journalEncounterId": 2895,
+  "note": "NO COMBAT LOGS EXIST — raid opens 18-19 Aug 2026 and Ula'tek was never tested on the PTR. Spell IDs come from the live dungeon journal (JournalEncounterID 2895). Verification pass 2026-08-13: dispellable and interruptible are no longer taken from journal IconFlags — every claim was checked against wago.tools DB2 (SpellCategories.DispelType, SpellInterrupts.InterruptFlags) and cross-checked on wowhead. InterruptFlags 45 = kickable, 41 = not kickable. DispelType 4 = Poison, 0 = none. Only 1301800 and 1287036 have a real dispel type; Acidic Expulsion 1313531 was previously flagged Poison and is DispelType 0 — corrected. Categories remain inferred from journal text and are NOT validated against an event stream. BOSS NPC ID: use 268956 (Beast, Elite, carries the journal portrait, zone 16915 at 50.1/26.3); 253512 is 'Ula'tek <TEMP MODEL>', a dev placeholder retained as bossNpcIdAlt only. All 12 add NPC IDs are 0 — none are indexed in the Creature DB2 for this build (re-confirmed 2026-08-13); resolve from the first Mythic log's combatants list.",
+  "spells": [
+    {
+      "name": "Caustic Waves",
+      "spellId": 1292403,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Venom waves cross the platform for a stacking Nature DoT; a wave touching an egg hatches it instantly. DispelType 0 confirmed."
+    },
+    {
+      "name": "Call of the Serpent",
+      "spellId": 1300751,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "4 sec cast marker that shakes adds from the ceiling; the impact damage is 1304012."
+    },
+    {
+      "name": "Call of the Serpent",
+      "spellId": 1304012,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Impact component — Nature damage to players within 4 yards of a landing point."
+    },
+    {
+      "name": "Mother's Wrath",
+      "spellId": 1298367,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "5 sec cast: knocks back and bites the current target, applying Stone Venom and Hobbled; if the target is out of reach the whole raid eats it. CAVEAT: this ID is a 'periodically trigger spell' driver aura, so the bite damage lands on an unidentified child ID — re-map on the first log."
+    },
+    {
+      "name": "Stone Venom",
+      "spellId": 1298417,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Stacking 1.7 min Nature DoT from each Mother's Wrath bite — drives the tank swap. DispelType 0 confirmed on wowhead and DB2."
+    },
+    {
+      "name": "Hobbled",
+      "spellId": 1300938,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Movement speed slow applied alongside Stone Venom. DispelType 0, Mechanic 11 (Snared) — not dispellable."
+    },
+    {
+      "name": "Unchecked Rage",
+      "spellId": 1286945,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Tooltip confirmed: fires only when Ula'tek cannot melee anyone while not casting — Physical raid damage. Count casts per pull; players hit are victims."
+    },
+    {
+      "name": "Necrotic Vapors",
+      "spellId": 1286834,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Stacking raid-wide Nature DoT running all three stages — the encounter's healing clock. Informational. CAVEAT: this ID is a 'periodically trigger spell' driver aura; the actual damage lands on an unidentified child ID — re-map on the first log."
+    },
+    {
+      "name": "Ula'tek's Bond",
+      "spellId": 1302505,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Passive damage-share between all aspects of Ula'tek's form. No damage of its own."
+    },
+    {
+      "name": "Rage of the Shackled",
+      "spellId": 1286860,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "6.5 sec cast: 20 sec of raid Nature damage plus Falling Debris; exposes the Venomous Heart burn window."
+    },
+    {
+      "name": "Falling Debris",
+      "spellId": 1286885,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Debris slams random spots for heavy Nature damage within 7 yards during Rage of the Shackled."
+    },
+    {
+      "name": "Venomous Heart",
+      "spellId": 1299526,
+      "category": "DPS",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "20 sec window where the Heart takes +100% damage — the raid's burn phase."
+    },
+    {
+      "name": "Virulent Spit",
+      "spellId": 1302982,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Venom lands at several marked destinations for Nature damage within 4 yards."
+    },
+    {
+      "name": "Serpent's Bite",
+      "spellId": 1295905,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "CAST MARKER ONLY — wowhead shows a 5 sec cast with a Dummy effect and 300 yd radius, and there is no SpellCategories row, so this is the selector, not the player debuff. The venom debuff ID is one of 10 unresolved siblings (1288879, 1293046, 1293146, 1295838, 1295840, 1295844, 1295876, 1305872, 1306847, 1312876) — resolve from a log before reporting hold-to-leech times."
+    },
+    {
+      "name": "Volatile Purge",
+      "spellId": 1306086,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Carried by whoever leeches a Serpent's Bite; erupts after 5 sec for Nature damage within 7 yards. Damage on anyone but the carrier is the failure. Not dispellable. CAVEAT: this ID carries a Dummy effect, so the eruption damage likely lands on a child ID (siblings 1305877, 1305878, 1308464, 1312967) — re-map on the first log."
+    },
+    {
+      "name": "Calcified Corpse",
+      "spellId": 1306119,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Terminal state of an un-leeched Serpent's Bite — stun plus massive Nature damage, pierces immunities. DispelType 0 confirmed. Any application is a failed leech."
+    },
+    {
+      "name": "Circling Prey",
+      "spellId": 1301510,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Stage Three arena shrink: heavy damage plus knockback within 13 yards, lesser damage outside. Everyone is hit by design — the knockback into the void is the kill."
+    },
+    {
+      "name": "Fury Unleashed",
+      "spellId": 1286905,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Stage Three opener: large raid-wide hit then a persistent per-second component — the encounter's hard enrage clock."
+    },
+    {
+      "name": "Putrid Membrane",
+      "spellId": 1301268,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Applied raid-wide whenever an egg hatches a Blightscale Viper; effectively permanent. No SpellCategories row — not dispellable."
+    },
+    {
+      "name": "Malignant Shell",
+      "spellId": 1295360,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Shell attaches to a player for a Nature DoT while carried. No SpellCategories row — not dispellable."
+    },
+    {
+      "name": "Soul Constrictor",
+      "spellId": 1300685,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Blocks the carrier from mitigating the next Spectral Coils; no direct damage. Carrier needs an external. No SpellCategories row — not dispellable."
+    },
+    {
+      "name": "Toxic Womb",
+      "spellId": 1310738,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. Rips a Blightscale Wretch from the ceiling for Nature damage within 7 yards; the add wakes after 20 sec."
+    },
+    {
+      "name": "Toxic Incubation",
+      "spellId": 1299757,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. Tooltip confirmed: venom cascade applies Mother's Boon to the Wretch every 1 sec for 4 sec unless a player intercepts it, taking damage and Toxic Burn instead."
+    },
+    {
+      "name": "Mother's Boon",
+      "spellId": 1299764,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. Stacking buff on the Wretch (-10% damage taken, +15% damage done per stack). Every stack is one missed Toxic Incubation soak — this is the failure counter."
+    },
+    {
+      "name": "Toxic Burn",
+      "spellId": 1302842,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. Stacking Nature DoT — the expected cost paid by Toxic Incubation soakers. No SpellCategories row, so not dispellable despite third-party guides listing it."
+    },
+    {
+      "name": "Noxious Shell",
+      "spellId": 1307612,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. Carrier DoT — the damage is the expected cost of carrying, not a failure. The failure is Noxious Splash. No SpellCategories row — not dispellable."
+    },
+    {
+      "name": "Noxious Splash",
+      "spellId": 1307635,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. Fires when two Noxious Shell carriers come within 3 yards — any event is a paired spread failure."
+    },
+    {
+      "name": "Rancid Yolk",
+      "spellId": 1312150,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Mythic only. +200% damage taken from Noxious Shell for 20 sec — lethal if it overlaps a fresh Shell."
+    }
+  ],
+  "adds": [
+    {
+      "name": "Gore Rattle",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — Ula'tek's tail, listed as a separate ability owner in the journal. Not in the Creature DB2 for this build. Do not use npc 267679 ('Spectral Coil'), which is a different entity.",
+      "spells": [
+        {
+          "name": "Rattler Slam",
+          "spellId": 1299206,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Tooltip confirmed: fires only while Ula'tek is not in melee combat. InterruptFlags 41 — not kickable. Count casts per pull; players hit are victims."
+        },
+        {
+          "name": "Mephitic Thrash",
+          "spellId": 1296301,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "5 sec cast that hits BOTH ranges by design — inside 35 yd takes a hit plus knockback, outside takes a DoT. A damage event is never a failure on its own; the knockback outcome is. InterruptFlags 41 — not kickable."
+        },
+        {
+          "name": "Spectral Coils",
+          "spellId": 1287265,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stack-to-soak: raid-wide Nature damage reduced by the number of players within 10 yards of impact. Everyone is hit by design — measure damage per player, never a per-player failure. Difficulty contested (wiki says Mythic-only, wowhead journal lists it lower)."
+        }
+      ]
+    },
+    {
+      "name": "Blightscale Viper",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — fully gestated egg spawn. Not in the Creature DB2 for this build.",
+      "spells": [
+        {
+          "name": "Acidic Burst",
+          "spellId": 1301800,
+          "category": "Interruptible",
+          "dispellable": true,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "VERIFIED BOTH WAYS: InterruptFlags 45 (kickable) and DispelType 4 (Poison) in DB2, Poison also shown on wowhead. 2.5 sec cast, Nature hit plus an 18 sec DoT."
+        },
+        {
+          "name": "Petrifying Sting",
+          "spellId": 1303414,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stuns and applies a large healing absorb to everyone within 10 yards of the dive. NOT dispellable — DispelType 0, Mechanic 12 (Stun), re-confirmed on wowhead; third-party guides claiming otherwise are wrong. Companion cast ID 1305163."
+        }
+      ]
+    },
+    {
+      "name": "Blightscale Rawling",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — not in the Creature DB2 for this build.",
+      "spells": [
+        {
+          "name": "Poisonous Bite",
+          "spellId": 1287036,
+          "category": "Tank",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "VERIFIED: DispelType 4 (Poison) in DB2 and on wowhead. Stacking Nature DoT on the add's current target, so stacks on a non-tank mean the adds were not picked up. Cast-side ID is 1287032."
+        }
+      ]
+    },
+    {
+      "name": "Blightscale Spawn",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — the unhatched spawn, converted into a Blightscale Clutch by Writhing Gestation. Older guides call this 'Devourer's Spawn'.",
+      "spells": [
+        {
+          "name": "Hardened",
+          "spellId": 1299650,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic only. Large absorb shield that also makes the spawn immovable — break it."
+        },
+        {
+          "name": "Boiling Venom",
+          "spellId": 1313757,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic only. After 25 sec the spawn gains +100% haste and +100% damage — its hard kill deadline."
+        },
+        {
+          "name": "Boiling Venom",
+          "spellId": 1315342,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic only. 30 sec variant of 1313757; which applies where is unconfirmed without logs."
+        }
+      ]
+    },
+    {
+      "name": "Blightscale Clutch",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — the egg cluster created by Writhing Gestation.",
+      "spells": [
+        {
+          "name": "Blightscale Clutch",
+          "spellId": 1289962,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The spawn inside grow in power while the clutch is unbroken — break it before gestation completes."
+        }
+      ]
+    },
+    {
+      "name": "Doomscale Warden",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — Stage Two add that protects the Doomscale Eggs.",
+      "spells": [
+        {
+          "name": "Malice",
+          "spellId": 1290779,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "VERIFIED InterruptFlags 45 (kickable); also listed interruptible on warcraft.wiki. 1.5 sec cast for 6 sec of raid-wide Nature damage — the highest-value kick in the fight."
+        },
+        {
+          "name": "Writhing Gestation",
+          "spellId": 1290990,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "20 sec CHANNEL turning nearby Blightscale Spawn into a Clutch. InterruptFlags 0 with channel-interrupt flags set — it is a channel, not a kickable cast. Stop it by breaking the clutch."
+        },
+        {
+          "name": "Grasping Fangs",
+          "spellId": 1301117,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "2 sec cast, Dummy effect selecting 1-3 random players by difficulty — random targeting, so being hit is not a failure. Applies a DoT plus slow until broken; report hold time. DispelType n/a."
+        },
+        {
+          "name": "Blight Vein",
+          "spellId": 1311600,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Stacking raid-wide Nature DoT injected when Grasping Fangs is broken — the expected cost of a correct break. No SpellCategories row."
+        },
+        {
+          "name": "Blight Vein",
+          "spellId": 1311609,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic variant of 1311600 with a longer duration. Same rule — never a failure."
+        },
+        {
+          "name": "Warden's Protection",
+          "spellId": 1306858,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Aura around the eggs that damages players within 7 yards and forbids all touch while the Warden lives — gates the Stage Two add order."
+        },
+        {
+          "name": "Shadow Molt",
+          "spellId": 1301213,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "3 sec reposition/teleport, no damage — a tracking marker only."
+        }
+      ]
+    },
+    {
+      "name": "Doomscale Egg",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — protected by the Doomscale Warden; hatches a Ravenous Doomscale.",
+      "spells": [
+        {
+          "name": "Doomscale Shell",
+          "spellId": 1300312,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Sticks to whoever touches an egg for a carried DoT; the beast hatches 20 sec after pickup. Pickup is DELIBERATE, so the damage is not a failure — track who carried and for how long."
+        },
+        {
+          "name": "Hatching Doom",
+          "spellId": 1306862,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "1.5 minute cast — the Ravenous Doomscale clawing out on its own timer if the egg is left alone."
+        },
+        {
+          "name": "Mass Gestation",
+          "spellId": 1308038,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Disturbing one egg starts Writhing Gestation on all remaining Blightscale Spawn on that side — egg order is the mechanic. Wiki annotates this Mythic-only; journal lists it lower."
+        }
+      ]
+    },
+    {
+      "name": "Ravenous Doomscale",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — hatches from a Doomscale Egg; becomes a 'Weakened Doomscale' if its gestation is disrupted.",
+      "spells": [
+        {
+          "name": "Dread Roar",
+          "spellId": 1305775,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Raid-wide Nature DoT plus a 20 sec raid stun — a wipe if it lands. InterruptFlags 41, NOT kickable; prevented only by weakening the Doomscale first."
+        },
+        {
+          "name": "Defect: Weakened",
+          "spellId": 1303410,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SUCCESS marker: disrupting gestation gives +100% damage taken and blocks Dread Roar entirely. Absence on a hatched Doomscale is the real failure."
+        },
+        {
+          "name": "Anguished Cry",
+          "spellId": 1305650,
+          "category": "Interruptible",
+          "dispellable": true,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "VERIFIED InterruptFlags 45 (kickable) AND DispelType 1 (Magic), Mechanic 12 (Stunned) — both confirmed in DB2. Cast by the weakened form: direct Nature damage plus a 6 sec stun aura on this same ID, so dispel tracking works here. KICK FIRST — the stun is raid-wide, so dispellers are usually stunned too; treat the Magic dispel as situational, not an assignment."
+        },
+        {
+          "name": "Desperate Thrash",
+          "spellId": 1305709,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "1.5 sec frontal cone — a non-tank hit means the add was not faced away."
+        },
+        {
+          "name": "Revenge",
+          "spellId": 1307941,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic only. The surviving twin gains +100% haste and damage when its clutchmate dies — kill them together."
+        }
+      ]
+    },
+    {
+      "name": "Blightscale Wretch",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — Mythic-only add pulled down by Toxic Womb (1310738); wakes after 20 sec and is empowered by every Mother's Boon stack. Older guides call this 'Toxic Blightscale'.",
+      "spells": [
+        {
+          "name": "Fester Burst",
+          "spellId": 1310763,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic only. INVERSE SOAK, tooltip confirmed: the impact hit lands regardless, but the 12 sec DoT applies only 'to players farther than 10 yards away'. A DoT tick means the player failed to stack IN — never report it as standing in something."
+        }
+      ]
+    },
+    {
+      "name": "Blightscale Shrieker",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — not in the Creature DB2 for this build.",
+      "spells": [
+        {
+          "name": "Vicious Echoes",
+          "spellId": 1310764,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "VERIFIED InterruptFlags 45 (kickable). 2.5 sec cast, unlimited range: raid-wide Nature damage plus a 6 sec stun (Mechanic: Stunned). DispelType n/a."
+        },
+        {
+          "name": "Acidic Expulsion",
+          "spellId": 1313531,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "CORRECTED — previously flagged Poison-dispellable from journal IconFlags; DB2 DispelType is 0 and wowhead states it cannot be removed by dispels. Mythic only: a 35 sec Nature DoT on the entire raid. Heal through it. InterruptFlags not set either."
+        }
+      ]
+    },
+    {
+      "name": "Slithering Clutch",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — a pure add-kill target in Stage Two and Stage Three with no distinct spell in the journal. Wiki also names a Stage Three 'Crawling Clutch'; no separate spell data for either.",
+      "spells": []
+    },
+    {
+      "name": "Doomscale Cauldron",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — an interactable object rather than a combatant.",
+      "spells": [
+        {
+          "name": "Doomscale Cauldron",
+          "spellId": 1313355,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The disposal point for carried Doomscale Shells. Exact interaction unconfirmed without logs."
+        }
+      ]
+    }
+  ]
+}

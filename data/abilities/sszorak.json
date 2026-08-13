@@ -1,0 +1,456 @@
+{
+  "bossName": "Sszorak",
+  "bossNpcId": 257347,
+  "difficulty": "Heroic+Mythic",
+  "spells": [
+    {
+      "name": "Apex Predator",
+      "spellId": 1277025,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Window marker for the Ravage/Mutilate flurry — server-side dummy with no events, so it never produces a failure."
+    },
+    {
+      "name": "Melee",
+      "spellId": 1,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Informational only — the boss melees whoever holds threat, so non-tank hits mean the tank died or lost aggro, not that the hit player failed."
+    },
+    {
+      "name": "Corroding Venom",
+      "spellId": 1282869,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Cast/aura ID; the player-facing stacking debuff is 1282873."
+    },
+    {
+      "name": "Corroding Venom",
+      "spellId": 1282873,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "12s stacking tank debuff, +3% Physical damage taken per stack — one of the two tank-swap drivers; Wowhead lists no dispel type."
+    },
+    {
+      "name": "Ravage",
+      "spellId": 1277002,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "3s cast ID for the Physical frontal cone; the damage ID is 1277101."
+    },
+    {
+      "name": "Ravage",
+      "spellId": 1277101,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Physical frontal damage that also stacks +300% Ravage damage taken for 25s — any non-tank hit is a facing failure."
+    },
+    {
+      "name": "Mutilate",
+      "spellId": 1277027,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Cast ID for the venom frontal cone; the damage ID is 1277031."
+    },
+    {
+      "name": "Mutilate",
+      "spellId": 1277031,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature frontal split evenly among everyone struck, so it is a soak rather than a failure — report bodies-per-cast, not a per-player blame list."
+    },
+    {
+      "name": "Mutilated Gash",
+      "spellId": 1277051,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "22s Nature DoT applied to every Mutilate soaker; Wowhead lists no dispel type, so it is healing pressure, not a dispel."
+    },
+    {
+      "name": "Mutilated Gash",
+      "spellId": 1285998,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Damage ID of the Gash DoT — 8 killing blows on Mythic PTR, so attribute deaths but never count ticks as failures."
+    },
+    {
+      "name": "Tempest",
+      "spellId": 1287072,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Cast ID for the poisonous wind vortices; the player-facing debuff is 1287083."
+    },
+    {
+      "name": "Tempest",
+      "spellId": 1287083,
+      "category": "Avoidable",
+      "dispellable": true,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature DoT and -30% run speed from touching a vortex; genuinely Poison-dispellable per Wowhead and log-confirmed by 76 healer removals (Cleanse, Nature's Cure)."
+    },
+    {
+      "name": "Venomous Surge",
+      "spellId": 1305959,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Cast ID; the target debuff is 1305963 and the burst damage is 1306120."
+    },
+    {
+      "name": "Venomous Surge",
+      "spellId": 1305963,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "10s target marker that names the cyst carriers; Wowhead lists no dispel type, so being picked is not a failure."
+    },
+    {
+      "name": "Venomous Surge",
+      "spellId": 1306120,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Burst damage that falls off with distance — a hit on anyone who did not carry 1305963 means they failed to clear the carrier."
+    },
+    {
+      "name": "Viscous Cyst",
+      "spellId": 1287008,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Spawn ID for the 2min toxin glob dropped when Venomous Surge expires; the burst is 1287205."
+    },
+    {
+      "name": "Viscous Cyst",
+      "spellId": 1287205,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Cyst burst — Nature damage, a DoT and -30% speed; any hit means someone walked into a glob."
+    },
+    {
+      "name": "Caustic Claws",
+      "spellId": 1305998,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature damage in a 6yd impact radius that leaves a Caustic Residue pool — listed as Heroic+ by Wowhead and warcraft.wiki.gg."
+    },
+    {
+      "name": "Caustic Residue",
+      "spellId": 1296602,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Ground-area ID that produces no player events — the player-facing debuff is 1296667."
+    },
+    {
+      "name": "Caustic Residue",
+      "spellId": 1296667,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Standing in the acid: damage per second plus +30% damage taken from all schools, and Wowhead confirms no dispel type."
+    },
+    {
+      "name": "Ula'tek's Presence",
+      "spellId": 1285961,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Aura ID for the altar's caustic haze; the damage ID is 1285965."
+    },
+    {
+      "name": "Ula'tek's Presence",
+      "spellId": 1285965,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Unavoidable raid-wide Nature attrition for the whole fight — the healing check, never a player failure."
+    },
+    {
+      "name": "Raging Crosswinds",
+      "spellId": 1285419,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Altar cast that imbues several players with winds; the direction debuffs and the expiry damage are separate IDs."
+    },
+    {
+      "name": "Raging Crosswinds",
+      "spellId": 1285425,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "8s wind-direction debuff — a marker naming who is about to be knocked and which way, not a failure."
+    },
+    {
+      "name": "Raging Crosswinds",
+      "spellId": 1285453,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Second 8s wind-direction debuff — same marker role as 1285425."
+    },
+    {
+      "name": "Raging Crosswinds",
+      "spellId": 1297096,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Third wind direction, seen only on Mythic PTR — Mythic-only status is inferred from log counts, not stated by any guide."
+    },
+    {
+      "name": "Raging Crosswinds",
+      "spellId": 1297111,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Fourth wind direction, seen only on Mythic PTR — same inference as 1297096."
+    },
+    {
+      "name": "Raging Crosswinds",
+      "spellId": 1285616,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Expiry explosion that damages and knocks back everyone in the strike area — any hit means someone failed to spread."
+    },
+    {
+      "name": "Turbulent Gusts",
+      "spellId": 1285447,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "10s aloft state (slow fall, no inertia) that dissipates if two carriers collide — the state itself is expected, deaths land under Falling."
+    },
+    {
+      "name": "Howling Maelstrom",
+      "spellId": 1285732,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Phase marker for the succession of directional gales; no cast events on PTR, so detect the phase via Dig In."
+    },
+    {
+      "name": "Dig In",
+      "spellId": 1286033,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "The fight's only burn window — Sszorak is immovable and takes +30% damage for 25s during Howling Maelstrom."
+    },
+    {
+      "name": "Falling",
+      "spellId": 3,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Environmental fall death after a wind knock — 31 killing blows across 6 Mythic PTR pulls, more than every boss ability combined."
+    },
+    {
+      "name": "Serpent's Fury",
+      "spellId": 1297367,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Marks a player and builds rage; warcraft.wiki.gg confirms 14+ players within 8yd of the mark forces To the Slaughter and spends the rage."
+    },
+    {
+      "name": "Serpent's Fury",
+      "spellId": 1305621,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "The mark debuff naming who the raid stacks on."
+    },
+    {
+      "name": "To the Slaughter",
+      "spellId": 1297414,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "The charge the raid deliberately forces — attribute deaths only, since being struck is the intended outcome."
+    },
+    {
+      "name": "Virulence",
+      "spellId": 1297707,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "5s Nature DoT from the charge that bursts and spreads to nearby players on removal; Wowhead lists no dispel type."
+    },
+    {
+      "name": "Virulence",
+      "spellId": 1299899,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Second Virulence aura ID with the same profile."
+    },
+    {
+      "name": "Unbound Ferocity",
+      "spellId": 1296898,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Mythic"
+      ],
+      "note": "Soft enrage at 100 rage (+500% damage, +50% attack speed) — a single application ends the pull."
+    }
+  ],
+  "adds": []
+}

@@ -17,16 +17,19 @@ import { join } from 'node:path'
 //   4. Internal consistency: every id referenced by `loop`, `spawns`,
 //      `atFullEnergy` and `ambient` must actually exist.
 
-const RAIDLENS = 'C:/Users/Matthew/ai-projects/raidlens/12.1/VenomousAbyss'
+// Vendored under data/abilities so these checks run anywhere the repo is
+// cloned. They previously read a sibling checkout by absolute path, which meant
+// they passed on the author's machine and failed in CI — the worst of both.
+const ABILITIES = 'data/abilities'
 const BOSS_DIRS = {
-  nekzali: 'Nekzali',
-  sentinels: 'Sentinels',
-  vashnik: 'Vashnik',
-  explorers: 'Explorers',
-  sszorak: 'Sszorak',
-  twinfangs: 'TwinFangs',
-  coiledaltar: 'CoiledAltar',
-  ulatek: 'Ulatek',
+  nekzali: 'nekzali',
+  sentinels: 'sentinels',
+  vashnik: 'vashnik',
+  explorers: 'explorers',
+  sszorak: 'sszorak',
+  twinfangs: 'twinfangs',
+  coiledaltar: 'coiledaltar',
+  ulatek: 'ulatek',
 }
 
 /** Boss files that actually exist yet. */
@@ -43,8 +46,8 @@ function readBoss(key) {
   return { src, mechanics }
 }
 
-function realSpells(bossDir) {
-  const raw = JSON.parse(readFileSync(join(RAIDLENS, bossDir, 'abilities.json'), 'utf8'))
+function realSpells(bossKey) {
+  const raw = JSON.parse(readFileSync(join(ABILITIES, `${bossKey}.json`), 'utf8'))
   const spells = [...(raw.spells ?? [])]
   for (const a of [...(raw.bosses ?? []), ...(raw.adds ?? [])]) spells.push(...(a.spells ?? []))
   return spells

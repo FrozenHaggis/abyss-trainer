@@ -1,0 +1,478 @@
+{
+  "bossName": "Entombed Sentinels",
+  "difficulty": "Heroic+Mythic",
+  "bosses": [
+    {
+      "name": "Breath of Ula'tek",
+      "npcId": 258557,
+      "spells": [
+        {
+          "name": "Ula'tek's Dominance",
+          "spellId": 1290189,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Proximity buff on both Sentinels — 99% damage reduction, 10s; wowhead gives 25yd range, warcraft.wiki says 40yd."
+        },
+        {
+          "name": "Ula'tek's Dominance",
+          "spellId": 1290193,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second ID for the same 99% DR proximity buff — watch both."
+        },
+        {
+          "name": "Mark of Acid",
+          "spellId": 1284494,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Application marker driving the stacking Nature DoT 1284500."
+        },
+        {
+          "name": "Mark of Acid",
+          "spellId": 1284500,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature raid DoT, 40yd, 40s, stacks — soft enrage, unavoidable, dispel type n/a on wowhead."
+        },
+        {
+          "name": "Living Venom",
+          "spellId": 1284207,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Marker for the venom slime Breath ejects, which returns to the golem after 4s."
+        },
+        {
+          "name": "Toxic Droplets",
+          "spellId": 1284434,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast that scatters droplets across the arena — spawn marker only, 21 casts on Normal PTR."
+        },
+        {
+          "name": "Toxic Droplets",
+          "spellId": 1284451,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature damage at 300yd radius per wowhead — raid-wide pulse, not droplet-contact damage, so never a per-player failure."
+        },
+        {
+          "name": "Noxious Blast",
+          "spellId": 1284452,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Droplet eruption after 16s — 300yd raid-wide Nature damage, top killer in the log; count eruptions per pull, never blame individuals."
+        },
+        {
+          "name": "Venom Coagulation",
+          "spellId": 1284251,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "1.5s cast summoning the Venom Coagulation slime (npc 260766) — use as the add-spawn timestamp."
+        },
+        {
+          "name": "Empowering Slam",
+          "spellId": 1284458,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Physical tank hit stacking 15% increased Physical damage per consecutive hit — forces the Breath swap."
+        },
+        {
+          "name": "Vitriolic Stasis",
+          "spellId": 1284606,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Breath's 100-energy channel: 30s, 99% DR while health pools equalise — phase marker, pair with 1284588."
+        },
+        {
+          "name": "Helical Toxins",
+          "spellId": 1284590,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature+Shadow raid debuff during Stasis, 28s, dispel n/a — neutralises harmlessly at exactly 4 applications."
+        },
+        {
+          "name": "Helical Toxins",
+          "spellId": 1284813,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Periodic tick of the Helical Toxins debuff (value 2) — every player takes this for the whole window, so it is healing pressure, not a failure."
+        },
+        {
+          "name": "Helical Toxins",
+          "spellId": 0,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — the collision that combines applications, likely internal to 1284590's area trigger rather than a separate ID."
+        },
+        {
+          "name": "Cultivated Burst",
+          "spellId": 1284941,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature+Shadow burst (value 75) when Helical Toxins expires off exactly 4 applications — the real over-stack punishment."
+        },
+        {
+          "name": "Shifting Protovenom",
+          "spellId": 1296878,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Contaminates random players with prototype venom — marker for who must avoid clean players; guide-sourced, absent from the Normal PTR log."
+        },
+        {
+          "name": "Protovenom Eruption",
+          "spellId": 1296962,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature+Shadow burst with 10yd knockback when a contaminated player touches an uncontaminated one; guide-sourced, absent from the Normal PTR log."
+        }
+      ]
+    },
+    {
+      "name": "Blood of Ula'tek",
+      "npcId": 258558,
+      "spells": [
+        {
+          "name": "Ula'tek's Dominance",
+          "spellId": 1290189,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Same shared proximity buff as on Breath — 99% DR while the Sentinels are close."
+        },
+        {
+          "name": "Ula'tek's Dominance",
+          "spellId": 1290193,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second ID for the shared proximity buff."
+        },
+        {
+          "name": "Mark of Blood",
+          "spellId": 1284503,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Application marker driving the stacking Shadow DoT 1284506."
+        },
+        {
+          "name": "Mark of Blood",
+          "spellId": 1284506,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow raid DoT, 40yd, 40s, stacks — the other half of the soft enrage and the deadliest ID in the log."
+        },
+        {
+          "name": "Blood Venom",
+          "spellId": 1284208,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Infection marker that drops a pool where the player stands on expiry; warcraft.wiki calls it Magic-dispellable but wowhead lists dispel type n/a, so no dispel duty."
+        },
+        {
+          "name": "Blood Venom",
+          "spellId": 0,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — the ground-pool damage left when the infection expires; described by guides, no ID on wowhead and no log row."
+        },
+        {
+          "name": "Blighted Blood",
+          "spellId": 1284483,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast marker — the tracked effect is debuff 1284471."
+        },
+        {
+          "name": "Blighted Blood",
+          "spellId": 1284471,
+          "category": "Healer",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow DoT, 18s, dispel type MAGIC on wowhead and 14 real dispels in the log — the only genuine dispel in the fight; drops a pool if it runs full duration."
+        },
+        {
+          "name": "Bloodvenom Injection",
+          "spellId": 1284487,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "1.5s Physical cast on the Blood tank — cast component of the tank swap mechanic."
+        },
+        {
+          "name": "Bloodvenom Injection",
+          "spellId": 1284491,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow stacking DoT, 40s, that forces the swap; warcraft.wiki hints at a partial dispel but wowhead lists dispel type n/a."
+        },
+        {
+          "name": "Bloodvenom Injection",
+          "spellId": 1310126,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Damage component — two distinct names is a clean swap, a third means a non-tank ate it."
+        },
+        {
+          "name": "Unstable Miasma",
+          "spellId": 1288232,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Cast that marks a player — spawn marker for the soak window."
+        },
+        {
+          "name": "Unstable Miasma",
+          "spellId": 1288260,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The debuff on the marked player, erupting after ~8s; not dispellable."
+        },
+        {
+          "name": "Unstable Miasma",
+          "spellId": 1288282,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow eruption, 7.5yd radius per wowhead, damage split among players inside (300 base / 600 Mythic) — being hit is correct for soakers."
+        },
+        {
+          "name": "Clinging Murk",
+          "spellId": 1288297,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Shadow stacking DoT spread onto soakers; warcraft.wiki claims Magic but wowhead lists dispel type n/a and the log shows zero dispels."
+        },
+        {
+          "name": "Clinging Murk",
+          "spellId": 1303097,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Damage component of the Clinging Murk DoT — expected cost of soaking."
+        },
+        {
+          "name": "Vitriolic Stasis",
+          "spellId": 1284588,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Blood's 100-energy channel: 30s, 99% DR, heals the weaker Sentinel up to match — phase marker."
+        }
+      ]
+    }
+  ],
+  "adds": [
+    {
+      "name": "Venom Coagulation",
+      "npcId": 260766,
+      "note": "Large slime summoned by Breath via 1284251 — hard DPS swap, it pulses raid-wide Contaminate until it dies.",
+      "spells": [
+        {
+          "name": "Contaminate",
+          "spellId": 1284257,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The slime's repeating cast — no guide lists it as kickable and the log recorded zero interrupts; cast count proxies add kill speed."
+        },
+        {
+          "name": "Contaminate",
+          "spellId": 1284258,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature raid-wide damage at 300yd — unavoidable while the slime lives; the failure is kill speed, not positioning."
+        }
+      ]
+    },
+    {
+      "name": "Living Venom",
+      "npcId": 0,
+      "note": "NPC ID NEEDED — the ejected slime that returns to the golem after 4s; never appeared as a casting NPC in the log, so likely a non-casting object.",
+      "spells": [
+        {
+          "name": "Living Venom",
+          "spellId": 0,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "SPELL ID NEEDED — Nature damage to players clipped by the slime's return path; warcraft.wiki confirms it is avoidable."
+        }
+      ]
+    }
+  ]
+}

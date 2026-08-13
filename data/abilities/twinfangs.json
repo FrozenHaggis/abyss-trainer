@@ -1,0 +1,804 @@
+{
+  "bossName": "The Twin Fangs",
+  "difficulty": "Heroic+Mythic",
+  "bosses": [
+    {
+      "name": "Vexhul",
+      "npcId": 257361,
+      "note": "The venom half. Drives Eternal Venom onto the raid, spawns the brood, and floods the platform with caustic ground. Gains nothing on Mythic. Tanked separately from Ithraz; the two do NOT share a health pool.",
+      "spells": [
+        {
+          "name": "Eternal Venom",
+          "spellId": 1290336,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The fight's core resource — permanent stacking Nature poison, no duration, lethal at 9 stacks (Wowhead journal: 'stacks to 9 applications, causing player death'); the 10-on-Heroic split is weaker evidence. Never a per-player failure: everyone carries stacks."
+        },
+        {
+          "name": "Eternal Venom",
+          "spellId": 1292348,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The threshold execution — instakill at 9 stacks on Mythic. 76 deaths across 14 Mythic pulls, 26% of all deaths on the night. Some third-party sites claim 7; Wowhead's journal says 9 and is the stronger source."
+        },
+        {
+          "name": "Eternal Venom",
+          "spellId": 1290480,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The periodic tick, scaling with stack count — 24% of all raid damage taken and a direct proxy for how badly the venom economy is losing."
+        },
+        {
+          "name": "Eternal Venom",
+          "spellId": 1303196,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Periodic-dummy sub-spell referenced by 1290336; seen only on Normal PTR and absent from the Mythic report, so informational stack-tracking only."
+        },
+        {
+          "name": "Eternal Venom",
+          "spellId": 1295670,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "DB2-only Eternal Venom ID, never observed in a log — kept for complete stack-tracking coverage."
+        },
+        {
+          "name": "Eternal Venom",
+          "spellId": 1310470,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "DB2-only Eternal Venom ID, never observed in a log — kept for complete stack-tracking coverage."
+        },
+        {
+          "name": "Deadly Venom",
+          "spellId": 1297338,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Nature damage-over-time; killed on Heroic and Normal PTR but absent from the Mythic report."
+        },
+        {
+          "name": "Caustic Deluge",
+          "spellId": 1289192,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "1s cast, then a 5s channel into Vexhul's current target at 0.5s intervals — ten ticks, so ten Envenomed stacks per cast."
+        },
+        {
+          "name": "Caustic Deluge",
+          "spellId": 1289994,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The three acid splashes ejected during the channel, 4-yard radius each — every splash applies Eternal Venom and leaves a Caustic Globule. 55 hits and 7 deaths across 14 Mythic pulls."
+        },
+        {
+          "name": "Caustic Deluge",
+          "spellId": 1289237,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Splash impact damage within 4 yards."
+        },
+        {
+          "name": "Caustic Globule",
+          "spellId": 1289201,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Globule spawn and soak contact — taking this is correct play, so it must never appear on a failure leaderboard."
+        },
+        {
+          "name": "Caustic Globule",
+          "spellId": 1289993,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal soak ID — the globule ruptures after 10s and hits the whole raid, unless a player walks into it first, in which case only that player is affected."
+        },
+        {
+          "name": "Caustic Globule",
+          "spellId": 1290338,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Rupture damage — one player taking it is a correct soak, the whole raid taking it in the same instant is an un-soaked rupture. 7 deaths across 14 Mythic pulls."
+        },
+        {
+          "name": "Envenomed",
+          "spellId": 1310360,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Vexhul's tank stack — +10% Caustic Deluge damage taken for 1.5 min, stacking, ten stacks per channel."
+        },
+        {
+          "name": "Venomous Emergence",
+          "spellId": 1291404,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "3s cast summoning three Spawn of Vexhul and applying one Eternal Venom stack to all players — an add-spawn marker, not a failure."
+        },
+        {
+          "name": "Venomous Emergence",
+          "spellId": 1308122,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Unavoidable raid-wide burst on the summon — healer pressure, nobody's fault."
+        },
+        {
+          "name": "Stir the Depths",
+          "spellId": 1290956,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "6s channel that pulses the raid every 2s and sends waves down five lanes behind the raid."
+        },
+        {
+          "name": "Stir the Depths",
+          "spellId": 1292807,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wave contact — damage plus an Eternal Venom stack, dodged by stepping into a lane a wave has just cleared. 23 hits across 14 Mythic pulls."
+        },
+        {
+          "name": "Stir the Depths",
+          "spellId": 1292806,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The unavoidable every-2s raid pulse during the channel — 8% of all raid damage taken."
+        },
+        {
+          "name": "Vile Flood",
+          "spellId": 1294605,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Log-confirmed Vile Flood damage ID — 46 hits and 12 deaths across 14 Mythic pulls, the deadliest avoidable on the fight."
+        },
+        {
+          "name": "Vile Flood",
+          "spellId": 1294293,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal cast ID — 4s cast into a 14s rotating frontal torrent whose direction is telegraphed by the orbs spinning around Vexhul."
+        },
+        {
+          "name": "Vile Flood",
+          "spellId": 1293749,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal channel-damage ID — one Eternal Venom stack per 0.5s tick, so clipping the beam bankrupts a stack budget faster than anything else."
+        },
+        {
+          "name": "Concentrated Spittle",
+          "spellId": 1295107,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Range check, not a dodgeable mechanic — Vexhul pelts her current target only when they are out of melee, so any occurrence means the tank walked out. 2 hits and 3 deaths across 14 Mythic pulls."
+        },
+        {
+          "name": "Submerge",
+          "spellId": 1308556,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The 100-energy transition marker — both serpents dive, splash nearby players, and leave Noxious Slick. No hits or deaths across 14 Mythic pulls, so informational."
+        },
+        {
+          "name": "Noxious Slick",
+          "spellId": 1309471,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Ground hazard left by every Submerge impact — the +30% all-school damage-taken amp is far more dangerous than the tick. 11 hits across 14 Mythic pulls."
+        },
+        {
+          "name": "Toxic Fumes",
+          "spellId": 1294976,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Constant raid-wide Nature damage for the entire encounter — 49% of all damage taken and 16 deaths across 14 Mythic pulls, purely a healing floor."
+        },
+        {
+          "name": "Toxic Fumes",
+          "spellId": 1295049,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal ID for the same ability; logs surface 1294976."
+        },
+        {
+          "name": "Caustic Rain",
+          "spellId": 1308841,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Enrage marker (~8:05), not in the Journal — Vexhul thrashes continuously, applying Eternal Venom and coalescing more globules. Never reached in any sampled log."
+        },
+        {
+          "name": "Caustic Rain",
+          "spellId": 1308801,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Second Caustic Rain enrage ID; never observed in any sampled log."
+        }
+      ]
+    },
+    {
+      "name": "Ithraz",
+      "npcId": 257368,
+      "note": "The blood half, and the entire Mythic difficulty spike — all six Mythic additions belong to Ithraz. Tanked separately from Vexhul; no shared health pool. NPC ID is log-derived; Wowhead never exposes it.",
+      "spells": [
+        {
+          "name": "Stone Breaker",
+          "spellId": 1288538,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "1.5s cast roughly once a minute — Ithraz knocks players away then slams the platform three times, each slam a soak swirly."
+        },
+        {
+          "name": "Stone Breaker",
+          "spellId": 1289092,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Ithraz's tank stack — +33% Stone Breaker damage taken for 1.5 min, stacking, one per soaked impact. Older PTR builds named this 'Fractured'; match on the ID."
+        },
+        {
+          "name": "Stone Breaker",
+          "spellId": 1310371,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The soaked slam — Physical damage within 3.5yd per impact, undodgeable. A tank eating this is correct play; a non-tank in the swirly is the positioning failure."
+        },
+        {
+          "name": "Stone Breaker",
+          "spellId": 1289153,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The untanked variant — if no player is struck, the raid takes armour-ignoring Physical damage and is knocked away. Guide-sourced behaviour absent from the journal tooltip, but corroborated by 10 deaths across 14 Mythic pulls. A collective failure, not a per-player one."
+        },
+        {
+          "name": "Ravenous Feast",
+          "spellId": 1290516,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "4.25s cast — Ithraz consumes players three times in succession, each strike splitting damage among players within 14 yards and removing one Eternal Venom stack from those struck."
+        },
+        {
+          "name": "Ravenous Feast",
+          "spellId": 1290662,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The bite — Physical damage split evenly among players within 14 yards, so being hit is correct play and only deaths are reportable. 12 deaths across 14 Mythic pulls and the most common first blood."
+        },
+        {
+          "name": "Feasted",
+          "spellId": 1310096,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Heroic+ marker on every player a bite struck — +800% Ravenous Feast damage for 8s and no further venom removal, so a second bite is 9x damage for zero benefit. Correct soakers all carry it."
+        },
+        {
+          "name": "Sanguine Storm",
+          "spellId": 1306872,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "18s channel at 100 energy, paired with Vexhul's Vile Flood, showering the platform with gore globs."
+        },
+        {
+          "name": "Sanguine Storm",
+          "spellId": 1306876,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Glob impacts within 4 yards, dodgeable — 68 hits and 2 deaths across 14 Mythic pulls."
+        },
+        {
+          "name": "Coiling Ichor",
+          "spellId": 1290809,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "3s cast infusing several players at once — a carrier-selection marker, not a failure."
+        },
+        {
+          "name": "Coiling Ichor",
+          "spellId": 1290814,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The carrier debuff, 12s — the radius shrinks over time while the damage rises, so carriers close together as it tightens. Carriers are chosen, never at fault."
+        },
+        {
+          "name": "Coiling Ichor",
+          "spellId": 1290878,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Damage to players caught inside a carrier's radius — 377 hits across 21 raiders and 8 deaths on 14 Mythic pulls, by far the most-failed mechanic on the fight."
+        },
+        {
+          "name": "Congealed Gore",
+          "spellId": 1292505,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal ID for the two-minute pool dropped when Coiling Ichor expires — Shadow damage and a heavy slow that permanently shrinks the arena."
+        },
+        {
+          "name": "Congealed Gore",
+          "spellId": 1292552,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Log-confirmed player debuff for the Coiling Ichor pool — 78 hits across 14 Mythic pulls."
+        },
+        {
+          "name": "Congealed Gore",
+          "spellId": 1306922,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Journal ID for the six-second pool left by each Sanguine Storm glob — same damage and slow, but a dodge failure rather than an arena-management one."
+        },
+        {
+          "name": "Congealed Gore",
+          "spellId": 1306925,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Log-confirmed player debuff for the Sanguine Storm gore pool."
+        },
+        {
+          "name": "Clotted Bolt",
+          "spellId": 1295115,
+          "category": "Tank",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Range check mirroring Concentrated Spittle — Ithraz lances its current target only when out of melee, and an out-of-range Ithraz tank usually means nobody is soaking Stone Breaker either."
+        },
+        {
+          "name": "Uncoiled Wrath",
+          "spellId": 1308583,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "When either serpent dies the survivor gains stacking, uncapped +30% damage every 4s — the only thing forcing a synchronised kill, since the two do not share health. Magnitude has moved across builds; the ID is stable."
+        },
+        {
+          "name": "Blood Torrent",
+          "spellId": 1303230,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only 5s channel into Ithraz's target that also coalesces a Barbed Bulwark around every Caustic Globule on the field — the marker for the kick window."
+        },
+        {
+          "name": "Blood Torrent",
+          "spellId": 1303235,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only stacking healing absorb applied to the tank once per second for 5s — a healing check, not a positioning failure."
+        },
+        {
+          "name": "Tainted Blood",
+          "spellId": 1310099,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only. Ravenous Feast expels founts that absorb healing on players within 5 yards for up to 8s — these are healed down, not spread out."
+        },
+        {
+          "name": "Tainted Blood",
+          "spellId": 1310102,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only per-player healing absorb from standing within 5 yards of a fount — expected, and the thing healers must burn off."
+        },
+        {
+          "name": "Tainted Burst",
+          "spellId": 1310105,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only. A fount not fully absorbed before it expires detonates for Shadow damage to ALL players — a healing-throughput failure, never an individual's positioning. 27 deaths across 14 Mythic pulls."
+        },
+        {
+          "name": "Rouse the Brood",
+          "spellId": 1308356,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only 3s cast calling several Broodlings of Ithraz and releasing a raid-wide blood nova — the marker for the Broodling kick window."
+        }
+      ]
+    }
+  ],
+  "adds": [
+    {
+      "name": "Spawn of Vexhul",
+      "npcId": 264023,
+      "note": "Three spawn centre-room per Venomous Emergence. Killing them fast is the single biggest lever on raid-wide Eternal Venom income. A second NPC ID, 521384, appears in the Mythic log under the same name.",
+      "spells": [
+        {
+          "name": "Corrosive Spit",
+          "spellId": 1291478,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "5s cast firing a frontal line that applies Eternal Venom to everyone struck. NOT kickable — the Journal tags it Frontal/Avoidable only, DB2 PreventionType is 0, and no log shows an interrupt. Dodge it."
+        },
+        {
+          "name": "Corrosive Spit",
+          "spellId": 1293979,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The 5s targeting marker on the intended player — use it to separate the aimed target from players clipped by the line."
+        },
+        {
+          "name": "Corrosive Spit",
+          "spellId": 1293295,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Frontal line damage."
+        },
+        {
+          "name": "Eternal Venom",
+          "spellId": 1290336,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Logs attribute the bulk of Eternal Venom application to living Spawn of Vexhul — add control is venom control."
+        }
+      ]
+    },
+    {
+      "name": "Hatchling of Vexhul",
+      "npcId": 269071,
+      "note": "UNATTESTED ADD — two independent research passes found no Dungeon Journal entry, no Wowhead ability list and no guide reference; it also never appears in our 14-pull Mythic report. Retained as informational only, on the strength of a single Normal PTR log.",
+      "spells": [
+        {
+          "name": "Spew Venom",
+          "spellId": 1303375,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "DEMOTED OUT OF THE KICK TABLE — a single Normal PTR log shows 4 interrupts against 19 casts, but no guide or journal documents this ability and it is absent from our Mythic report, so kick-failure reporting here would be a phantom. Re-promote to Interruptible only if a real log confirms it."
+        }
+      ]
+    },
+    {
+      "name": "Broodling of Ithraz",
+      "npcId": 270898,
+      "note": "Mythic-only add summoned by Rouse the Brood. Interrupting its cast makes it retreat, so it never needs to be killed.",
+      "spells": [
+        {
+          "name": "Visceral Burst",
+          "spellId": 1308385,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only 2.5s cast, kickable — the Journal states outright that an interrupted broodling retreats to the depths, so the kick rotation is also the add-control plan. 23 completed uninterrupted casts across 14 Mythic pulls."
+        },
+        {
+          "name": "Visceral Burst",
+          "spellId": 1308386,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only damage from an uninterrupted cast — raid-wide Shadow burst plus a stacking 6s DoT. 64 deaths across 14 Mythic pulls, 22% of all deaths and second only to Eternal Venom."
+        }
+      ]
+    },
+    {
+      "name": "Barbed Bulwark",
+      "npcId": 269194,
+      "note": "Mythic-only. Blood Torrent coalesces one around EACH Caustic Globule on the field. While a globule is shielded it cannot be soaked, so this mechanic attacks the raid's venom-redistribution valve.",
+      "spells": [
+        {
+          "name": "Barbed Bulwark",
+          "spellId": 1303378,
+          "category": "Interruptible",
+          "dispellable": false,
+          "interruptible": true,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "Mythic-only KICK TARGET, not a shield to burn — the Journal says interrupting it destroys it, and the channel carries -99% damage taken so DPS is not viable by design. 483 completed casts and ZERO interrupts across 14 Mythic pulls: the single biggest actionable failure on the fight. Older builds named it 'Protected Gestation'; match on the ID."
+        }
+      ]
+    },
+    {
+      "name": "Bloodcurdled Mass",
+      "npcId": 268668,
+      "note": "LOG-ONLY ADD — spawned by Ravenous Feast out of the venom Ithraz consumes on Heroic+. Absent from the Dungeon Journal and from Wowhead entirely; role corroborated only by third-party strategy sites. Blocks Stir the Depths wave lanes.",
+      "spells": [
+        {
+          "name": "Bloody Expulsion",
+          "spellId": 1302013,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "A permanent channel pulsing the raid every 4s and gaining +15% of its own damage per pulse — a soft enrage with no interrupt, so kill the add."
+        },
+        {
+          "name": "Bloody Expulsion",
+          "spellId": 1302695,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "The pulse damage — 12 killing blows on Heroic PTR, so a Mass left alive through several pulses approaches a wipe condition."
+        }
+      ]
+    }
+  ]
+}

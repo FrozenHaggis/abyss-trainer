@@ -1,0 +1,563 @@
+{
+  "bossName": "Vashnik the Malignant",
+  "bossNpcId": 259181,
+  "difficulty": "Heroic+Mythic",
+  "spells": [
+    {
+      "name": "Imbibe",
+      "spellId": 1284663,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "4s cast at 100 energy — drains the two nearest fountains, firing their Expulsions, spawning living venoms and (Mythic) a Malignant Tumor; the master timeline for the fight."
+    },
+    {
+      "name": "Prepare Blood",
+      "spellId": 1310665,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Telegraph only — marks the Bleeding Snake Fountain as one of the two about to drain; no damage."
+    },
+    {
+      "name": "Prepare Fire",
+      "spellId": 1310670,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Telegraph only — marks the Burning Snake Fountain as one of the two about to drain; no damage."
+    },
+    {
+      "name": "Prepare Shadow",
+      "spellId": 1310672,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Telegraph only — marks the Shadow Snake Fountain as one of the two about to drain; no damage."
+    },
+    {
+      "name": "Blood Infusion",
+      "spellId": 1293969,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Boss buff from draining the Bleeding Snake Fountain — empowers Hemo Expulsion and sets Adaptive Infection to the blood variant (wowhead-confirmed)."
+    },
+    {
+      "name": "Shadow Infusion",
+      "spellId": 1293968,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Boss buff from draining the Shadow Snake Fountain — empowers Gloom Expulsion and sets Adaptive Infection to the shadow variant."
+    },
+    {
+      "name": "Flame Infusion",
+      "spellId": 1293971,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Boss buff from draining the Burning Snake Fountain — empowers Conflagrating Expulsion and sets Adaptive Infection to the fire variant."
+    },
+    {
+      "name": "Toxic Vapor",
+      "spellId": 1284561,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "300yd Nature tick every 2s, one stack per Imbibe — the soft enrage; unavoidable and never a player failure."
+    },
+    {
+      "name": "Virulent Fumes",
+      "spellId": 1291461,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Driver aura for the Virulent Fumes damage component (1291467) — carries no damage of its own."
+    },
+    {
+      "name": "Virulent Fumes",
+      "spellId": 1291467,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature damage from the toxic haze the venoms leave behind — only 6 of 20 players took it on Mythic, so it is positional and avoidable."
+    },
+    {
+      "name": "Dripping Fangs",
+      "spellId": 1280935,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Boss cast on the active tank that applies the 1280934 debuff; the gaps between casts are the tank's repositioning window for the next Imbibe."
+    },
+    {
+      "name": "Dripping Fangs",
+      "spellId": 1280934,
+      "category": "Tank",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "32s tank debuff — Nature every 2s plus +100% Physical damage taken (200% on Mythic), no dispel type; requires a swap."
+    },
+    {
+      "name": "Adaptive Infection",
+      "spellId": 1282117,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Parent cast — applies one of the three infection variants depending on which Infusions are active."
+    },
+    {
+      "name": "Stygian Infection",
+      "spellId": 1294994,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Shadow variant — Shadow damage every 1.5s plus a 100-150% healing absorb; wowhead lists no dispel type, so healers cannot cleanse it."
+    },
+    {
+      "name": "Stygian Burst",
+      "spellId": 1302489,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "6yd Shadow eruption dropped beneath a Stygian Infection carrier — standing in one is the failure."
+    },
+    {
+      "name": "Exploding Infection",
+      "spellId": 1295173,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Fire variant — periodic Fire damage, then the carrier detonates Caustic Explosion when it ends; wowhead lists a Magic dispel type but every guide says it erupts on expiry and no raid dispels it (zero dispel events in the whole log corpus), so it is a placed bomb, not a cleanse target."
+    },
+    {
+      "name": "Caustic Explosion",
+      "spellId": 1295209,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Fire detonation when Exploding Infection ends, falling off with distance — only 4 players were hit in the log sample, so a non-carrier hit means they were too close."
+    },
+    {
+      "name": "Siphoning Infection",
+      "spellId": 1295224,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Blood variant and the deadliest of the three — Shadow damage, a 150% healing absorb AND -100% healing received; wowhead lists no dispel type."
+    },
+    {
+      "name": "Siphon Blood",
+      "spellId": 1295229,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "10yd Physical drain around a Siphoning Infection carrier — being inside that radius is the failure."
+    },
+    {
+      "name": "Plague Froth",
+      "spellId": 1281910,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "The 2s boss channel that coats 3-5 players; locks Vashnik's movement and facing."
+    },
+    {
+      "name": "Plague Froth",
+      "spellId": 1281913,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Periodic driver on the frothed player for 6s, then expires into Plague Wave — use this to identify carriers."
+    },
+    {
+      "name": "Plague Froth",
+      "spellId": 1282078,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "2s marker aura component of the Plague Froth cluster."
+    },
+    {
+      "name": "Plague Froth",
+      "spellId": 1281925,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature+Shadow damage in a 4.5yd radius around each carrier — the carrier eating it is expected, anyone else failed to clear the bubble."
+    },
+    {
+      "name": "Plague Wave",
+      "spellId": 1295798,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature+Shadow waves erupting in four cardinal directions when Plague Froth expires; on Mythic these are the only way to strip Hardened Tumor."
+    },
+    {
+      "name": "Malignant Burst",
+      "spellId": 1280189,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "THE wipe mechanic — 1.5s cast when a living venom reaches the Malignant Cavity, 300yd Nature burst plus a stacking DoT every 3s for 30s; 45 killing blows in six Mythic pulls."
+    },
+    {
+      "name": "Malignant Catalyst",
+      "spellId": 1282516,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Heroic+ only — 5s boss cast forming an orb of venom above the Malignant Cavity."
+    },
+    {
+      "name": "Malignant Catalyst",
+      "spellId": 1282509,
+      "category": "Important",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Heroic+ only — internal driver for the Catalyst orb."
+    },
+    {
+      "name": "Malignant Catalyst",
+      "spellId": 1282525,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Heroic+ only — unavoidable Nature damage as the orb bursts and launches Catalytic Bile; attribute deaths, never a per-player failure."
+    },
+    {
+      "name": "Catalytic Bile",
+      "spellId": 1282602,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Heroic+ only — 6yd Nature hit capped at 1 target, the hit an assigned soaker is SUPPOSED to take; taking it is correct, dying to it is a defensive problem."
+    },
+    {
+      "name": "Catalytic Bile",
+      "spellId": 1282616,
+      "category": "Deadly",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Heroic+ only — 300yd Nature raid punish (80 on Mythic vs 40 elsewhere) when a bile is not intercepted and reaches the Cavity; 9 killing blows on Mythic."
+    },
+    {
+      "name": "Hemo Expulsion",
+      "spellId": 1298582,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Unavoidable raid-wide Shadow damage when Imbibe drains the Bleeding Snake Fountain; also spawns the Clotting Venoms."
+    },
+    {
+      "name": "Gloom Expulsion",
+      "spellId": 1298583,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Unavoidable 400yd Shadow damage when Imbibe drains the Shadow Snake Fountain; also spawns the Shrouded Venoms."
+    },
+    {
+      "name": "Conflagrating Expulsion",
+      "spellId": 1298587,
+      "category": "Healer",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Unavoidable raid-wide Fire damage when Imbibe drains the Burning Snake Fountain; also spawns the Burning Venoms."
+    },
+    {
+      "name": "Deadly Venom",
+      "spellId": 1297338,
+      "category": "Avoidable",
+      "dispellable": false,
+      "interruptible": false,
+      "difficulties": [
+        "Heroic",
+        "Mythic"
+      ],
+      "note": "Nature ground DoT reapplied every 1.2s while you stand in the trail a living venom leaves — every application is a player standing in it."
+    }
+  ],
+  "adds": [
+    {
+      "name": "Burning Venom",
+      "npcId": 260905,
+      "note": "Living venom pulled from the Burning Snake Fountain by Imbibe. Crawls toward the Malignant Cavity — must die before it arrives or it triggers Malignant Burst (1280189)",
+      "spells": [
+        {
+          "name": "Burning Presence",
+          "spellId": 1305901,
+          "category": "Healer",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "300yd Fire pulse every 3s while a Burning Venom is alive — wowhead confirms raid-wide radius and 18 of 20 players were hit on Mythic, so this is add-uptime pressure, NOT a positioning failure."
+        },
+        {
+          "name": "Caustic Surge",
+          "spellId": 1285979,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Fire eruption plus a stacking Fire DoT when the Burning Venom dies — a large slice of the raid hit on one cast means it was killed inside the stack."
+        }
+      ]
+    },
+    {
+      "name": "Clotting Venom",
+      "npcId": 259408,
+      "note": "Living venom pulled from the Bleeding Snake Fountain by Imbibe. Immune to crowd control and splits into smaller clots on death. Must die before it reaches the Malignant Cavity",
+      "spells": [
+        {
+          "name": "Sanguineous Fortitude",
+          "spellId": 1291530,
+          "category": "Important",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Self-buff granting immunity to Disarm, Disorient, Fear, Slow, Root and Stun — Clotting Venoms cannot be kited or CC'd, only killed."
+        },
+        {
+          "name": "Clotting Blood",
+          "spellId": 1302517,
+          "category": "Healer",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Healing-absorb debuff, Magic dispel type on wowhead and genuinely dispelled 126 times across 332 applications in the log corpus."
+        },
+        {
+          "name": "Splitting Clot",
+          "spellId": 1286631,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wowhead-confirmed 10yd trigger missile — the Clotting Venom splits into smaller clots on death and each split still walks for the Cavity."
+        }
+      ]
+    },
+    {
+      "name": "Shrouded Venom",
+      "npcId": 0,
+      "note": "Living venom pulled from the Shadow Snake Fountain by Imbibe. NPC ID NEEDED — the Shadow fountain was never drained in the six logged Mythic pulls, so this add never appeared. Look up via WCL on a log where Shadow Infusion is active",
+      "spells": [
+        {
+          "name": "Miasmic Coating",
+          "spellId": 1312366,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wowhead-confirmed all-school absorb shield worth 100% of the Shrouded Venom's max health — break it before the add can be killed."
+        },
+        {
+          "name": "Umbral Ejection",
+          "spellId": 1286737,
+          "category": "Avoidable",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "Wowhead-confirmed 3yd Shadow missiles fired at nearby players when the Shrouded Venom dies — clear out before it drops."
+        },
+        {
+          "name": "Congealing Bolt",
+          "spellId": 1305833,
+          "category": "Healer",
+          "dispellable": true,
+          "interruptible": false,
+          "difficulties": [
+            "Heroic",
+            "Mythic"
+          ],
+          "note": "5s Shadow hit plus a movement snare, Magic dispel type on wowhead and genuinely dispelled 58 times across 300 applications in the log corpus."
+        }
+      ]
+    },
+    {
+      "name": "Malignant Tumor",
+      "npcId": 0,
+      "note": "MYTHIC ONLY. Pulled from the fountains alongside the venoms by Imbibe. WCL reports this actor as 'Malignant Totem' with non-standard actor IDs (808290 / 538860) rather than a real NPC ID — NPC ID NEEDED, look up via the WCL combatants list on a Mythic log",
+      "spells": [
+        {
+          "name": "Hardened Tumor",
+          "spellId": 1304437,
+          "category": "DPS",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "MYTHIC ONLY. 99% damage reduction on the tumor until a Plague Wave (1295798) strips it; log-confirmed only, no wowhead page exists for this ID."
+        },
+        {
+          "name": "Malignance",
+          "spellId": 1304459,
+          "category": "Deadly",
+          "dispellable": false,
+          "interruptible": false,
+          "difficulties": [
+            "Mythic"
+          ],
+          "note": "MYTHIC ONLY. A surviving tumor fires a 300yd Nature burst plus a tick every 2s for a full minute — 12 killing blows on Mythic, second only to Malignant Burst."
+        }
+      ]
+    }
+  ]
+}

@@ -42,7 +42,9 @@ export const nekzali: BossDef = {
   name: "Tok'zali the Contextcoiler",
   realName: "Nek'zali the Soulcoiler",
   blurb: 'Nothing one-shots. The raid bar bleeds to Rite stacks, and everyone who misses a Pyre soak burns.',
-  arenaRadius: 44,
+  // Measured from PTR combat logs, not guessed: Circle (CV 10.0%, corner/axis 0.93). 125,871 samples over 27 pulls.
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 46,
   // Every spirit that reaches the Soulcoil Well fires a Soulcoil Rite: raid-wide
   // Shadow, a permanent stacking DoT, and 5 energy to Nek'zali. The shield is
   // the lesson — while Gravebound Advance holds, the add cannot die at all.

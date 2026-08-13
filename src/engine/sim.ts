@@ -631,6 +631,12 @@ function resolveInstance(w: World, inst: Instance) {
 
 const ALLY_SPEED = 12
 const SWAP_GRACE_MS = 2500
+/**
+ * How long the co-tank takes to taunt off you once your stacks are up. Long
+ * enough that you see the stacks climb and understand why the swap happened,
+ * short enough that you are never punished for a swap that is their job.
+ */
+const CO_TANK_REACTION_MS = 1400
 
 /**
  * Ally AI. Deliberately assignment-based rather than emergent: when a mechanic
@@ -970,8 +976,11 @@ function computePrompt(w: World): Prompt | null {
   // Tank swap: the boss has been on one tank too long and you are the other.
   const swapDef = w.boss.mechanics.find(m => m.rule.type === 'tankSwap')
   if (swapDef && swapDef.rule.type === 'tankSwap' && w.player.role === 'tank') {
-    const tank = currentTank(w)
-    if (!tank.isPlayer && tank.stacks >= swapDef.rule.maxStacks) {
+    // The entity that casts the swap, not just whatever is listed first.
+    const tank = currentTank(w, bossUnitFor(w, swapDef.from))
+    if (!tank.isPlayer && tank.stacks >= swapDef.rule.maxStacks - 1) {
+      // Called a stack early so you have time to react rather than being told
+      // at the instant the clock starts running on a failure.
       consider({ verb: 'TAUNT', mechanic: swapDef.name, urgency: 1 }, 0)
     }
   }
@@ -1341,19 +1350,31 @@ export function step(w: World, input: Input, dtMs: number) {
       && !w.bosses.some(b => b !== unit && b.targetId === a.id))
     if (tank.stacks >= swapDef.rule.maxStacks) {
       w.overStackMs += dtMs
-      if (!playerIsTank) {
+      if (tank.isPlayer) {
+        // YOU are holding it and your stacks are up. Taunting off you is the
+        // co-tank's job, and a competent co-tank does it — so this is not your
+        // failure and must never be scored as one.
+        //
+        // It used to fall through to the failure branch below: the off-tank
+        // never taunted proactively and only ever took the boss after you had
+        // already been marked down for holding too long. That taught a swap
+        // partnership that does not exist.
+        if (w.overStackMs > CO_TANK_REACTION_MS) {
+          const other = freeTank()
+          if (other) { unit.targetId = other.id; w.overStackMs = 0 }
+        }
+      } else if (!playerIsTank) {
+        // Two AI tanks: they handle it between themselves, quickly.
         if (w.overStackMs > 800) {
           const other = freeTank()
           if (other) { unit.targetId = other.id; w.overStackMs = 0 }
         }
       } else if (w.overStackMs > SWAP_GRACE_MS) {
+        // The co-tank is holding it, over the threshold, and you have not
+        // taunted. This is the one tank-swap failure that is actually yours.
         recordFailure(w, swapDef)
         w.overStackMs = 0
-        if (tank.isPlayer) hurt(w, 0.3, swapDef.name)
-        // The co-tank covers for you so the pull carries on.
-        const other = freeTank()
-        if (other) unit.targetId = other.id
-        else if (!tank.isPlayer) unit.targetId = 0
+        unit.targetId = 0
       }
     } else {
       w.overStackMs = 0

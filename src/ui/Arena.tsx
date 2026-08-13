@@ -223,10 +223,16 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
     <div className="arena">
       <canvas ref={canvasRef} className="arena-canvas" />
 
-      {/* Bail out of a pull without having to die or wait out the enrage. */}
-      <button className="arena-quit glass-btn" onClick={onQuit} title="Back to boss select (Esc)">
-        ← Bosses
-      </button>
+      {/* Controls, in the arena for the opening seconds. Having to go back to
+          the menu to remember what shoots is a bad way to learn a fight. */}
+      {hud.elapsed < 9 && (
+        <div className="arena-controls" style={{ opacity: Math.min(1, (9 - hud.elapsed) / 2.5) }}>
+          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
+          <span><kbd>Mouse</kbd> aim · <kbd>Hold LMB</kbd> shoot</span>
+          <span><kbd>Space</kbd> shoot nearest</span>
+          <span><kbd>1</kbd>–<kbd>4</kbd> abilities</span>
+        </div>
+      )}
 
       <div className="hud hud-top">
         <div className="boss-block">
@@ -264,6 +270,11 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
             title="Spoken callouts"
           >{voiceOn ? '🔊' : '🔇'}</button>
         )}
+        {/* Leaving the pull lives in the top bar, alongside the other chrome.
+            Bottom-left put it straight on top of the health bars. */}
+        <button className="arena-quit" onClick={onQuit} title="Back to boss select (Esc)">
+          ← Bosses
+        </button>
       </div>
 
       {hud.prompt && (

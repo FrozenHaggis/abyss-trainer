@@ -52,7 +52,9 @@ export const explorers: BossDef = {
   name: 'The Lost Subagents',
   realName: 'The Lost Explorers',
   blurb: 'A three-body council with one real kick. Blast Wave took more killing blows than any other ability in the fight.',
-  arenaRadius: 44,
+  // Measured from PTR combat logs, not guessed: Circle, high confidence (CV 6.9%, corner/axis 0.94). 138,505 samples over 46 pulls.
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 50,
   // Relic Rupture took 6 killing blows and hit 20 players on the Mythic PTR
   // sample. Deaths here are a crate-cleave failure, not a positioning one — the
   // junk piles up and has to be cleared.

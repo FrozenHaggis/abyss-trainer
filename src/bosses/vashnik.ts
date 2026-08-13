@@ -42,7 +42,9 @@ export const vashnik: BossDef = {
   name: 'Vashnik the Malformed',
   realName: 'Vashnik the Malignant',
   blurb: 'Nothing here is kickable. A living venom that reaches the Cavity is what actually wipes raids.',
-  arenaRadius: 42,
+  // Measured from PTR combat logs, not guessed: Circle (CV 12.1%). A corridor at 120-180 deg reaches ~105yd and is excluded.
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 58,
   // Two different lessons. The Shrouded Venom's absorb is worth 100% of its max
   // health, so damage does literally nothing until it breaks. The Clotting Venom
   // is immune to Disarm, Disorient, Fear, Slow, Root and Stun — "cannot be kited

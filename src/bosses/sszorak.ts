@@ -23,7 +23,9 @@ export const sszorak: BossDef = {
   name: 'Ssztream, Herald of the Six Winds',
   realName: 'Sszorak',
   blurb: 'No adds, nothing to kick. Falling off the platform is what actually kills raids here.',
-  arenaRadius: 42,
+  // Measured from PTR combat logs, not guessed: Circle (CV 10.4%). Side spurs at 70/160/170 deg reach ~90yd and are excluded.
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 56,
   maxHp: 1,
   loopIntervalSec: 6,
   energyPerSec: 2.2,          // ~45s to the Maelstrom window

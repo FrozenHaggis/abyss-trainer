@@ -59,7 +59,9 @@ export const sentinels: BossDef = {
   blurb: 'Nothing to kick and one dispel. Mis-stacked Helical Toxins ends pulls; the Marks are the clock.',
   // Big room on purpose — the tanks have to hold the two golems 40+ yards apart
   // all pull, and the floor needs to be able to hold that split.
-  arenaRadius: 44,
+  // Measured from PTR combat logs, not guessed: Circle (CV 10.7%, corner/axis 0.89). 126,814 samples over 34 pulls.
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 55,
   // No kick exists on this fight: no guide lists Contaminate as interruptible
   // and the log recorded zero interrupts. Cast count proxies add kill speed.
   addEverySec: 30,

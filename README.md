@@ -92,18 +92,38 @@ them, and a tank dying to a dispel they cannot cast.
 
 ## Known gaps
 
-- **Arena shapes are placeholder.** Every fight is currently a circle. Research
-  confirms Sszorak is a platform with lethal edges and Twin Fangs is a platform
-  ringed by a venom sea, but no source publishes room geometry, and the raid only
-  opened on 18–19 August 2026. Real shapes need in-game confirmation.
+- **Arena sizes are measured; shapes are still circles.** Radii come from 863k
+  player positions across 301 PTR pulls (see below), so the floors are the right
+  size. Seven of the eight read as circles or near-circles, but Twin Fangs
+  (corner/axis 1.19) and Coiled Altar (1.27) sit between a circle (1.00) and a
+  square (1.41) — probably octagonal, and drawn as circles for now.
+- **Ula'tek's arena is unknown.** Zero logs exist for it in 625 PTR reports; it
+  was never publicly tested. Its radius is still a placeholder.
 
-  Geometry *is* derivable from combat logs — position data falls straight out of
-  a log recorded with **Advanced Combat Logging** enabled. The PTR log checked so
-  far had it switched off, which is why no `x`/`y` was available. One live night
-  with it on and every room's shape and size can be measured rather than guessed.
-- **Mor'zahi is targetable here but untargetable in the real fight** (0 damage
-  taken across 10,001 events in the PTR log). He should be a caster you cannot
-  shoot.
+## Arena geometry
+
+Measured from WCL combat logs, not guessed. Positions come back from the events
+API only when you pass `includeResources: true` — without it the response
+carries no `x`/`y` at all, which is easy to mistake for the log lacking Advanced
+Combat Logging. **1 yard = 100 coordinate units**, derived from a run-speed
+histogram peaking at 700–725 units/s against WoW's 7.00 yd/s base.
+
+| Boss | Radius | Shape | Confidence |
+|---|---|---|---|
+| Vashnik | 58 yd | circle | medium |
+| Sszorak | 56 yd | circle | medium |
+| Entombed Sentinels | 55 yd | circle | medium |
+| The Lost Explorers | 50 yd | circle | **high** |
+| Nek'zali | 46 yd | circle | medium |
+| The Coiled Altar | 43 yd | rounded/octagonal | low |
+| The Twin Fangs | 32 yd | rounded/octagonal | low |
+| Ula'tek | — | — | **no data** |
+
+Side rooms and entrance ramps are excluded from the radius: Vashnik has a
+corridor reaching ~105 yd, Sszorak has spurs reaching ~90 yd.
+
+From PTR (July 2026) and unverified against live. Player positions are a lower
+bound on the room — they are where players actually went.
 
 ## Deployment
 

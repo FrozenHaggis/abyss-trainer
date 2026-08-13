@@ -36,7 +36,9 @@ export const twinfangs: BossDef = {
   name: 'The Twin Prompts',
   realName: 'The Twin Fangs',
   blurb: 'Nothing to kick, nothing to dispel. Venom never washes off — the soaks are the only relief.',
-  arenaRadius: 44,
+  // Measured from PTR combat logs, not guessed: Rounded/octagonal, low confidence (corner/axis 1.19). Much the smallest floor in the raid.
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 32,
   // "A permanent channel pulsing the raid every 4s and gaining +15% of its own
   // damage per pulse — a soft enrage with no interrupt, so kill the add."
   // 12 killing blows on Heroic PTR. There is nothing to kick on this boss.

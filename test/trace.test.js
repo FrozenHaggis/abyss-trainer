@@ -325,6 +325,27 @@ test('pickups are drawn as pickups, not as ground to avoid', () => {
     'collect instances also fall through to the generic telegraph draw, so they render as one big shape')
 })
 
+// Taunting off you is the co-tank's job. The engine used to have no proactive
+// co-tank at all: it only ever took the boss after you had already been marked
+// down for holding too long, which taught a swap partnership that does not
+// exist and made a player-tank fail every single cycle.
+test('the co-tank taunts off you before it becomes your failure', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf('// ── tank swap ──')
+  assert.ok(i > 0, 'tank swap block not found in sim.ts')
+  const body = sim.slice(i, i + 2200)
+  assert.ok(body.includes('if (tank.isPlayer)'),
+    'the swap block does not branch on whether YOU are holding it, so holding it ' +
+    'while overstacked falls through to the failure path')
+  // The player-holding branch must hand off without ever recording a failure.
+  const branch = body.slice(body.indexOf('if (tank.isPlayer)'))
+  const mine = branch.slice(0, branch.indexOf('} else if'))
+  assert.ok(!mine.includes('recordFailure'),
+    'holding the boss while overstacked is scored against you — that swap is the co-tank\'s job')
+  assert.ok(mine.includes('CO_TANK_REACTION_MS'),
+    'the co-tank has no reaction window; it must taunt off you on its own')
+})
+
 test('adds cannot pile up faster than they can be cleared', () => {
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
   assert.ok(/w\.adds\.length < MAX_CONCURRENT_ADDS/.test(sim),

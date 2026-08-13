@@ -324,16 +324,37 @@ body {
 
 .drill-score span { font-size: .55em; opacity: .6; margin-left: 3px; }
 
+/* Controls reminder, shown for the opening seconds of a pull and then faded.
+   Bottom-centre, above the ability bar, out of the way of the arena. */
+.arena-controls {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 92px; z-index: 4; pointer-events: none;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center;
+  padding: 9px 16px; border-radius: 10px;
+  background: rgba(10, 7, 20, .62);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  font-family: 'Rajdhani', system-ui, sans-serif; font-size: 13px;
+  letter-spacing: .03em;
+  transition: opacity .4s linear;
+}
+.arena-controls span { display: flex; align-items: center; gap: 5px; opacity: .82; }
+.arena-controls kbd {
+  font-family: var(--font-mono); font-size: 10px; line-height: 1;
+  padding: 4px 6px; border-radius: 5px;
+  background: rgba(255,255,255,.09); border: 1px solid var(--line);
+}
+
 /* Bail out of a pull. Bottom-left, clear of the top HUD, so it is always
    reachable but never sits under the cursor while you are aiming. */
 .arena-quit {
-  position: absolute; left: 18px; bottom: 18px; z-index: 5;
+  flex: none; margin-left: 4px;
   pointer-events: auto; cursor: pointer;
   font-family: 'Rajdhani', system-ui, sans-serif;
-  font-size: 14px; font-weight: 600; letter-spacing: .04em;
-  color: inherit; background: rgba(255,255,255,.06);
+  font-size: 14px; font-weight: 600; letter-spacing: .04em; white-space: nowrap;
+  color: inherit; background: rgba(255,255,255,.08);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px;
+  border: 1px solid var(--accent-line); border-radius: 9px; padding: 8px 14px;
   transition: background .15s, border-color .15s, box-shadow .15s;
 }
 .arena-quit:hover {

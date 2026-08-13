@@ -49,7 +49,9 @@ export const coiledaltar: BossDef = {
   name: 'The Recursive Altar',
   realName: 'The Coiled Altar',
   blurb: 'Venom Rupture is more killing blows than everything else combined. Arena management, not reflexes.',
-  arenaRadius: 44,
+  // Measured from PTR combat logs, not guessed: Rounded/octagonal, low confidence (corner/axis 1.27 — between circle 1.00 and square 1.41).
+  // 1 yard = 100 coordinate units.
+  arenaRadius: 43,
   // Three different jobs on one boss, which is why this fight is the hardest to
   // learn. The orbs must NOT be destroyed — Venom Rupture took 58 Mythic killing
   // blows, more than everything else in the fight combined — while the Soulcoiler

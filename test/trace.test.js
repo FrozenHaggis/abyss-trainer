@@ -364,6 +364,30 @@ test('no 300-yard raid-wide ability is scored as a player failure', () => {
   }
 })
 
+// Entombed Sentinels shipped with its golems 26 yards apart against a 25-yard
+// Dominance threshold — a yard outside the failure state, on a fight whose
+// whole tank job is holding them at 40+. If a boss declares keepApart, its
+// entities must actually start apart.
+test('keepApart entities start outside their own link range', () => {
+  for (const [key] of present) {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const rule = src.match(/rule: \{ type: 'keepApart', minYards: (\d+) \}/)
+    if (!rule) continue
+    const min = Number(rule[1])
+    const ents = [...src.matchAll(/start: \{ x: (-?\d+(?:\.\d+)?), y: (-?\d+(?:\.\d+)?) \}(.*)/g)]
+      .filter(m => !/untargetable: true/.test(m[3]))
+      .map(m => ({ x: Number(m[1]), y: Number(m[2]) }))
+    assert.ok(ents.length > 1, `${key} declares keepApart but has fewer than two targetable entities`)
+    for (let i = 0; i < ents.length; i++) {
+      for (let j = i + 1; j < ents.length; j++) {
+        const d = Math.hypot(ents[i].x - ents[j].x, ents[i].y - ents[j].y)
+        assert.ok(d >= min, `${key}: two entities start ${d.toFixed(1)}yd apart but link at ${min}yd — ` +
+          'the fight would open already inside its own failure state')
+      }
+    }
+  }
+})
+
 test('adds cannot pile up faster than they can be cleared', () => {
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
   // The cap is now a per-boss dial with a default, so match either form.

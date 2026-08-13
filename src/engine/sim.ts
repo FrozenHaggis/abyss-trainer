@@ -985,6 +985,23 @@ function allyThink(w: World) {
     a.want.x += Math.sin(w.elapsedMs / 2600 + a.id * 1.7) * 1.6
     a.want.y += Math.cos(w.elapsedMs / 3100 + a.id * 2.3) * 1.6
 
+    // 6b. A tank holding an entity that must be kept apart stays near its
+    //     station. Sidestepping is allowed, wandering is not — the boss walks
+    //     after its tank, so two tanks fleeing the same telegraph dragged their
+    //     bosses together and linked them. That reads as the raid failing a
+    //     mechanic the AI is simply not careful enough to play.
+    const station = w.bosses.find(b => b.targetId === a.id && b.def.tankedApart)?.def.start
+    if (station) {
+      const sdx = a.want.x - station.x
+      const sdy = a.want.y - station.y
+      const sd = Math.hypot(sdx, sdy)
+      const leash = 11
+      if (sd > leash) {
+        a.want.x = station.x + (sdx / sd) * leash
+        a.want.y = station.y + (sdy / sd) * leash
+      }
+    }
+
     // 7. Never walk off the platform.
     const r = Math.hypot(a.want.x, a.want.y)
     if (r > arena * 0.9) {
@@ -1562,8 +1579,18 @@ export function step(w: World, input: Input, dtMs: number) {
   const apartDef = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
   w.bossesLinked = false
   if (apartDef && apartDef.rule.type === 'keepApart' && w.bosses.length > 1) {
-    const held = w.bosses.filter(b => b.targetId >= 0)
-    if (held.length > 1 && dist(held[0].pos, held[1].pos) < apartDef.rule.minYards) {
+    // Every targetable entity, not only the tanked ones. The Lost Explorers are
+    // a three-body council with two tanks, and United Defense keys on any pair
+    // being close: "all three explorers take 99% reduced damage while within
+    // 30 yds of each other".
+    const held = w.bosses.filter(b => !b.def.untargetable)
+    let closest = Infinity
+    for (let i = 0; i < held.length; i++) {
+      for (let j = i + 1; j < held.length; j++) {
+        closest = Math.min(closest, dist(held[i].pos, held[j].pos))
+      }
+    }
+    if (held.length > 1 && closest < apartDef.rule.minYards) {
       w.bossesLinked = true
       w.linkedMs += dtMs
       if (w.linkedMs > LINK_GRACE_MS) {

@@ -44,8 +44,8 @@ import type { BossDef } from '../engine/types'
 //     two identical rows.
 //   • Creepy Flames (1292796) and Fungal Burst have no confirmed damage ID —
 //     inventing one would be exactly the dishonesty the tests exist to catch.
-//   • United Defense (1297646) is a boss buff on a three-body council, invisible
-//     to player events and unmodellable in a single-target trainer.
+//   (United Defense used to be listed here as "unmodellable in a single-target
+//    trainer". It is modelled now — see the mechanic below.)
 
 export const explorers: BossDef = {
   key: 'explorers',
@@ -69,12 +69,12 @@ export const explorers: BossDef = {
     },
   ],
   entities: [
-    { id: 'iku', name: "Scrollsage Iku", npcId: 261843, start: { x: 0, y: -12 } },
-    { id: 'nama', name: "First Mate Nama", npcId: 261835, start: { x: -17, y: 4 } },
-    { id: 'gebbo', name: "Trader Gebbo", npcId: 261848, start: { x: 17, y: 4 } },
+    { id: 'iku', name: "Scrollsage Iku", npcId: 261843, start: { x: 0, y: -21 }, tankedApart: true },
+    { id: 'nama', name: "First Mate Nama", npcId: 261835, start: { x: -18, y: 11 }, tankedApart: true },
+    { id: 'gebbo', name: "Trader Gebbo", npcId: 261848, start: { x: 18, y: 11 } },
     // Outside the health pool: 0 damage taken across 10,001 player damage events
     // in a Mythic PTR log, while casting Malevolent Presence 1,911 times.
-    { id: 'morzahi', name: "Mor'zahi", npcId: 261584, start: { x: 0, y: 17 }, untargetable: true },
+    { id: 'morzahi', name: "Mor'zahi", npcId: 261584, start: { x: 0, y: 34 }, untargetable: true },
   ],
   maxHp: 1,
   loopIntervalSec: 6,
@@ -94,6 +94,26 @@ export const explorers: BossDef = {
   ],
 
   mechanics: [
+    {
+      id: 'united',
+      name: 'United Defense',
+      spellId: 1297646,
+      from: 'nama',
+      roles: ['tank'],
+      telegraphMs: 0,
+      origin: 'boss',
+      // "United Defense gives all three 99% damage reduction while they are
+      // within 30 yds of each other, so they stay parked apart all night."
+      //
+      // This file used to record it as "a boss buff on a three-body council,
+      // invisible to player events and unmodellable in a single-target
+      // trainer". The trainer has four entities on this fight now, and
+      // keepApart measures every pair — so parking two explorers together
+      // costs 99% of your damage, which is what the buff does.
+      rule: { type: 'keepApart', minYards: 30 },
+      good: 'The three stay parked apart all pull and never link.',
+      failText: 'Two explorers linked — United Defense, 99% damage reduction',
+    },
     {
       id: 'flames',
       name: 'Icebound Flames',

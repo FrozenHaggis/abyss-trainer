@@ -160,12 +160,32 @@ export const ulatek: BossDef = {
   // because a loop that only ever says "run out" trains one reflex and no
   // decisions.
   loop: [
-    'waves', 'stonevenom', 'malice', 'coils', 'stonevenom', 'acidic',
+    'eggs', 'waves', 'stonevenom', 'malice', 'coils', 'stonevenom', 'acidic',
     'serpentsbite', 'echoes', 'stonevenom', 'waves', 'thrash', 'poisonbite',
     'coils', 'malice', 'stonevenom', 'serpentsbite', 'thrash', 'echoes',
   ],
 
   mechanics: [
+    {
+      id: 'eggs',
+      name: 'Doomscale Eggs',
+      spellId: 1300312,
+      roles: ['tank', 'dps', 'healer'],
+      // "Shells stick to whoever touches an egg and hatch 20s later ... left
+      // alone it pops after 1.5 minutes." PICKUP IS DELIBERATE — "assigned
+      // carriers pick up in order and deliver to the Doomscale Cauldron" — so
+      // touching an egg is the job, not a mistake, and an egg nobody collects
+      // is what hatches a Ravenous Doomscale.
+      //
+      // Egg control is Stage One's whole job and it was absent entirely, which
+      // left "the adds set the clock" with no clock a player could influence.
+      telegraphMs: 14000,
+      shape: { kind: 'circle', radius: 3 },
+      origin: 'random',
+      rule: { type: 'collect', count: 3 },
+      good: 'Assigned carriers pick up in order and deliver to the Doomscale Cauldron, one side at a time.',
+      failText: 'An egg was left to hatch — a Doomscale clawed out',
+    },
     {
       id: 'heart',
       name: 'Venomous Heart',

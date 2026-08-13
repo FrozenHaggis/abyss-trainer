@@ -348,7 +348,8 @@ test('the co-tank taunts off you before it becomes your failure', () => {
 
 test('adds cannot pile up faster than they can be cleared', () => {
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
-  assert.ok(/w\.adds\.length < MAX_CONCURRENT_ADDS/.test(sim),
+  // The cap is now a per-boss dial with a default, so match either form.
+  assert.ok(/w\.adds\.length < \(w\.boss\.maxAdds \?\? MAX_CONCURRENT_ADDS\)/.test(sim),
     'the wave scheduler has no concurrency cap — waves landing on uncleared waves ' +
     'is a wipe you cannot play out of, and it teaches nothing except that the trainer is unfair')
 })

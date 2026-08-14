@@ -79,6 +79,7 @@ export const nekzali: BossDef = {
       id: 'pyre',
       name: 'Hungering Pyre',
       spellId: 1289855,
+      what: "An Echo drops a 10yd Fire soak circle that splits among everyone inside; anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in a 4yd blast that incinerates Vessels of Awakening and Amani corpses.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 10 },   // "a 10yd Fire soak circle"
@@ -96,6 +97,7 @@ export const nekzali: BossDef = {
       id: 'flame',
       name: 'Slithering Flame',
       spellId: 1294933,
+      what: "An Echo drops a 10yd Fire soak circle that splits among everyone inside; anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in a 4yd blast that incinerates Vessels of Awakening and Amani corpses.",
       lethal: true,
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 8000,               // "an 8s Fire DoT detonating as Cremation"
@@ -111,6 +113,7 @@ export const nekzali: BossDef = {
       id: 'cremation',
       name: 'Cremation',
       spellId: 1289875,
+      what: "An Echo drops a 10yd Fire soak circle that splits among everyone inside; anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in a 4yd blast that incinerates Vessels of Awakening and Amani corpses.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1600,
       shape: { kind: 'circle', radius: 4 },   // "a 4yd blast"
@@ -127,6 +130,7 @@ export const nekzali: BossDef = {
       id: 'rend',
       name: 'Essence Rend',
       spellId: 1287434,
+      what: "Ensnares several players, drags then flings them, and leaves a 15s Shadow DoT that spawns a Latent Cultist where it ends — an explosion plus a persistent puddle ticking Shadow damage and snaring 40%.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 15000,              // "leaves a 15s Shadow DoT"
       shape: { kind: 'circle', radius: 8 },
@@ -142,6 +146,7 @@ export const nekzali: BossDef = {
       id: 'cultist',
       name: 'Latent Cultist',
       spellId: 1288554,
+      what: "Ensnares several players, drags then flings them, and leaves a 15s Shadow DoT that spawns a Latent Cultist where it ends — an explosion plus a persistent puddle ticking Shadow damage and snaring 40%.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                  // spawned already active where the Rend ended
       shape: { kind: 'circle', radius: 8 },
@@ -156,6 +161,7 @@ export const nekzali: BossDef = {
       id: 'barrage',
       name: 'Possession Barrage',
       spellId: 1284103,
+      what: "Spectral echoes launched at the current tank burst for Shadow damage , hitting harder the less distance they travel. Boss melee applies Hollowing Strikes , a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also call it Sever/Hollowed).",
       // The tank is expected in this data — "tank out of the stack with a
       // defensive up" — so the tank is not scored on it. Everyone else spreads.
       roles: ['dps', 'healer'],
@@ -174,6 +180,7 @@ export const nekzali: BossDef = {
       id: 'hollowing',
       name: 'Hollowing Strikes',
       spellId: 1284109,
+      what: "Spectral echoes launched at the current tank burst for Shadow damage , hitting harder the less distance they travel. Boss melee applies Hollowing Strikes , a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also call it Sever/Hollowed).",
       roles: ['tank'],
       telegraphMs: 1500,
       origin: 'boss',
@@ -188,6 +195,7 @@ export const nekzali: BossDef = {
       id: 'well',
       name: 'Soulcoil Well',
       spellId: 1290390,
+      what: "Residual Toll ticks Shadow damage on random players while the well siphons; standing in the well ticks 1290390, and on Mythic the spirits inside tick Swirling Spirit .",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
       shape: { kind: 'circle', radius: 13 },
@@ -206,6 +214,7 @@ export const nekzali: BossDef = {
       id: 'rite',
       name: 'Soulcoil Rite',
       spellId: 1288772,
+      what: "Raid-wide Shadow burst plus a never-expiring stacking DoT each time a soul enters the well, each stacking Ritual Burn , +15% mechanic damage taken for 60s. Soulcoil Ignition fires four Rites back to back while Anguished Echoes rain down as knockback circles.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -220,6 +229,7 @@ export const nekzali: BossDef = {
       id: 'toll',
       name: 'Residual Toll',
       spellId: 1298696,
+      what: "Real Shadow damage at 300yd while the well siphons souls, leaving Hollowed after 16s — the encounter's baseline damage floor, informational",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',

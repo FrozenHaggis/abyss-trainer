@@ -89,6 +89,7 @@ export const vashnik: BossDef = {
       id: 'burst',
       name: 'Malignant Burst',
       spellId: 1280189,
+      what: "A venom reaching the Cavity casts 1280189 — 300yd Nature burst plus a DoT every 3s for 30s that stacks with every subsequent leak.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -109,6 +110,7 @@ export const vashnik: BossDef = {
       id: 'fangs',
       name: 'Dripping Fangs',
       spellId: 1280934,
+      what: "1280935 on the active tank applies 1280934 for 32s — Nature every 2s plus +100% Physical damage taken (200% on Mythic). Stacks, no dispel type.",
       roles: ['tank'],
       telegraphMs: 1800,
       origin: 'boss',
@@ -122,6 +124,7 @@ export const vashnik: BossDef = {
       id: 'froth',
       name: 'Plague Froth',
       spellId: 1281925,
+      what: "3-5 players get frothed, ticking Nature+Shadow in a 4.5yd radius for 6s , then erupting into four cardinal Plague Waves for roughly ten times the damage.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 6000,                 // "ticking ... for 6s"
       shape: { kind: 'circle', radius: 4.5 },   // "a 4.5yd radius"
@@ -137,6 +140,7 @@ export const vashnik: BossDef = {
       id: 'wave',
       name: 'Plague Wave',
       spellId: 1295798,
+      what: "3-5 players get frothed, ticking Nature+Shadow in a 4.5yd radius for 6s , then erupting into four cardinal Plague Waves for roughly ten times the damage.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1200,                 // erupts the instant the Froth expires
       // Four cardinal waves in the real fight; the engine spawns one line per
@@ -152,6 +156,7 @@ export const vashnik: BossDef = {
       id: 'bile',
       name: 'Catalytic Bile',
       spellId: 1282602,
+      what: "A 5s cast forms an orb that detonates (1282525, unavoidable) and launches biles. An intercepted bile hits only that player in 6yd (1282602, 1 target cap)",
       lethal: true,
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,                 // "A 5s cast forms an orb"
@@ -169,6 +174,7 @@ export const vashnik: BossDef = {
       id: 'exploding',
       name: 'Exploding Infection',
       spellId: 1295173,
+      what: "Fire variant — periodic Fire damage, then the carrier detonates Caustic Explosion when it ends; wowhead lists a Magic dispel type but every guide says it erupts on expiry and no raid dispels it (zero dispel events in the whole log corpus), so it is a placed bomb, not a cleanse target.",
       roles: ['tank', 'dps', 'healer'],
       // Duration is not stated in the tactic file; 8s is a playable window for
       // the walk out and back. NOT a dispel — see the header note.
@@ -183,6 +189,7 @@ export const vashnik: BossDef = {
       id: 'siphon',
       name: 'Siphon Blood',
       spellId: 1295229,
+      what: "10yd Physical drain around a Siphoning Infection carrier — being inside that radius is the failure.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
       shape: { kind: 'circle', radius: 10 },    // "drains anyone within 10yd"
@@ -199,6 +206,7 @@ export const vashnik: BossDef = {
       id: 'trail',
       name: 'Deadly Venom',
       spellId: 1297338,
+      what: "Nature ground DoT reapplied every 1.2s while you stand in the trail a living venom leaves — every application is a player standing in it.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                    // spawned already active
       shape: { kind: 'circle', radius: 5 },
@@ -213,6 +221,7 @@ export const vashnik: BossDef = {
       id: 'clotting',
       name: 'Clotting Blood',
       spellId: 1302517,
+      what: "Healing-absorb debuff, Magic dispel type on wowhead and genuinely dispelled 126 times across 332 applications in the log corpus.",
       roles: ['healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 3 },
@@ -230,6 +239,7 @@ export const vashnik: BossDef = {
       id: 'congealing',
       name: 'Congealing Bolt',
       spellId: 1305833,
+      what: "5s Shadow hit plus a movement snare, Magic dispel type on wowhead and genuinely dispelled 58 times across 300 applications in the log corpus.",
       roles: ['healer'],
       telegraphMs: 5000,                 // "5s Shadow hit plus a movement snare"
       shape: { kind: 'circle', radius: 3 },
@@ -246,6 +256,7 @@ export const vashnik: BossDef = {
       id: 'imbibe',
       name: 'Imbibe',
       spellId: 1284663,
+      what: "4s cast draining two of three fountains — each fires an unavoidable Expulsion , grants the matching Infusion (raising Expulsion damage and venom health), spawns that fountain's venom plus a Mythic tumor, and adds a Toxic Vapor stack (1284561, the soft enrage). Prepare Blood / Fire / Shadow telegraph the pair.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,                 // "4s cast draining two of three fountains"
       origin: 'boss',
@@ -262,6 +273,7 @@ export const vashnik: BossDef = {
       id: 'vapor',
       name: 'Toxic Vapor',
       spellId: 1284561,
+      what: "300yd Nature tick every 2s, one stack per Imbibe — the soft enrage; unavoidable and never a player failure.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',

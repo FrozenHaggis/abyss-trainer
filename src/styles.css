@@ -142,6 +142,7 @@ body {
 }
 
 /* Teaching callout — fires once, the first time a mechanic appears. */
+/* Superseded by .brief — kept only so any stray reference degrades gracefully. */
 .callout {
   position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
   background: rgba(22,16,42,.94); border: 1px solid var(--violet);
@@ -374,7 +375,10 @@ body {
    makes that read as deliberate rather than as the game hitching. */
 .teaching-veil {
   position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(circle at 50% 45%, transparent 30%, rgba(10,7,20,.55) 100%);
+  /* Backs a full pause now, not a slowdown, so it darkens harder and biases the
+     clear area to the right — the briefing owns the left of the screen. */
+  background: radial-gradient(circle at 62% 48%, rgba(10,7,20,.35) 22%, rgba(10,7,20,.78) 100%);
+  z-index: 11;
   animation: veil-in .2s ease-out;
 }
 @keyframes veil-in { from { opacity: 0; } to { opacity: 1; } }
@@ -387,3 +391,71 @@ body {
 .musicbtn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .musicname { font-family: var(--font-mono); font-size: 12px; color: var(--venom); }
 .musicnote { color: var(--muted); font-size: 12px; margin: 10px 0 0; max-width: 620px; line-height: 1.6; }
+
+/* ── the briefing panel ─────────────────────────────────────────────────────
+   Left-hand side, fight paused. A raider reads this once per mechanic and then
+   presses Resume, which is why it can afford three sections: a toast that
+   disappears in four seconds cannot teach anything. */
+.brief {
+  position: absolute; left: 22px; top: 50%; transform: translateY(-50%);
+  z-index: 12; width: min(370px, 34vw); max-height: 84vh; overflow-y: auto;
+  pointer-events: auto;
+  padding: 20px 22px 18px; border-radius: 14px;
+  background: rgba(10, 7, 20, .93);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--accent-line);
+  box-shadow: 0 18px 60px rgba(0,0,0,.6), 0 0 40px rgba(47,227,160,.10);
+  animation: briefIn .18s ease-out;
+}
+@keyframes briefIn { from { opacity: 0; transform: translate(-10px, -50%); } }
+
+.brief-tag {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--accent); opacity: .9; margin-bottom: 6px;
+}
+.brief-name {
+  font-family: var(--font-display); font-size: 24px; line-height: 1.1;
+  margin: 0 0 14px; color: var(--venom); text-shadow: 0 0 16px rgba(182,255,92,.3);
+}
+.brief-sec { margin-bottom: 14px; }
+.brief-sec h3 {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; opacity: .55; margin: 0 0 5px; font-weight: 600;
+}
+.brief-sec p { margin: 0; font-size: 14px; line-height: 1.5; opacity: .92; }
+.brief-good { opacity: .7 !important; font-style: italic; }
+
+/* Your part is the one that matters, so it gets the accent treatment — and is
+   visibly muted when the mechanic is somebody else's problem. */
+.brief-you {
+  border-left: 2px solid var(--line); padding-left: 12px;
+}
+.brief-you.mine { border-left-color: var(--accent); }
+.brief-verb {
+  font-family: var(--font-display); font-size: 17px; letter-spacing: .04em;
+  color: var(--accent-text); margin-bottom: 4px !important;
+}
+.brief-you:not(.mine) .brief-verb { color: var(--text); opacity: .6; }
+
+.brief-resume {
+  margin-top: 4px; width: 100%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: 'Rajdhani', system-ui, sans-serif;
+  font-size: 15px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: #06120c; background: var(--accent);
+  border: none; border-radius: 9px; padding: 11px 16px;
+  transition: filter .15s, transform .1s;
+}
+.brief-resume:hover { filter: brightness(1.12); }
+.brief-resume:active { transform: translateY(1px); }
+.brief-resume span {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
+  opacity: .62; border: 1px solid rgba(0,0,0,.28); border-radius: 4px; padding: 2px 5px;
+}
+
+@media (max-width: 900px) {
+  .brief { width: min(320px, 46vw); left: 12px; padding: 15px 16px 14px; }
+  .brief-name { font-size: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { .brief { animation: none; } }

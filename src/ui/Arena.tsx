@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Ability, BossDef, MechanicDef, Prompt, Role, RunResult } from '../engine/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Ability, AddDef, BossDef, MechanicDef, Prompt, Role, RunResult } from '../engine/types'
 import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createDrill, createWorld, currentTank, step, upcoming } from '../engine/sim'
 import type { Input, World } from '../engine/sim'
 import { makeCamera, render } from '../engine/render'
+import { briefFor, briefForAdd } from '../engine/brief'
 import RoleIcon from './RoleIcon'
 import { startMusic, stopMusic } from '../engine/audio'
 import { initVoice, isTeaching, sayMechanic, sayVerb, setVoiceEnabled, stopVoice, voiceEnabled, voiceSupported } from '../engine/voice'
@@ -44,6 +45,10 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   const [voiceOn, setVoiceOn] = useState(voiceEnabled())
   const [callout, setCallout] = useState<MechanicDef | null>(null)
+  // Set when the thing being briefed is an add, so it gets add guidance.
+  const [calloutAdd, setCalloutAdd] = useState<AddDef | null>(null)
+  // The loop lives outside React, so the Resume button flips a ref it reads.
+  const resumeRef = useRef(false)
   const abilities = abilitiesFor(role)
 
   useEffect(() => {
@@ -107,16 +112,19 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
     let acc = 0
     let hudAcc = 0
     let ended = false
+    let paused = false
     let lastFailAt = -1
 
     function frame(now: number) {
       const realDt = Math.min(250, now - last)
       last = now
-      // Slow the arena right down while a mechanic is being explained. Telling
-      // you what Ravage is while Ravage is already landing is useless; this buys
-      // you the beat to hear it, without stopping dead and losing the flow.
+      if (resumeRef.current) { resumeRef.current = false; paused = false }
+      // A briefing holds the fight completely, until the player presses Resume.
+      // Slowing to 16% was not enough — you cannot read three sections of text
+      // while still being asked to dodge. `isTeaching()` now only covers the
+      // short spoken cue, so it eases off rather than stopping.
       const teaching = isTeaching()
-      const scale = teaching ? 0.16 : 1
+      const scale = paused ? 0 : teaching ? 0.5 : 1
       const dt = realDt * scale
       acc += dt
 
@@ -135,8 +143,16 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
         acc -= TICK_MS
 
         if (world.announce) {
+          // First sight of a mechanic pauses the fight for a briefing. The
+          // voice gets the cue only — the description is on the panel, read at
+          // whatever pace the player wants.
+          const b = world.announceAdd
+            ? briefForAdd(world.announceAdd, role)
+            : briefFor(world.announce, role)
           setCallout(world.announce)
-          sayMechanic(world.announce.name, world.announce.good)
+          setCalloutAdd(world.announceAdd)
+          paused = true
+          sayMechanic(world.announce.name, b.verb)
         }
         // Bark only once the mechanic is genuinely closing, or it fires on every
         // telegraph and becomes noise.
@@ -210,12 +226,22 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
     return () => window.removeEventListener('keydown', esc)
   }, [onQuit])
 
-  // Teaching callout: shown once, the first time a mechanic appears.
+  // The briefing stays up until dismissed — it is a pause, not a toast.
+  const resume = useCallback(() => {
+    resumeRef.current = true
+    setCallout(null)
+    setCalloutAdd(null)
+  }, [])
+
+  // Space or Enter resumes, so you never have to reach for the mouse.
   useEffect(() => {
     if (!callout) return
-    const t = window.setTimeout(() => setCallout(null), 4200)
-    return () => window.clearTimeout(t)
-  }, [callout])
+    const k = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); resume() }
+    }
+    window.addEventListener('keydown', k)
+    return () => window.removeEventListener('keydown', k)
+  }, [callout, resume])
 
   const remaining = Math.max(0, boss.pullLengthSec - hud.elapsed)
 
@@ -297,13 +323,45 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
         ))}
       </div>
 
+      {/* The briefing. First sight of a mechanic pauses the fight and puts this
+          on the left: what it is, what is happening, and what YOU do about it.
+          The last part is role-specific, because "get out of it" and "point it
+          away from the raid" are the same mechanic seen from two jobs. */}
       {callout && <div className="teaching-veil" />}
-      {callout && (
-        <div className="callout">
-          <div className="callout-name">{callout.name}</div>
-          <div className="callout-good">{callout.good}</div>
-        </div>
-      )}
+      {callout && (() => {
+        const b = calloutAdd ? briefForAdd(calloutAdd, role) : briefFor(callout, role)
+        return (
+          <aside className="brief" role="dialog" aria-label={`${callout.name} briefing`}>
+            <div className="brief-tag">{calloutAdd ? 'New add — paused' : 'New mechanic — paused'}</div>
+            <h2 className="brief-name">{callout.name}</h2>
+
+            {callout.what && (
+              <section className="brief-sec">
+                <h3>What is happening</h3>
+                <p>{callout.what}</p>
+              </section>
+            )}
+
+            <section className={`brief-sec brief-you${b.yours ? ' mine' : ''}`}>
+              <h3>
+                <RoleIcon role={role} size={15} />
+                {b.yours ? `Your job as ${role}` : `Not your job (${role})`}
+              </h3>
+              <p className="brief-verb">{b.verb}</p>
+              <p>{b.line}</p>
+            </section>
+
+            <section className="brief-sec">
+              <h3>What good looks like</h3>
+              <p className="brief-good">{callout.good}</p>
+            </section>
+
+            <button className="brief-resume" onClick={resume} autoFocus>
+              Resume <span>space</span>
+            </button>
+          </aside>
+        )
+      })()}
 
       {!hud.alive && <div className="dead-banner">DOWN</div>}
       {hud.bossHp <= 0 && <div className="dead-banner win">BOSS DOWN</div>}

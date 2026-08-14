@@ -109,17 +109,18 @@ export function say(text: string, opts: SayOpts = {}): void {
   window.speechSynthesis.speak(u)
 }
 
-/** A mechanic just appeared for the first time: name it and teach it. */
-export function sayMechanic(name: string, good: string): void {
-  // Trim the trailing detail — spoken, a long sentence arrives too late to help.
-  const short = good.split(/[.;]/)[0]
-  const line = `${name}. ${short}`
-  // Hold the arena for roughly as long as the line takes to say. Speech APIs do
-  // not report duration up front, so estimate from length and cap it — a long
-  // teaching line must never freeze the fight for an unreasonable stretch.
-  const estMs = Math.min(4200, 700 + line.length * 55)
-  teachingUntil = performance.now() + estMs
-  say(line, { rate: 1.02, cooldownMs: 30000 })
+/**
+ * A mechanic just appeared for the first time.
+ *
+ * Says the name and the CUE ONLY — "Caustic Globule. Run over it." The full
+ * description belongs on the briefing panel, which the player reads at their own
+ * pace with the fight paused. Reading a whole paragraph aloud meant the useful
+ * half of the sentence arrived after the mechanic had already landed.
+ */
+export function sayMechanic(name: string, verb: string): void {
+  const line = `${name}. ${verb}.`
+  teachingUntil = performance.now() + Math.min(2600, 500 + line.length * 55)
+  say(line, { rate: 1.05, cooldownMs: 30000 })
 }
 
 /** An instruction, barked. Interrupts anything else. */

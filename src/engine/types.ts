@@ -219,6 +219,15 @@ export interface MechanicDef {
    */
   origin: 'boss' | 'player' | 'targeted' | 'random' | 'edge'
   rule: Rule
+  /**
+   * What the ability actually does, in plain language.
+   *
+   * Lifted from the tactic file's own "**What it does:**" line for that
+   * mechanic, falling back to the ability note in abilities.json. Not written
+   * fresh — the point is that the briefing a raider reads here is the same
+   * description the raid leader is working from.
+   */
+  what?: string
   /** The tactic file's "Good:" line, shown once as a teaching callout. */
   good: string
   /** Short human failure clause. Never a combat-log query. */

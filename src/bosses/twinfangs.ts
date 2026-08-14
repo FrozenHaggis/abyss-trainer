@@ -84,6 +84,7 @@ export const twinfangs: BossDef = {
       id: 'uncoiled',
       name: 'Uncoiled Wrath',
       spellId: 1308583,
+      what: "1308583 — when either serpent dies the survivor gains stacking, uncapped +30% damage every 4s.",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
@@ -99,6 +100,7 @@ export const twinfangs: BossDef = {
       id: 'venom',
       name: 'Eternal Venom',
       spellId: 1290480,
+      what: "Permanent stacking Nature poison , no duration, persists through death, fed by splashes, globule ruptures, Venomous Emergence, Corrosive Spit, waves and every Vile Flood tick. At 9 stacks 1292348 executes the carrier.",
       from: 'vexhul',
       roles: ['healer'],
       telegraphMs: 0,
@@ -116,6 +118,7 @@ export const twinfangs: BossDef = {
       id: 'deluge',
       name: 'Caustic Deluge',
       spellId: 1289994,
+      what: "1s cast into a 5s tank channel, ejecting three 4-yard splashes that apply venom and leave globules.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       // "1s cast into a 5s tank channel, ejecting three 4-yard splashes" — the
@@ -136,6 +139,7 @@ export const twinfangs: BossDef = {
       id: 'globule',
       name: 'Caustic Globule',
       spellId: 1290338,
+      what: "Each splash leaves a globule that ruptures after 10s onto the whole raid, unless one player walks in first and eats it alone .",
       lethal: true,
       from: 'vexhul',
       // Tanks are welded to their serpent; the file names "low-stack players" as
@@ -162,6 +166,7 @@ export const twinfangs: BossDef = {
       id: 'envenomed',
       name: 'Envenomed',
       spellId: 1310360,
+      what: "1310360 — +10% Caustic Deluge damage taken, stacking, ten stacks per channel.",
       from: 'vexhul',
       roles: ['tank'],
       telegraphMs: 1500,
@@ -182,6 +187,7 @@ export const twinfangs: BossDef = {
       id: 'spit',
       name: 'Corrosive Spit',
       spellId: 1291478,
+      what: "A 5s marker lands on a player, then the spawn fires a frontal line . Not kickable.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,             // "A 5s marker lands on a player"
@@ -201,6 +207,7 @@ export const twinfangs: BossDef = {
       id: 'depths',
       name: 'Stir the Depths',
       spellId: 1292807,
+      what: "6s channel pulsing the raid every 2s while waves run down five lanes .",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 6000,             // "6s channel ... while waves run down five lanes"
@@ -220,6 +227,7 @@ export const twinfangs: BossDef = {
       id: 'feast',
       name: 'Ravenous Feast',
       spellId: 1290662,
+      what: "4.25s cast bites three times; each splits damage among players within 14 yards , sheds one stack, and applies Feasted — blocking further removal for 8s and multiplying Feast damage by nine.",
       lethal: true,
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
@@ -238,6 +246,7 @@ export const twinfangs: BossDef = {
       id: 'ichor',
       name: 'Coiling Ichor',
       spellId: 1290814,
+      what: "3s cast infuses carriers for 12s; the radius shrinks as the damage rises, then drops a two-minute slowing pool .",
       from: 'ithraz',
       // "Carriers are chosen, never at fault" — but a tank running 26 yards out
       // drops their serpent, so carriers come from the rest of the raid.
@@ -257,6 +266,7 @@ export const twinfangs: BossDef = {
       id: 'gore',
       name: 'Congealed Gore',
       spellId: 1292552,
+      what: "3s cast infuses carriers for 12s; the radius shrinks as the damage rises, then drops a two-minute slowing pool .",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                // spawned already active
@@ -278,6 +288,7 @@ export const twinfangs: BossDef = {
       id: 'storm',
       name: 'Sanguine Storm',
       spellId: 1306876,
+      what: "18s channel raining gore globs , each leaving a 6s slowing pool .",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2200,
@@ -292,6 +303,7 @@ export const twinfangs: BossDef = {
       id: 'stonebreaker',
       name: 'Stone Breaker',
       spellId: 1288538,
+      what: "1.5s cast knocks players away, then three slam swirlies; each soaked impact hits within 3.5 yards and stacks +33% .",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       // "1.5s cast ... knocks players away, then three slam swirlies." The cast
@@ -312,6 +324,7 @@ export const twinfangs: BossDef = {
       id: 'flood',
       name: 'Vile Flood',
       spellId: 1294605,
+      what: "4s cast into a 14s rotating torrent applying a venom stack per 0.5s tick; the orbs around Vexhul telegraph the direction.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,             // "4s cast into a 14s rotating torrent"

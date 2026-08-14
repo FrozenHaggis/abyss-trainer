@@ -170,6 +170,7 @@ export const ulatek: BossDef = {
       id: 'eggs',
       name: 'Doomscale Eggs',
       spellId: 1300312,
+      what: "Shells stick to whoever touches an egg and hatch 20s later. Disturbing one egg starts gestation on every remaining Spawn that side",
       roles: ['tank', 'dps', 'healer'],
       // "Shells stick to whoever touches an egg and hatch 20s later ... left
       // alone it pops after 1.5 minutes." PICKUP IS DELIBERATE — "assigned
@@ -190,6 +191,7 @@ export const ulatek: BossDef = {
       id: 'heart',
       name: 'Venomous Heart',
       spellId: 1299526,
+      what: "20s of raid damage plus debris on random spots; exposes the Venomous Heart at +100% damage taken.",
       roles: ['tank', 'dps'],
       telegraphMs: 2000,
       origin: 'boss',
@@ -206,6 +208,7 @@ export const ulatek: BossDef = {
       id: 'vapors',
       name: 'Necrotic Vapors',
       spellId: 1286834,
+      what: "A stacking raid DoT across all three stages, plus a permanent second DoT per Viper hatched.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -225,6 +228,7 @@ export const ulatek: BossDef = {
       id: 'waves',
       name: 'Caustic Waves',
       spellId: 1292403,
+      what: "Venom waves cross the floor for a stacking Nature DoT, hatching any egg they touch.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
       // A lane crossing the floor. Length 80 on a 92yd arena so it reads as a
@@ -248,6 +252,7 @@ export const ulatek: BossDef = {
       // bite that applies it, and is a driver aura whose damage lands on an
       // unidentified child ID — so the stack is the honest thing to key on.
       spellId: 1298417,
+      what: "Knocks back and bites the current target, stacking Stone Venom and applying Hobbled. Target out of reach and the whole raid eats it.",
       roles: ['tank'],
       telegraphMs: 5000,             // "5 sec cast"
       origin: 'boss',
@@ -262,6 +267,7 @@ export const ulatek: BossDef = {
       id: 'acidic',
       name: 'Acidic Burst',
       spellId: 1301800,
+      what: "VERIFIED BOTH WAYS: InterruptFlags 45 (kickable) and DispelType 4 (Poison) in DB2, Poison also shown on wowhead. 2.5 sec cast, Nature hit plus an 18 sec DoT.",
       roles: ['healer', 'dps'],      // dispel is in both kits; tanks have none
       telegraphMs: 6000,
       shape: { kind: 'circle', radius: 5 },
@@ -279,6 +285,7 @@ export const ulatek: BossDef = {
       id: 'poisonbite',
       name: 'Poisonous Bite',
       spellId: 1287036,
+      what: "VERIFIED: DispelType 4 (Poison) in DB2 and on wowhead. Stacking Nature DoT on the add's current target, so stacks on a non-tank mean the adds were not picked up.",
       roles: ['healer'],
       telegraphMs: 7000,
       shape: { kind: 'circle', radius: 5 },
@@ -295,6 +302,7 @@ export const ulatek: BossDef = {
       id: 'coils',
       name: 'Spectral Coils',
       spellId: 1287265,
+      what: "Raid-wide damage reduced by players within 10 yards of impact; Soul Constrictor stops its carrier mitigating the next one.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,
       shape: { kind: 'circle', radius: 10 },   // "reduced by players within 10 yards"
@@ -313,6 +321,7 @@ export const ulatek: BossDef = {
       id: 'malice',
       name: 'Malice',
       spellId: 1290779,
+      what: "Doomscale Warden's 1.5s cast — 6 seconds of raid-wide damage.",
       // Everyone. The file calls this "TOP KICK PRIORITY" and the assignment
       // note asks for "three players minimum, fixed order" — every role in this
       // game has an interrupt, so every role is in the rotation.
@@ -333,6 +342,7 @@ export const ulatek: BossDef = {
       id: 'thrash',
       name: 'Desperate Thrash',
       spellId: 1305709,
+      what: "Dread Roar stuns the raid for 20s under a heavy DoT. Disrupting gestation applies Defect: Weakened, which blocks Dread Roar entirely but adds Anguished Cry (6s raid stun) and a Desperate Thrash frontal.",
       roles: ['tank'],
       telegraphMs: 1500,             // "1.5 sec frontal cone"
       shape: { kind: 'cone', radius: 26, arcDeg: 70 },
@@ -352,6 +362,7 @@ export const ulatek: BossDef = {
       id: 'echoes',
       name: 'Vicious Echoes',
       spellId: 1310764,
+      what: "Vicious Echoes is raid damage plus a 6s stun; Acidic Expulsion (Mythic) is a 35s raid-wide DoT.",
       roles: ['dps'],                // the Shrieker's own rotation, per the file
       telegraphMs: 2500,             // "2.5 sec cast, unlimited range"
       shape: { kind: 'circle', radius: 6 },
@@ -376,6 +387,7 @@ export const ulatek: BossDef = {
       // the player debuff". A 300-yard selector keyed to a 7-yard leech meant
       // the mechanic was hung on an ID that can never describe its failure.
       spellId: 1306119,
+      what: "4s cast drops brood for damage within 4 yards .",
       lethal: true,
       roles: ['tank', 'dps', 'healer'],
       // Really 15s. Compressed because the decision — spot the bite, get inside
@@ -397,6 +409,7 @@ export const ulatek: BossDef = {
       id: 'purge',
       name: 'Volatile Purge',
       spellId: 1306086,
+      what: "A 15s venom; on expiry the target becomes a Calcified Corpse — stunned, massive damage, pierces immunities.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,             // "erupts 5 sec later within 7 yards"
       shape: { kind: 'circle', radius: 7 },
@@ -412,6 +425,7 @@ export const ulatek: BossDef = {
       id: 'circlingprey',
       name: 'Circling Prey',
       spellId: 1301510,
+      what: "Circling Prey destroys a platform section — heavy damage plus knockback within 13 yards, lesser outside. Virulent Spit lands venom at marked spots.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 13 },   // "knockback within 13 yards"

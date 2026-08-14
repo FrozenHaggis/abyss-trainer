@@ -112,6 +112,8 @@ export interface World {
   seen: Set<string>
   /** Set when a mechanic should be announced this tick. */
   announce: MechanicDef | null
+  /** Set alongside `announce` when the thing being announced is an add. */
+  announceAdd: AddDef | null
   deathCause: string | null
   nextUid: number
   loopIndex: number
@@ -315,6 +317,7 @@ export function createWorld(boss: BossDef, role: Role): World {
     resolvedCount: 0,
     seen: new Set(),
     announce: null,
+    announceAdd: null,
     deathCause: null,
     nextUid: 1,
     loopIndex: 0,
@@ -1229,6 +1232,7 @@ function spawnAdds(w: World, def: AddDef) {
       telegraphMs: 0, origin: 'random', rule: { type: 'avoid' },
       good: def.good, failText: def.failText,
     }
+    w.announceAdd = def
   }
 }
 
@@ -1374,6 +1378,7 @@ export function step(w: World, input: Input, dtMs: number) {
   }
   if (!w.player.alive) return
   w.announce = null
+  w.announceAdd = null
   w.elapsedMs += dtMs
   const dt = dtMs / 1000
 

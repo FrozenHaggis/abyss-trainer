@@ -108,6 +108,7 @@ export const sentinels: BossDef = {
       id: 'dominance',
       name: "Ula'tek's Dominance",
       spellId: 1290189,
+      what: "Both bosses gain 99% DR for 10s while within ~25yd of each other (1290189, 1290193).",
       from: 'breath',
       // The tank job, and for a long time the one this trainer could not teach:
       // "Both bosses gain 99% DR for 10s while within ~25yd of each other.
@@ -127,6 +128,7 @@ export const sentinels: BossDef = {
       id: 'marks',
       name: 'Mark of Acid / Mark of Blood',
       spellId: 1284500,
+      what: "The soft enrage. 1284500 (Nature) and 1284506 (Shadow) hit everyone in 40yd, 40s, stacking, forever.",
       from: 'breath',              // Nature half; 1284506 is Blood's Shadow half
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
@@ -143,6 +145,7 @@ export const sentinels: BossDef = {
       id: 'stasis',
       name: 'Vitriolic Stasis',
       spellId: 1284606,
+      what: "At 100 energy both channel 30s (1284606 Breath, 1284588 Blood) at 99% DR while the weaker Sentinel heals up to match.",
       from: 'breath',              // Breath's channel; 1284588 is Blood's
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2500,
@@ -159,6 +162,7 @@ export const sentinels: BossDef = {
       id: 'helical',
       name: 'Helical Toxins',
       spellId: 1284590,
+      what: "Stasis applies a 28s Nature+Shadow debuff to everyone; colliding with another infected player combines applications, and exactly four neutralises it.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       // The real debuff runs 28s; compressed here to a 10s window because the
@@ -178,6 +182,7 @@ export const sentinels: BossDef = {
       id: 'protovenom',
       name: 'Protovenom Eruption',
       spellId: 1296962,
+      what: "Contaminates random players ; a contaminated player touching a clean one detonates 1296962 — damage in 10yd plus knockback.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
@@ -197,6 +202,7 @@ export const sentinels: BossDef = {
       id: 'slam',
       name: 'Empowering Slam',
       spellId: 1284458,
+      what: "Physical tank hit stacking ~15% increased Physical damage per consecutive hit on the same target.",
       from: 'breath',
       roles: ['tank'],
       telegraphMs: 1500,
@@ -211,6 +217,7 @@ export const sentinels: BossDef = {
       id: 'droplets',
       name: 'Toxic Droplets',
       spellId: 1284434,
+      what: "1284434 scatters droplets; each erupts into Noxious Blast after 16s.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       // "1284434 scatters droplets; each erupts into Noxious Blast after 16s.
@@ -235,6 +242,7 @@ export const sentinels: BossDef = {
       id: 'livingvenom',
       name: 'Living Venom',
       spellId: 1284207,
+      what: "Breath ejects a slime that returns to the golem after 4s, damaging anyone on the return path.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,             // "returns to the golem after 4s"
@@ -252,6 +260,7 @@ export const sentinels: BossDef = {
       id: 'coagulation',
       name: 'Venom Coagulation',
       spellId: 1284251,
+      what: "1284251 summons a slime pulsing raid-wide Contaminate (1284257 cast → 1284258 damage) until killed.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,
@@ -271,6 +280,7 @@ export const sentinels: BossDef = {
       id: 'blighted',
       name: 'Blighted Blood',
       spellId: 1284471,
+      what: "1284483 applies Blighted Blood , an 18s Shadow DoT, dispel type Magic. Left to expire it drops a pool.",
       from: 'blood',
       roles: ['healer'],
       telegraphMs: 6000,
@@ -287,6 +297,7 @@ export const sentinels: BossDef = {
       id: 'bloodvenom',
       name: 'Blood Venom',
       spellId: 1284208,
+      what: "Infects players ; on expiry it drops a toxic pool at their feet, larger with stacked applications.",
       from: 'blood',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 10000,
@@ -305,6 +316,7 @@ export const sentinels: BossDef = {
       id: 'miasma',
       name: 'Unstable Miasma',
       spellId: 1288282,
+      what: "1288232 marks a player with 1288260; after ~8s it erupts as 1288282 — Shadow damage in 7.5yd, split among everyone inside (300 base / 600 Mythic).",
       lethal: true,
       from: 'blood',
       roles: ['tank', 'dps', 'healer'],

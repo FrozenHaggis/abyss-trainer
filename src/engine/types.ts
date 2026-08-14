@@ -50,6 +50,29 @@ export type Rule =
    */
   | { type: 'keepApart'; minYards: number }
   /**
+   * Contact kills outright — a hole in the floor, not a mechanic. Checked every
+   * tick rather than at a resolve moment, and it never expires.
+   *
+   * Nek'zali's Soulcoil Well is the case. Its tactic file's target is "zero
+   * contact events all pull", and modelling it as damage the player could heal
+   * through taught the exact opposite of what the fight demands.
+   */
+  | { type: 'lethalGround' }
+  /**
+   * Collide with another marked raider so your two marks combine to exactly
+   * `target`.
+   *
+   * Helical Toxins: Vitriolic Stasis gives everyone four orbs split green and
+   * red, and a pair has to sum to four green between them. The tactic file calls
+   * this "the mechanic that ends pulls". Colliding with the wrong partner is
+   * fatal, and so is letting it expire — the file's Cultivated Burst.
+   *
+   * The inverse mechanic on the same fight is Shifting Protovenom, where
+   * touching another player is what kills you. The file warns "do not confuse
+   * them during Stasis", which is precisely why both are worth practising.
+   */
+  | { type: 'pairUp'; target: number }
+  /**
    * A burn window: the boss takes bonus damage for a fixed stretch.
    *
    * Every fight with one says the same thing about it — Sszorak's Dig In is
@@ -126,6 +149,12 @@ export interface BossEntityDef {
    * would teach a raider to waste a pull on a target that cannot die.
    */
   untargetable?: boolean
+  /**
+   * Which group is parked on this entity. Only meaningful on a `sided` fight,
+   * where each half of the raid owns one golem and must stay out of the other's
+   * range.
+   */
+  side?: Side
 }
 
 /**
@@ -190,6 +219,30 @@ export interface AddDef {
    * what a leaked add does to the raid, and showing that link is the lesson.
    */
   onLeak?: string
+  /**
+   * Leaves a corpse where it died, which stays until something burns it.
+   *
+   * Nek'zali's Restless Amani do this, and it is the reason the intermission has
+   * a job at all: Cremation "incinerates Vessels of Awakening and Amani
+   * corpses", and any corpse still lying there when the intermission ends gets
+   * back up and resumes walking at the well.
+   */
+  leavesCorpse?: boolean
+  /** Energy granted to the boss when this add reaches its goal. */
+  leakEnergy?: number
+}
+
+/**
+ * A dead add left on the floor. Persists until burned, and stands back up if a
+ * phase's `resurrectCorpsesAs` catches it still lying there.
+ */
+export interface Corpse {
+  uid: number
+  addId: string
+  pos: Vec
+  burned: boolean
+  /** ms timestamp it was burned, for the incineration flash. */
+  burnedAtMs: number
 }
 
 export interface MechanicDef {
@@ -277,6 +330,135 @@ export interface MechanicDef {
   driftSpeed?: number
   /** Pushes the player this many yards away from the shape's origin. */
   knockbackYards?: number
+  /**
+   * Which half of a split raid this belongs to. A side-tagged mechanic only
+   * fires at that group, and is only scored against the player when they are
+   * running with it.
+   */
+  side?: Side
+  /**
+   * The hazard never expires; `lingerMs` is ignored and it is part of the floor
+   * for the rest of the pull.
+   *
+   * A real constraint rather than a convenience. Blood Venom pools and Essence
+   * Rend puddles accumulate, so an encounter steadily consumes its own floor and
+   * gets harder because of where people stood ten minutes ago. That is the whole
+   * lesson of both mechanics, and a pool that quietly despawns removes it.
+   */
+  permanent?: boolean
+  /** Spawned once at the pull and never resolved — furniture, not a cast. */
+  fixture?: boolean
+  /** Anchored to the middle of the room rather than to a caster or a spawn roll. */
+  atCentre?: boolean
+  /**
+   * Instead of one hazard where this resolved, every body that soaked it drops
+   * one at their own feet.
+   *
+   * Unstable Miasma does this: the soak is correct play, and the pools it leaves
+   * behind are the price the red group pays for splitting the damage.
+   */
+  spawnsAtSoakers?: string
+  /**
+   * A permanent stacking aura on everyone within `radius` of the casting entity.
+   *
+   * Mark of Acid and Mark of Blood are exactly this — "hit everyone in 40yd,
+   * 40s, stacking, forever". Modelled per-entity so that standing in range of
+   * both golems stacks both, which is the specific mistake a split raid makes
+   * and the reason its healers suffer for it.
+   */
+  proximityStack?: { radius: number; everySec: number; damagePerStack: number }
+  /**
+   * On resolve, fire `defId` this many times, `everyMs` apart.
+   *
+   * Soulcoil Ignition is four Soulcoil Rites a second apart. Rolling it into a
+   * single lump of damage would hide the thing the healer actually has to cover.
+   */
+  channel?: { defId: string; count: number; everyMs: number }
+  /**
+   * Energy granted to the boss when this resolves.
+   *
+   * Nek'zali's bar is fed by events, never by the clock: every point on it is a
+   * Rite that happened — ten per scripted Ignition, five more for every Amani
+   * that reached the water — so the bar reads backwards as a history of the pull.
+   */
+  energy?: number
+  /**
+   * Adds a permanent stack of the named mechanic, raising all later damage taken.
+   * Ritual Burn is the running score of what this pull has already cost you.
+   */
+  stacks?: { defId: string; amountPct: number }
+  /**
+   * A mechanic that splits the raid in two. On alternate casts the player is
+   * handed `defId` instead of being scored on this one, so a single intermission
+   * trains both halves rather than whichever one they happened to be assigned.
+   */
+  alternatesWith?: { defId: string }
+}
+
+/**
+ * A non-circular floor, in yards, arena-centre origin.
+ *
+ * Almost every room in this raid is round and `arenaRadius` says all there is to
+ * say. The Entombed Sentinels' is not: it is an octagon with an alcove at each
+ * end. That is not decoration — the fight asks the tanks to hold the golems 40+
+ * yards apart while each group stays inside its own 40-yard bubble and outside
+ * the other's, and whether that is even possible is a question about the shape
+ * of the floor.
+ *
+ * The measured evidence agrees. The circle fitted to 126,814 position samples
+ * over 34 PTR pulls came out with a corner/axis ratio of 0.89 — players reach
+ * measurably less far on the diagonals than on the axes, which is what an
+ * octagon looks like when you fit a circle to it. A true circle would be 1.0.
+ */
+export type Arena = { kind: 'polygon'; points: Vec[] }
+
+/**
+ * Which half of a split raid something belongs to.
+ *
+ * The Entombed Sentinels are two golems held apart with a group parked on each,
+ * so nearly everything on that fight is owned by one side or the other. A
+ * mechanic that fires at the wrong group teaches the wrong reflex.
+ */
+export type Side = 'green' | 'red'
+
+/**
+ * A stage of a fight, when a fight has stages.
+ *
+ * Only two bosses in this tier need them — PHASES.md records that three of the
+ * eight have no phases at all and two say so in as many words — so this is
+ * optional and a boss that omits it behaves exactly as before, driven by `loop`
+ * and the energy bar.
+ */
+export interface PhaseDef {
+  id: string
+  name: string
+  /** Shown as a banner the moment it begins. */
+  banner: string
+  loop: string[]
+  loopIntervalSec: number
+  ambient?: string[]
+  /** Ends when the boss drops to this fraction of health. */
+  endsAtBossHp?: number
+  /** Ends when the shared energy bar fills. */
+  endsAtFullEnergy?: boolean
+  /** Ends when every add with this id is dead. */
+  endsWhenAddsDead?: string
+  /** On entry, spawn this add once, outside the normal wave cadence. */
+  onEnter?: { addId: string; count: number }[]
+  /** Every entity takes this much reduced damage for the duration, 0..1. */
+  entitiesReduction?: number
+  /** The entities walk toward one another instead of being held at station. */
+  entitiesConverge?: boolean
+  /**
+   * On exit, the weaker entity is healed up to match the healthier one. The
+   * tactic file calls the health delta at Stasis "the most actionable number on
+   * the fight" — this is why it is actionable.
+   */
+  levelEntitiesOnExit?: boolean
+  /** On exit, the tanks trade entities and drag them back to their own sides. */
+  swapEntitiesOnExit?: boolean
+  /** On exit, any add corpse nobody burned stands back up as this add. */
+  resurrectCorpsesAs?: string
 }
 
 export interface BossDef {
@@ -284,6 +466,12 @@ export interface BossDef {
   name: string
   /** Playable radius in yards. Leaving it is a fall — the real killer on Sszorak. */
   arenaRadius: number
+  /** A non-circular floor. When absent the room is a circle of `arenaRadius`. */
+  arena?: Arena
+  /** The player picks a side before the pull, and the raid splits in two. */
+  sided?: boolean
+  /** Stages, when the fight has them. Omit and `loop` drives the whole pull. */
+  phases?: PhaseDef[]
   blurb: string
   /**
    * The encounter's entities, PRIMARY FIRST. The primary is the one the player's
@@ -387,6 +575,14 @@ export interface Ally {
    * and the mechanic is visibly a group problem.
    */
   presence: number
+  /** Which group they run with on a split fight. */
+  side: Side
+  /**
+   * Helical Toxins: how many of their four orbs are green. Only meaningful while
+   * `marked`, and the number a partner has to complement to reach four.
+   */
+  green: number
+  marked: boolean
 }
 
 export interface PlayerState {
@@ -399,6 +595,16 @@ export interface PlayerState {
   /** Ability -> ms until usable again. */
   cooldowns: Partial<Record<Ability, number>>
   aloft: number // ms remaining airborne (Sszorak wind)
+  /** Which group the player chose on a split fight. */
+  side: Side
+  /** Helical Toxins: how many of the player's four orbs are green. */
+  green: number
+  marked: boolean
+  /**
+   * Permanent proximity-aura stacks by mechanic id — Mark of Acid, Mark of
+   * Blood. Two entries at once is the split raid's characteristic mistake.
+   */
+  marks: Record<string, number>
 }
 
 /** A live instruction shown to the player mid-fight. */
@@ -433,4 +639,18 @@ export interface RunResult {
   shotsHit: number
   addsKilled: number
   addsLeaked: number
+  /** Which group the player ran with, on a split fight. */
+  side?: Side
+  /** Furthest phase reached, for a pull that ended early. */
+  phaseReached?: string
+  /** The pull ended because the energy bar filled rather than on the clock. */
+  enraged?: boolean
+  /** Corpses left unburned when an intermission ended, so they stood back up. */
+  resurrected?: number
+  /**
+   * Health gap between the entities when the intermission began — the tactic
+   * file's "most actionable number on the fight", because the weaker one is
+   * healed up to match and the difference is progress thrown away.
+   */
+  entityDelta?: number
 }

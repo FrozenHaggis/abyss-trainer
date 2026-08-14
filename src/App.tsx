@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import type { BossDef, Role, RunResult } from './engine/types'
+import type { BossDef, Role, RunResult, Side } from './engine/types'
 import { abilitiesFor } from './engine/sim'
 import { BOSSES } from './bosses/registry'
 import Arena from './ui/Arena'
@@ -10,8 +10,8 @@ import BossSigil from './ui/BossSigil'
 
 type Screen =
   | { s: 'pick' }
-  | { s: 'play'; boss: BossDef; role: Role; nonce: number; drillId?: string }
-  | { s: 'done'; boss: BossDef; role: Role; result: RunResult }
+  | { s: 'play'; boss: BossDef; role: Role; side: Side; nonce: number; drillId?: string }
+  | { s: 'done'; boss: BossDef; role: Role; side: Side; result: RunResult }
 
 const ROLE_BLURB: Record<Role, string> = {
   tank: 'Hold the boss, keep its cones off the raid, swap before stacks turn lethal.',
@@ -19,14 +19,40 @@ const ROLE_BLURB: Record<Role, string> = {
   dps: 'Stay alive, stay on target, and cover the interrupts.',
 }
 
+/**
+ * The two halves of a split raid.
+ *
+ * Not mirror images, which is the whole reason this is a choice rather than a
+ * coin flip: one side spends the pull clearing the floor and burning an add,
+ * the other spends it stacking a soak and paying for it in permanent pools. A
+ * raider who has only ever played green has not practised the fight.
+ */
+const SIDES: { side: Side; label: string; golem: string; blurb: string }[] = [
+  {
+    side: 'green',
+    label: 'Green',
+    golem: "Breath of Ula'tek",
+    blurb: 'Soak the Toxic Droplets before they erupt, then dodge the Living Venom each soak sends back at the golem. Nothing here can be interrupted, so the Venom Coagulation add is a kill-speed race and nothing else.',
+  },
+  {
+    side: 'red',
+    label: 'Red',
+    golem: "Blood of Ula'tek",
+    blurb: 'Stack on whoever Unstable Miasma marks so the hit splits between you. Every soaker then drops a Blood Venom pool, and those stay for the rest of the pull — the floor you are standing on is the one your side spent.',
+  },
+]
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ s: 'pick' })
   const [track, setTrack] = useState<string | null>(localTrackName())
   const [boss, setBoss] = useState<BossDef>(BOSSES[0])
   const [role, setRole] = useState<Role>('dps')
+  // Only means anything on a `sided` fight. Kept here rather than per-boss so
+  // the picker remembers which half you were practising.
+  const [side, setSide] = useState<Side>('green')
 
   const onEnd = useCallback((result: RunResult) => {
-    setScreen(sc => sc.s === 'play' ? { s: 'done', boss: sc.boss, role: sc.role, result } : sc)
+    setScreen(sc => sc.s === 'play' ? { s: 'done', boss: sc.boss, role: sc.role, side: sc.side, result } : sc)
   }, [])
 
   /** Abandon the pull and go back to the picker. No debrief — you did not finish. */
@@ -38,6 +64,7 @@ export default function App() {
         key={screen.nonce}
         boss={screen.boss}
         role={screen.role}
+        side={screen.side}
         drillId={screen.drillId}
         onEnd={onEnd}
         onQuit={onQuit}
@@ -50,7 +77,7 @@ export default function App() {
       <div className="shell">
         <Debrief
           result={screen.result}
-          onRetry={() => setScreen({ s: 'play', boss: screen.boss, role: screen.role, nonce: Date.now() })}
+          onRetry={() => setScreen({ s: 'play', boss: screen.boss, role: screen.role, side: screen.side, nonce: Date.now() })}
           onQuit={() => setScreen({ s: 'pick' })}
         />
       </div>
@@ -104,6 +131,36 @@ export default function App() {
           ))}
         </div>
 
+        {/* Which half of the raid you are running with. Sits next to the role
+            picker because it is the same kind of decision: it changes which
+            mechanics are aimed at you, not just where you stand. */}
+        {boss.sided && (
+          <>
+            <h2>Side</h2>
+            <div className="cards">
+              {SIDES.map(s => (
+                <button
+                  key={s.side}
+                  className={`card side-${s.side}${s.side === side ? ' on' : ''}`}
+                  onClick={() => setSide(s.side)}
+                >
+                  <span className="card-title with-icon">
+                    <span className={`side-dot side-${s.side}`} /> {s.label}
+                  </span>
+                  <span className="card-real">{s.golem}</span>
+                  <span className="card-sub">{s.blurb}</span>
+                </button>
+              ))}
+            </div>
+            <p className="controls-note">
+              The raid splits in half, one group per golem, and each half stays inside 40
+              yards of its own and more than 40 from the other. Standing in range of both
+              stacks both Marks — that is the mistake this fight is built to punish, and
+              the one your healers pay for.
+            </p>
+          </>
+        )}
+
         <h2>Controls</h2>
         <div className="controls">
           <div className="ctrl"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></div>
@@ -131,7 +188,7 @@ export default function App() {
               <button
                 key={m.id}
                 className="drill"
-                onClick={() => setScreen({ s: 'play', boss, role, nonce: Date.now(), drillId: m.id })}
+                onClick={() => setScreen({ s: 'play', boss, role, side, nonce: Date.now(), drillId: m.id })}
               >
                 {m.name}
               </button>
@@ -171,7 +228,7 @@ export default function App() {
 
         <button
           className="btn primary big"
-          onClick={() => setScreen({ s: 'play', boss, role, nonce: Date.now() })}
+          onClick={() => setScreen({ s: 'play', boss, role, side, nonce: Date.now() })}
         >
           Pull {boss.name}
         </button>

@@ -187,12 +187,14 @@
           "note": "SPELL ID NEEDED — hard enrage at 100 energy (+500% damage, +150% speed, taunt immune); the pull-over marker, described by method.gg, wow.gg and expcarry"
         },
         {
+          "manualCorrection": "Difficulty corrected from Mythic-only to Heroic/Mythic on a first-hand report of the Heroic pull: Invoke is cast in phase two and sets the Latent Cultist puddles moving. The analyser most likely tagged it Mythic-only because no Heroic log in its sample reached phase two. This entry will be overwritten by the next raidlens abilities --boss nekzali --merge; re-check it then.",
           "name": "Invoke",
           "spellId": 1299722,
           "category": "Important",
           "dispellable": false,
           "interruptible": false,
           "difficulties": [
+            "Heroic",
             "Mythic"
           ],
           "note": "Wowhead confirms an Interrupt Cast effect plus a Pacify & Silence aura on players; also commands the Latent Cultists to reposition (Entwined Step). Marker only — losing a cast to it is not a reportable failure"

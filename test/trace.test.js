@@ -83,6 +83,141 @@ function realSpells(bossKey) {
   return spells
 }
 
+// ── reading the nested structures ────────────────────────────────────────────
+//
+// Phases, arenas and side tags nest: a `phases` array holds objects holding
+// arrays holding objects. A non-greedy regex stops at the first `]` it meets,
+// which on a phase list is the end of the FIRST phase's loop — everything after
+// it then goes unchecked while the test still reports success. That is the same
+// vacuous-pass failure this file already had once with its LF-only splits, so
+// these read brackets by counting them instead.
+
+/** End index of the string literal opening at `at`. */
+function endOfString(src, at) {
+  const quote = src[at]
+  for (let i = at + 1; i < src.length; i++) {
+    if (src[i] === '\\') { i++; continue }
+    if (src[i] === quote) return i
+  }
+  return src.length - 1
+}
+
+/**
+ * The source with `//` comments removed.
+ *
+ * These files carry more prose than code, and that prose contains brackets,
+ * apostrophes and the very field names being searched for. Stripping it first
+ * means a comment can never be mistaken for a declaration.
+ */
+function stripComments(src) {
+  let out = ''
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]
+    if (c === "'" || c === '"' || c === '`') {
+      const end = endOfString(src, i)
+      out += src.slice(i, end + 1)
+      i = end
+      continue
+    }
+    if (c === '/' && src[i + 1] === '/') {
+      const nl = src.indexOf('\n', i)
+      if (nl < 0) break
+      out += '\n'
+      i = nl
+      continue
+    }
+    out += c
+  }
+  return out
+}
+
+/** The balanced `[...]` or `{...}` beginning at `at`, string literals honoured. */
+function balancedAt(src, at) {
+  const open = src[at]
+  const close = open === '[' ? ']' : '}'
+  let depth = 0
+  for (let i = at; i < src.length; i++) {
+    const c = src[i]
+    if (c === "'" || c === '"' || c === '`') { i = endOfString(src, i); continue }
+    if (c === open) depth++
+    else if (c === close && --depth === 0) return src.slice(at, i + 1)
+  }
+  return null
+}
+
+/** The literal assigned to `name:` in `text`, brackets and all. */
+function literalAfter(text, name) {
+  const m = new RegExp(`\\b${name}:\\s*([\\[{])`).exec(text)
+  return m ? balancedAt(text, m.index + m[0].length - 1) : null
+}
+
+/** Every top-level `{...}` inside an array literal. */
+function objectsIn(arrayText) {
+  const out = []
+  for (let i = 0; i < arrayText.length; i++) {
+    const c = arrayText[i]
+    if (c === "'" || c === '"' || c === '`') { i = endOfString(arrayText, i); continue }
+    if (c !== '{') continue
+    const obj = balancedAt(arrayText, i)
+    if (!obj) break
+    out.push(obj)
+    i += obj.length - 1
+  }
+  return out
+}
+
+/** A quoted field's value: `name: 'x'` or `name: "x"`. */
+function strField(text, name) {
+  return new RegExp(`\\b${name}:\\s*['"]([^'"]*)['"]`).exec(text)?.[1] ?? null
+}
+
+/** Every quoted string in an array literal, in order. Either quote style. */
+function stringsIn(arrayText) {
+  return [...arrayText.matchAll(/'([^']*)'|"([^"]*)"/g)].map(m => m[1] ?? m[2])
+}
+
+/** Comment-free boss source. */
+function codeOf(key) {
+  return stripComments(readFileSync(join('src/bosses', `${key}.ts`), 'utf8'))
+}
+
+/** One entry per MechanicDef, with the fields the newer checks read. */
+function mechanicDefs(key) {
+  const code = codeOf(key)
+  const arr = literalAfter(code, 'mechanics')
+  assert.ok(arr, `${key}: found no mechanics array — every check reading it would pass vacuously`)
+  const defs = objectsIn(arr).map(blk => {
+    const rule = literalAfter(blk, 'rule') ?? ''
+    return {
+      blk,
+      id: strField(blk, 'id'),
+      rule: strField(rule, 'type'),
+      ruleLiteral: rule,
+      side: strField(blk, 'side'),
+      spawnsAtSoakers: strField(blk, 'spawnsAtSoakers'),
+      failText: strField(blk, 'failText') ?? '',
+    }
+  })
+  assert.ok(defs.length > 0, `${key}: parsed no mechanics — this check would be vacuous`)
+  return defs
+}
+
+/** Add ids, for the phase fields that name an add rather than a mechanic. */
+function addIds(key) {
+  const arr = literalAfter(codeOf(key), 'adds')
+  if (!arr) return []
+  return objectsIn(arr).map(blk => strField(blk, 'id')).filter(Boolean)
+}
+
+/** The phase objects, in order. Empty on the fights that have no stages. */
+function phaseDefs(key) {
+  const arr = literalAfter(codeOf(key), 'phases')
+  if (!arr) return []
+  const phases = objectsIn(arr)
+  assert.ok(phases.length > 0, `${key}: declares phases but none parsed — the phase checks would be vacuous`)
+  return phases
+}
+
 test('every boss in the registry has a file', () => {
   const reg = readFileSync('src/bosses/registry.ts', 'utf8')
   for (const m of reg.matchAll(/from '\.\/([a-z]+)'/g)) {
@@ -226,14 +361,188 @@ for (const [key, dir] of present) {
     const { src, mechanics } = readBoss(key)
     const ids = new Set(mechanics.map(m => m.id))
     const refs = []
-    const loop = src.match(/loop:\s*\[([\s\S]*?)\]/)
-    if (loop) for (const m of loop[1].matchAll(/'([^']+)'/g)) refs.push(['loop', m[1]])
+    // matchAll rather than match: a phased boss carries a loop and an ambient
+    // list PER PHASE as well as at the top, and matching once only ever checked
+    // the first of each. The phase lists went unread — which is exactly where a
+    // renamed mechanic leaves a dangling id behind.
+    for (const loop of src.matchAll(/loop:\s*\[([\s\S]*?)\]/g)) {
+      for (const m of loop[1].matchAll(/'([^']+)'/g)) refs.push(['loop', m[1]])
+    }
     for (const m of src.matchAll(/atFullEnergy:\s*'([^']+)'/g)) refs.push(['atFullEnergy', m[1]])
-    const amb = src.match(/ambient:\s*\[([\s\S]*?)\]/)
-    if (amb) for (const m of amb[1].matchAll(/'([^']+)'/g)) refs.push(['ambient', m[1]])
+    for (const amb of src.matchAll(/ambient:\s*\[([\s\S]*?)\]/g)) {
+      for (const m of amb[1].matchAll(/'([^']+)'/g)) refs.push(['ambient', m[1]])
+    }
     for (const m of src.matchAll(/spawns:\s*\{\s*defId:\s*'([^']+)'/g)) refs.push(['spawns', m[1]])
     for (const [where, id] of refs) {
       assert.ok(ids.has(id), `${where} references '${id}', which is not a mechanic on this boss`)
+    }
+  })
+
+  // Everything a phase or a mechanic can point at by name. A dangling id here
+  // is not a type error — these are all plain strings — so nothing but this
+  // test stands between a renamed mechanic and a stage that silently fires
+  // nothing at all.
+  test(`${key}: every phase and cross-reference id resolves`, () => {
+    const mechanics = new Set(mechanicDefs(key).map(m => m.id))
+    const adds = new Set(addIds(key))
+    const refs = []          // [where, id, which namespace it must live in]
+
+    for (const p of phaseDefs(key)) {
+      const at = `phase '${strField(p, 'id') ?? '?'}'`
+      const loop = literalAfter(p, 'loop')
+      if (loop) for (const id of stringsIn(loop)) refs.push([`${at} loop`, id, mechanics, 'mechanic'])
+      const ambient = literalAfter(p, 'ambient')
+      if (ambient) for (const id of stringsIn(ambient)) refs.push([`${at} ambient`, id, mechanics, 'mechanic'])
+      const onEnter = literalAfter(p, 'onEnter')
+      if (onEnter) {
+        for (const spawn of objectsIn(onEnter)) {
+          const id = strField(spawn, 'addId')
+          if (id) refs.push([`${at} onEnter`, id, adds, 'add'])
+        }
+      }
+      for (const field of ['endsWhenAddsDead', 'resurrectCorpsesAs']) {
+        const id = strField(p, field)
+        if (id) refs.push([`${at} ${field}`, id, adds, 'add'])
+      }
+    }
+
+    for (const m of mechanicDefs(key)) {
+      // proximityStack carries no id of its own today — it is radius, cadence
+      // and damage — but it is read here so that one added later cannot slip
+      // through unchecked.
+      for (const field of ['channel', 'stacks', 'alternatesWith', 'proximityStack']) {
+        const literal = literalAfter(m.blk, field)
+        const id = literal && strField(literal, 'defId')
+        if (id) refs.push([`${m.id} ${field}`, id, mechanics, 'mechanic'])
+      }
+      if (m.spawnsAtSoakers) {
+        refs.push([`${m.id} spawnsAtSoakers`, m.spawnsAtSoakers, mechanics, 'mechanic'])
+      }
+    }
+
+    for (const [where, id, known, kind] of refs) {
+      assert.ok(known.has(id),
+        `${where} references '${id}', which is not ${kind === 'add' ? 'an add' : 'a mechanic'} on this boss`)
+    }
+  })
+
+  // A side tag decides who a mechanic fires at and who it is scored against.
+  // Naming a side nobody is parked on hands it to an empty half of the raid.
+  test(`${key}: a side tag names a side the raid is actually split across`, () => {
+    const code = codeOf(key)
+    const entities = literalAfter(code, 'entities')
+    const sides = new Set(
+      (entities ? objectsIn(entities) : []).map(e => strField(e, 'side')).filter(Boolean))
+
+    for (const m of mechanicDefs(key)) {
+      if (!m.side) continue
+      assert.ok(sides.has(m.side),
+        `${m.id} fires at the '${m.side}' group, but no entity is parked on that side — ` +
+        'the mechanic belongs to a half of the raid that does not exist')
+    }
+
+    if (!/\bsided:\s*true/.test(code)) return
+    assert.ok(sides.size >= 2,
+      `${key} splits the raid but its entities declare ${sides.size} side(s) — ` +
+      'a split fight needs a golem on each side for the two halves to have anywhere to stand')
+  })
+
+  // Vitriolic Stasis hands every raider four orbs split green and red, and a
+  // pair has to combine to exactly the target. Nobody carries none or all four
+  // — either would need no partner — so a marked raider brings between one and
+  // three, and two of them can only ever sum to between two and six. A target
+  // outside that band is unwinnable by anybody: no pairing in the raid resolves
+  // it, so the mechanic the tactic file calls "the one that ends pulls" ends
+  // every pull, with nothing the player could have done differently.
+  test(`${key}: a pairUp target two players can actually reach`, () => {
+    const MIN_MARKS = 1, MAX_MARKS = 3
+    for (const m of mechanicDefs(key)) {
+      if (m.rule !== 'pairUp') continue
+      const target = Number(/\btarget:\s*(-?[\d.]+)/.exec(m.ruleLiteral)?.[1])
+      assert.ok(Number.isFinite(target), `${m.id} is a pairUp with no target to combine to`)
+      assert.ok(target >= 2 * MIN_MARKS && target <= 2 * MAX_MARKS,
+        `${m.id} asks a pair to combine to ${target}, but two raiders carrying ` +
+        `${MIN_MARKS}-${MAX_MARKS} marks each can only reach ${2 * MIN_MARKS}-${2 * MAX_MARKS} — ` +
+        'no pairing clears it, so the window can only ever end in Cultivated Burst')
+    }
+  })
+
+  // A death the debrief cannot explain teaches nothing. Both of these kill
+  // outright — a hole in the floor, and a collision with the wrong partner —
+  // so both have to be able to say so afterwards.
+  test(`${key}: a rule that kills outright always says what happened`, () => {
+    const KILLS_OUTRIGHT = ['lethalGround', 'pairUp']
+    for (const m of mechanicDefs(key)) {
+      if (!KILLS_OUTRIGHT.includes(m.rule)) continue
+      assert.notEqual(m.failText.trim(), '',
+        `${m.id} is a '${m.rule}' with no failText — it can end the pull, and the ` +
+        'debrief would list the death with nothing written against it')
+    }
+  })
+
+  // A phase with no way out is a dead end: the pull sits in it until the
+  // enrage, and every stage authored after it is unreachable. The last one is
+  // exempt — it ends when the boss does.
+  test(`${key}: every phase but the last can be left`, () => {
+    const phases = phaseDefs(key)
+    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead']
+    for (const p of phases.slice(0, -1)) {
+      const id = strField(p, 'id') ?? '?'
+      assert.ok(EXITS.some(field => new RegExp(`\\b${field}:`).test(p)),
+        `phase '${id}' declares no exit condition — the pull would never leave it, ` +
+        `and every phase after it is unreachable. One of ${EXITS.join(', ')} is required.`)
+    }
+  })
+
+  // The Sentinels' floor is an octagon with an alcove at each end, and the
+  // fight asks whether two 40-yard bubbles held 40 yards apart actually fit
+  // inside it. That question only has an answer if the polygon is a real room:
+  // enough points to be one, no crossed edges to make "inside" ambiguous, and
+  // nothing sticking out past arenaRadius, which the engine still treats as the
+  // bounding radius everywhere else.
+  test(`${key}: a polygon arena is a simple floor inside its own radius`, () => {
+    const code = codeOf(key)
+    const arena = literalAfter(code, 'arena')
+    if (!arena) return                     // a round room needs no polygon
+    const points = literalAfter(arena, 'points')
+    assert.ok(points,
+      `${key} declares an arena whose points are not written out — the floor is data ` +
+      'like everything else here, and a computed one cannot be checked against the fight')
+    const pts = [...points.matchAll(/x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)/g)]
+      .map(m => ({ x: Number(m[1]), y: Number(m[2]) }))
+    const radius = Number(/arenaRadius:\s*([\d.]+)/.exec(code)[1])
+
+    assert.ok(pts.length >= 6,
+      `${key}: a ${pts.length}-point arena is not a room — it reads as a wedge, ` +
+      'and the floor a fight is judged against has to be the floor players see')
+
+    for (const p of pts) {
+      const d = Math.hypot(p.x, p.y)
+      assert.ok(d <= radius + 1e-9,
+        `${key}: arena corner (${p.x}, ${p.y}) is ${d.toFixed(1)}yd out on a ${radius}yd floor — ` +
+        'arenaRadius is no longer a bounding radius, so every check that uses it is wrong')
+    }
+
+    const n = pts.length
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n]
+      assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 1e-9,
+        `${key}: arena corners ${i} and ${(i + 1) % n} sit on top of each other — a zero-length wall`)
+    }
+    // Proper crossings only: two walls that pass through one another leave the
+    // room with no unambiguous inside, and "did they leave the arena?" stops
+    // having an answer.
+    const turn = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (j === i + 1 || (i === 0 && j === n - 1)) continue      // walls that share a corner
+        const [a, b, c, d] = [pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n]]
+        const crosses = (turn(c, d, a) > 0) !== (turn(c, d, b) > 0) &&
+                        (turn(a, b, c) > 0) !== (turn(a, b, d) > 0)
+        assert.ok(!crosses,
+          `${key}: arena walls ${i} and ${j} cross — the floor is not a simple polygon, ` +
+          'so it has no inside to stand in')
+      }
     }
   })
 }

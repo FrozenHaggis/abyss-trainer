@@ -1,5 +1,5 @@
-import type { Instance, Role, Vec } from './types'
-import type { World } from './sim'
+import type { BossDef, Instance, Role, Side, Vec } from './types'
+import type { BossUnit, World } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
 
@@ -14,20 +14,125 @@ const GREEN = '47, 227, 160'   // be inside
 const VIOLET = '124, 77, 255'  // marker / carry
 const LIME = '182, 255, 92'    // player
 
+/**
+ * Side colours. These are IDENTITY, not instruction.
+ *
+ * A split raid needs "which half is that" answerable at a glance, and the
+ * Sentinels name their own halves green and red. That collides head-on with the
+ * verb palette above, so these are deliberately different hues — venom green
+ * rather than mint, blood crimson rather than the orange-red of a telegraph —
+ * and they are only ever drawn as thin unfilled boundaries, glyph haloes and
+ * orbs. Never as the filled shape a telegraph uses. A side ring that read as
+ * "get out" would teach the red group to leave its own golem.
+ */
+const SIDE_GREEN = '124, 214, 96'
+const SIDE_RED = '221, 66, 90'
+/** Add corpses. Neither a target nor a hazard, so neither red nor violet. */
+const BONE = '226, 219, 196'
+
+const sideColour = (s: Side) => (s === 'red' ? SIDE_RED : SIDE_GREEN)
+
 export interface Camera {
   cx: number
   cy: number
   scale: number // pixels per yard
 }
 
-export function makeCamera(w: number, h: number, arenaRadius: number): Camera {
-  // Fit the arena with a small margin, so the edge is always visible — you
-  // cannot judge a knockback you cannot see the edge of.
-  const scale = (Math.min(w, h) / 2 - 24) / arenaRadius
-  return { cx: w / 2, cy: h / 2, scale }
+/** The floor's outline in yards, or null when the room is a plain circle. */
+function arenaPoints(boss: BossDef): Vec[] | null {
+  return boss.arena?.kind === 'polygon' && boss.arena.points.length > 2
+    ? boss.arena.points
+    : null
+}
+
+/**
+ * Fit the arena with a small margin, so the edge is always visible — you cannot
+ * judge a knockback you cannot see the edge of.
+ *
+ * A polygon floor is fitted by its bounding box rather than by `arenaRadius`.
+ * The Sentinels' room is an octagon with an alcove at each end, and a radius fit
+ * either cropped the alcoves or left the room floating off-centre on the canvas.
+ *
+ * Pass the whole BossDef to get that. The number form is kept because callers
+ * that only ever had a radius still work with it — they simply get the circle
+ * fit, which is correct for the six round rooms.
+ */
+export function makeCamera(w: number, h: number, fit: number | BossDef): Camera {
+  const pts = typeof fit === 'number' ? null : arenaPoints(fit)
+  const r = typeof fit === 'number' ? fit : fit.arenaRadius
+  let minX = -r, maxX = r, minY = -r, maxY = r
+  if (pts) {
+    minX = Math.min(...pts.map(p => p.x)); maxX = Math.max(...pts.map(p => p.x))
+    minY = Math.min(...pts.map(p => p.y)); maxY = Math.max(...pts.map(p => p.y))
+  }
+  const halfW = Math.max(1, (maxX - minX) / 2)
+  const halfH = Math.max(1, (maxY - minY) / 2)
+  const scale = Math.max(0.01, Math.min((w / 2 - 24) / halfW, (h / 2 - 24) / halfH))
+  // Centred on the floor's own centre rather than on the origin, so a room whose
+  // outline is not symmetric about (0,0) still sits in the middle of the canvas.
+  const midX = (minX + maxX) / 2
+  const midY = (minY + maxY) / 2
+  return { cx: w / 2 - midX * scale, cy: h / 2 - midY * scale, scale }
 }
 
 const toPx = (cam: Camera, v: Vec) => ({ x: cam.cx + v.x * cam.scale, y: cam.cy + v.y * cam.scale })
+
+/** Path the floor outline, optionally scaled about the arena centre. */
+function pathArena(ctx: CanvasRenderingContext2D, cam: Camera, boss: BossDef, k = 1) {
+  const pts = arenaPoints(boss)
+  ctx.beginPath()
+  if (pts) {
+    pts.forEach((pt, i) => {
+      const p = toPx(cam, { x: pt.x * k, y: pt.y * k })
+      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y)
+    })
+    ctx.closePath()
+  } else {
+    ctx.arc(cam.cx, cam.cy, boss.arenaRadius * k * cam.scale, 0, Math.PI * 2)
+  }
+}
+
+/** How far the floor reaches — the gradient and the vignette need one number. */
+function arenaReach(boss: BossDef): number {
+  const pts = arenaPoints(boss)
+  return pts ? Math.max(...pts.map(p => Math.hypot(p.x, p.y))) : boss.arenaRadius
+}
+
+/** A rounded rectangle, for the dark plates that keep small text legible. */
+function roundedRect(
+  ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number,
+) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + w, y, x + w, y + h, r)
+  ctx.arcTo(x + w, y + h, x, y + h, r)
+  ctx.arcTo(x, y + h, x, y, r)
+  ctx.arcTo(x, y, x + w, y, r)
+  ctx.closePath()
+}
+
+/**
+ * A short label on a dark plate. The floor is busy — pools, telegraphs, a
+ * sigil — and bare text on it is unreadable exactly when it matters most.
+ */
+function drawLabel(
+  ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
+  colour: string, size = 12, alpha = 1,
+) {
+  ctx.font = `700 ${size}px Rajdhani, system-ui, sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const w = ctx.measureText(text).width
+  ctx.globalAlpha = alpha
+  roundedRect(ctx, x - w / 2 - 6, y - size * 0.72, w + 12, size * 1.44, 4)
+  ctx.fillStyle = 'rgba(6, 4, 14, 0.78)'
+  ctx.fill()
+  ctx.fillStyle = `rgba(${colour}, 0.98)`
+  ctx.fillText(text, x, y + 0.5)
+  ctx.globalAlpha = 1
+  ctx.textAlign = 'start'
+  ctx.textBaseline = 'alphabetic'
+}
 
 function ruleColour(inst: Instance): string {
   switch (inst.def.rule.type) {
@@ -107,6 +212,71 @@ function drawGlyph(
   ctx.globalAlpha = 1
 }
 
+/**
+ * The four Helical Toxins orbs above a head, green ones first.
+ *
+ * Deliberately large and plated. Reading somebody else's orbs IS the mechanic —
+ * you are looking for the raider whose green count completes yours to four —
+ * and four small dots lost against a violet telegraph would make that
+ * unplayable rather than hard.
+ *
+ * Nothing here marks out a valid partner, and nothing should. Drawing a line to
+ * the right person would replace the mechanic with a waypoint, which is the one
+ * thing this fight is asking a raider to learn to do for themselves.
+ */
+function drawOrbs(
+  ctx: CanvasRenderingContext2D, x: number, y: number, green: number, big = false,
+) {
+  const r = big ? 4.6 : 3.7
+  const gap = r * 2 + (big ? 3.6 : 2.9)
+  const span = gap * 3
+  roundedRect(ctx, x - span / 2 - r - 3, y - r - 3, span + r * 2 + 6, r * 2 + 6, r + 3)
+  ctx.fillStyle = 'rgba(6, 4, 14, 0.78)'
+  ctx.fill()
+  const n = Math.max(0, Math.min(4, Math.round(green)))
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath()
+    ctx.arc(x - span / 2 + i * gap, y, r, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${i < n ? SIDE_GREEN : SIDE_RED}, 1)`
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+  }
+}
+
+/**
+ * The 99% damage reduction, drawn on the entity that has it.
+ *
+ * A heavy shield and a label, because the honest consequence of the golems
+ * being too close is that everything the raid is doing has stopped counting.
+ * That has to be legible from anywhere in the room and impossible to mistake
+ * for any other ring on screen.
+ */
+function drawShield(
+  ctx: CanvasRenderingContext2D, x: number, y: number, r: number,
+  elapsedMs: number, pulse: number, colour = RED,
+) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.fillStyle = `rgba(${colour}, ${0.10 + 0.06 * pulse})`
+  ctx.fill()
+  ctx.strokeStyle = `rgba(${colour}, ${0.55 + 0.35 * pulse})`
+  ctx.lineWidth = 6
+  ctx.stroke()
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate((elapsedMs / 1400) % (Math.PI * 2))
+  ctx.strokeStyle = 'rgba(255, 246, 244, 0.8)'
+  ctx.lineWidth = 2
+  for (let i = 0; i < 6; i++) {
+    ctx.beginPath()
+    ctx.arc(0, 0, r + 5, (i / 6) * Math.PI * 2, (i / 6) * Math.PI * 2 + 0.55)
+    ctx.stroke()
+  }
+  ctx.restore()
+  ctx.lineWidth = 1
+}
+
 export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, width: number, height: number) {
   ctx.save()
   if (w.shake > 0.01) {
@@ -114,14 +284,26 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   }
 
   ctx.clearRect(-20, -20, width + 40, height + 40)
+  const pulse = 0.5 + 0.5 * Math.sin(w.elapsedMs / 260)
 
   // ── arena floor and edge ──
+  // The floor is whatever shape the boss declares. Six of these rooms are round
+  // and `arenaRadius` says all there is to say; the Sentinels' is an octagon
+  // with an alcove at each end, and that shape is load-bearing — the fight asks
+  // each half of the raid to stand inside its own 40-yard bubble and outside the
+  // other's, which is a question about how much floor there is and where.
+  //
+  // The polygon EXPLAINS the measurement rather than contradicting it. Fitting a
+  // circle to 126,814 PTR position samples reported a corner/axis ratio of 0.89:
+  // players reach measurably less far on the diagonals than on the axes, which
+  // is exactly what an octagon looks like through a circle fit. A true circle
+  // would have come back 1.0.
   const c = { x: cam.cx, y: cam.cy }
-  const R = w.boss.arenaRadius * cam.scale
+  const R = arenaReach(w.boss) * cam.scale
   const grad = ctx.createRadialGradient(c.x, c.y, R * 0.1, c.x, c.y, R)
   grad.addColorStop(0, '#16102a')
   grad.addColorStop(1, '#0a0714')
-  ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, Math.PI * 2)
+  pathArena(ctx, cam, w.boss)
   ctx.fillStyle = grad; ctx.fill()
 
   // The edge is drawn hot because falling off it is the main way to die.
@@ -131,35 +313,172 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   ctx.lineWidth = 1
   ctx.strokeStyle = 'rgba(120, 220, 160, 0.10)'
   for (const r of [0.33, 0.66]) {
-    ctx.beginPath(); ctx.arc(c.x, c.y, R * r, 0, Math.PI * 2); ctx.stroke()
+    // Scaled copies of the floor's own outline, so the guides tell you about the
+    // room you are in rather than about a circle it is not.
+    pathArena(ctx, cam, w.boss, r); ctx.stroke()
+  }
+
+  // ── the 40-yard bubbles ──
+  // A split raid is told two numbers: stay within 40 of your own golem, stay
+  // outside 40 of the other. Both are places, not numbers, and drawing them as
+  // places is the difference between playing the split and estimating it.
+  //
+  // The radius comes from the Mark's own proximityStack, so the ring is the
+  // actual range the debuff applies in and not a decorative circle near it.
+  const apartDef = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
+  const apartMin = apartDef && apartDef.rule.type === 'keepApart' ? apartDef.rule.minYards : undefined
+  let insideOwn = false
+  let insideOther = false
+  if (w.boss.sided) {
+    for (const b of w.bosses) {
+      const side = b.def.side
+      if (!side || !b.alive) continue
+      const aura = w.boss.mechanics.find(m => m.from === b.def.id && m.proximityStack)?.proximityStack
+      const yards = aura?.radius ?? apartMin
+      if (!yards) continue
+      const bp = toPx(cam, b.pos)
+      const rr = yards * cam.scale
+      const col = sideColour(side)
+      const mine = side === w.player.side
+      // Your own bubble is drawn brighter than the one you must stay out of.
+      // Both are thin and unfilled — see the note on the side palette.
+      const wash = ctx.createRadialGradient(bp.x, bp.y, rr * 0.55, bp.x, bp.y, rr)
+      wash.addColorStop(0, `rgba(${col}, 0)`)
+      wash.addColorStop(1, `rgba(${col}, ${mine ? 0.09 : 0.05})`)
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, rr, 0, Math.PI * 2)
+      ctx.fillStyle = wash; ctx.fill()
+      ctx.setLineDash([10, 8])
+      ctx.strokeStyle = `rgba(${col}, ${mine ? 0.5 : 0.28})`
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+      const d = Math.hypot(w.player.pos.x - b.pos.x, w.player.pos.y - b.pos.y)
+      if (d <= yards) { if (mine) insideOwn = true; else insideOther = true }
+      // Named on the boundary itself rather than beside the golem, so the label
+      // belongs to the ring. The golem already carries its own name underneath.
+      drawLabel(ctx, side.toUpperCase(), bp.x, bp.y - rr, col, 11, mine ? 0.85 : 0.5)
+    }
+  }
+
+  // ── holes in the floor ──
+  // A `lethalGround` fixture kills on contact and never expires. It shares a
+  // screen with a dozen red circles a player is expected to walk out of, and if
+  // it looked like them it would be read as damage to heal through — which is
+  // the exact lesson its tactic file says the trainer got wrong before. So it is
+  // drawn as a hole: a void with a churn in it and a kill-line at the lip.
+  for (const inst of w.instances) {
+    if (inst.def.rule.type !== 'lethalGround' || !inst.def.shape) continue
+    const p = toPx(cam, inst.pos)
+    const rr = (inst.def.shape.kind === 'circle' ? inst.def.shape.radius : 8) * cam.scale
+    const hole = ctx.createRadialGradient(p.x, p.y, rr * 0.05, p.x, p.y, rr)
+    hole.addColorStop(0, 'rgba(0, 0, 0, 0.98)')
+    hole.addColorStop(0.65, 'rgba(7, 3, 14, 0.94)')
+    hole.addColorStop(1, 'rgba(26, 8, 30, 0.72)')
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2)
+    ctx.fillStyle = hole; ctx.fill()
+
+    // Three arms spiralling inward. Movement is what says "this goes down"
+    // rather than "this is painted on the floor".
+    ctx.save()
+    ctx.translate(p.x, p.y)
+    ctx.rotate((w.elapsedMs / 900) % (Math.PI * 2))
+    ctx.strokeStyle = `rgba(${RED}, 0.32)`
+    ctx.lineWidth = 2
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath()
+      for (let t = 0; t <= 1.001; t += 0.08) {
+        const a = (i / 3) * Math.PI * 2 + t * 2.4
+        const rad = rr * (0.94 - 0.82 * t)
+        const x = Math.cos(a) * rad, y = Math.sin(a) * rad
+        if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+      }
+      ctx.stroke()
+    }
+    ctx.restore()
+
+    // The kill line. Thin, bright and solid: there is no version of this where
+    // being a little bit inside is survivable, so there is no soft edge.
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(255, 216, 212, ${0.72 + 0.22 * pulse})`
+    ctx.lineWidth = 2; ctx.stroke()
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr + 3.5, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${RED}, 0.92)`
+    ctx.lineWidth = 3; ctx.stroke()
+    ctx.lineWidth = 1
   }
 
   // ── lingering hazards (resolved, still dangerous) ──
   // Drawn hot. These were at 16% alpha and effectively invisible, which made
   // "the debuff drops a pool" a rule you could only learn by dying to it. A
   // pool you cannot see is not a mechanic, it is a trap.
-  const pulse = 0.5 + 0.5 * Math.sin(w.elapsedMs / 260)
   for (const inst of w.instances) {
-    if (!inst.resolved || !inst.def.lingerMs || !inst.def.shape) continue
-    // Fade over the last second of its life so you can see it expiring.
-    const left = inst.def.lingerMs + inst.timer
-    const dying = Math.max(0.25, Math.min(1, left / 1200))
+    if (!inst.resolved || !inst.def.shape) continue
+    if (inst.def.rule.type === 'lethalGround') continue   // drawn above as a hole
+    const permanent = !!inst.def.permanent
+    if (!inst.def.lingerMs && !permanent) continue
+    // Fade over the last second of its life so you can see it expiring — unless
+    // it is permanent, in which case it must not fade at all. Blood Venom and
+    // Essence Rend puddles are the floor for the rest of the pull, and a pool
+    // that dimmed would quietly promise the floor was coming back.
+    const left = (inst.def.lingerMs ?? 0) + inst.timer
+    const dying = permanent ? 1 : Math.max(0.25, Math.min(1, left / 1200))
     pathShape(ctx, cam, inst)
-    ctx.fillStyle = `rgba(${RED}, ${0.30 * dying})`
+    ctx.fillStyle = `rgba(${RED}, ${(permanent ? 0.24 : 0.30) * dying})`
     ctx.fill()
-    ctx.strokeStyle = `rgba(${RED}, ${(0.7 + 0.3 * pulse) * dying})`
+    ctx.strokeStyle = `rgba(${RED}, ${permanent ? 0.85 : (0.7 + 0.3 * pulse) * dying})`
     ctx.lineWidth = 2.5
     ctx.stroke()
     ctx.lineWidth = 1
     // A second, inset ring so a pool is unmistakably a pool and not a telegraph.
+    // Solid on a permanent one and dashed on a timed one: a dashed ring reads as
+    // a countdown, and this one has no clock to count.
     ctx.save()
-    ctx.globalAlpha = 0.4 * dying
-    ctx.setLineDash([5, 5])
+    ctx.globalAlpha = permanent ? 0.55 : 0.4 * dying
+    if (!permanent) ctx.setLineDash([5, 5])
     ctx.strokeStyle = `rgba(${RED}, 0.9)`
-    pathShape(ctx, cam, inst)
+    pathShape(ctx, cam, inst, permanent ? 0.88 : 1)
     ctx.stroke()
     ctx.restore()
     ctx.setLineDash([])
+  }
+
+  // ── corpses ──
+  // They persist, so they are drawn as bodies rather than as effects: bone, not
+  // a colour from the verb palette, because a corpse is neither a target nor
+  // ground to avoid. The ring says it still needs burning — leave one lying
+  // there when the intermission ends and it stands back up and resumes walking.
+  for (const corpse of w.corpses) {
+    const p = toPx(cam, corpse.pos)
+    if (corpse.burned) {
+      // Incineration: a quarter-second flare, then nothing. The corpse is gone
+      // and the floor is clean, which is the whole reward for burning it.
+      const since = w.elapsedMs - corpse.burnedAtMs
+      if (since > 520 || since < 0) continue
+      const f = 1 - since / 520
+      ctx.beginPath(); ctx.arc(p.x, p.y, 5 + 22 * (1 - f), 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(255, 176, 96, ${0.85 * f})`
+      ctx.lineWidth = 1 + 4 * f; ctx.stroke()
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2 + 5 * f, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255, 234, 196, ${0.9 * f})`; ctx.fill()
+      ctx.lineWidth = 1
+      continue
+    }
+    // A slumped body: two overlapping discs, deliberately not a hexagon, so it
+    // never reads as a live add you are supposed to be shooting.
+    ctx.beginPath()
+    ctx.arc(p.x - 3, p.y + 1, 4.5, 0, Math.PI * 2)
+    ctx.arc(p.x + 3.5, p.y - 1, 3, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${BONE}, 0.55)`; ctx.fill()
+    ctx.strokeStyle = `rgba(${BONE}, 0.9)`; ctx.lineWidth = 1.5; ctx.stroke()
+    ctx.save()
+    ctx.setLineDash([4, 4])
+    ctx.lineDashOffset = -(w.elapsedMs / 55) % 8
+    ctx.beginPath(); ctx.arc(p.x, p.y, 11, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${BONE}, ${0.35 + 0.3 * pulse})`
+    ctx.lineWidth = 1.5; ctx.stroke()
+    ctx.restore()
+    ctx.lineWidth = 1
   }
 
   // ── pickups ──
@@ -187,6 +506,7 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   for (const inst of w.instances) {
     if (inst.resolved || !inst.def.shape) continue
     if (inst.def.rule.type === 'collect') continue   // drawn above as pickups
+    if (inst.def.rule.type === 'lethalGround') continue // drawn above as a hole
     const col = ruleColour(inst)
     const t = progress(inst)
     pathShape(ctx, cam, inst)
@@ -236,6 +556,8 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // you see rather than a number that changed.
   for (const inst of w.instances) {
     if (!inst.resolved || !inst.def.shape) continue
+    // A hole in the floor did not "land"; it was always there.
+    if (inst.def.rule.type === 'lethalGround') continue
     const since = -inst.timer
     if (since > 260) continue
     const f = 1 - since / 260
@@ -254,6 +576,23 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // Faded in only while there is group work — see allyMove(). A soak with
   // bodies converging on it reads as a group mechanic; the same soak with
   // nineteen idle glyphs permanently on screen reads as clutter.
+  //
+  // On a split fight each raider also carries a halo in their group's colour,
+  // drawn under the glyph so role stays the thing you read first. Without it the
+  // split is an instruction the player was given once and can never check —
+  // nineteen identical glyphs, half of them somewhere they must not be.
+  if (w.boss.sided) {
+    for (const a of w.allies) {
+      if (!a.alive || a.presence < 0.03 || !a.side) continue
+      const p = toPx(cam, a.pos)
+      const col = sideColour(a.side)
+      ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(${col}, ${0.18 * a.presence})`
+      ctx.fill()
+      ctx.strokeStyle = `rgba(${col}, ${0.6 * a.presence})`
+      ctx.lineWidth = 1.5; ctx.stroke(); ctx.lineWidth = 1
+    }
+  }
   for (const role of ['dps', 'healer', 'tank'] as Role[]) {
     ctx.fillStyle = ROLE_COLOUR[role]
     for (const a of w.allies) {
@@ -275,25 +614,51 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   ctx.stroke()
   ctx.lineWidth = 1
 
-  // ── the link between two golems held too close ──
-  // Drawn before the bosses so the bar reads as ground between them. A number
-  // ticking somewhere would not communicate "your damage is doing nothing".
-  if (w.bossesLinked && w.bosses.length > 1) {
-    const held = w.bosses.filter(b => b.targetId >= 0)
-    if (held.length > 1) {
-      const a = toPx(cam, held[0].pos)
-      const b = toPx(cam, held[1].pos)
+  // ── the separation ──
+  // On the Sentinels this IS the fight, so it is drawn continuously rather than
+  // only once it has gone wrong: a live line between the closest pair with the
+  // yardage on it, safe-coloured while they are apart and hot the moment they
+  // are not. Knowing you are at 43 and closing is what lets a tank fix it; being
+  // told at 39 that you have already failed is not the same lesson.
+  //
+  // Drawn before the entities so the line reads as ground between them.
+  if (apartDef && apartMin !== undefined && w.bosses.length > 1) {
+    // The closest pair of live, targetable entities — the same pair the sim
+    // measures, so the number on screen is the number being scored.
+    const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
+    let one: BossUnit | null = null
+    let two: BossUnit | null = null
+    let closest = Infinity
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const d = Math.hypot(live[i].pos.x - live[j].pos.x, live[i].pos.y - live[j].pos.y)
+        if (d < closest) { closest = d; one = live[i]; two = live[j] }
+      }
+    }
+    if (one && two) {
+      const a = toPx(cam, one.pos)
+      const b = toPx(cam, two.pos)
+      const bad = closest < apartMin
+      const col = bad ? RED : GREEN
       ctx.save()
       ctx.setLineDash([9, 6])
-      ctx.lineWidth = 4
-      ctx.strokeStyle = `rgba(${RED}, ${0.55 + 0.35 * pulse})`
+      ctx.lineWidth = bad ? 4 : 2
+      ctx.strokeStyle = `rgba(${col}, ${bad ? 0.55 + 0.35 * pulse : 0.42})`
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke()
       ctx.restore()
-      ctx.font = '700 13px Rajdhani, system-ui, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillStyle = `rgba(${RED}, 0.95)`
-      ctx.fillText('99% DAMAGE REDUCTION', (a.x + b.x) / 2, (a.y + b.y) / 2 - 10)
-      ctx.textAlign = 'start'
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      drawLabel(ctx, `${Math.round(closest)} YD  ·  HOLD ${apartMin}+`, mx, my, col, 12, bad ? 1 : 0.8)
+      // And when it is broken, say what it costs. A player must be able to see
+      // instantly that the pull they are in is being wasted.
+      if (w.bossesLinked) {
+        drawLabel(ctx, '99% DAMAGE REDUCTION', mx, my - 20, RED, 13)
+        for (const unit of live) {
+          const up = toPx(cam, unit.pos)
+          drawShield(ctx, up.x, up.y, 30, w.elapsedMs, pulse)
+          drawLabel(ctx, '99% DR', up.x, up.y - 42, RED, 11)
+        }
+      }
     }
   }
 
@@ -309,10 +674,22 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // your tank holds — stays readable at a glance.
     const isPrimary = b === w.bosses[0]
     const size = isPrimary ? 34 : 27
+    // On a split fight the golem wears its group's colour. "Which one is mine"
+    // has to be answerable from across the room, and both sigils are the same
+    // violet — it is the same golem model twice.
+    const glow = b.def.side ? sideColour(b.def.side) : VIOLET
+    // A stage that reduces damage on every entity — the Stasis intermission — is
+    // scripted, not a mistake, so it wears the same shield in violet rather than
+    // being accused in red. What the two states share is that your damage has
+    // stopped counting, and a player who cannot see that spends the window
+    // shooting something that will not move.
+    if (b.alive && w.entityReduction > 0 && !w.bossesLinked) {
+      drawShield(ctx, bp.x, bp.y, size * 0.95, w.elapsedMs, pulse, VIOLET)
+    }
     ctx.beginPath(); ctx.arc(bp.x, bp.y, size * 0.65, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(124, 77, 255, 0.18)'
+    ctx.fillStyle = `rgba(${glow}, 0.18)`
     ctx.fill()
-    ctx.shadowBlur = 18; ctx.shadowColor = `rgba(${VIOLET}, 0.8)`
+    ctx.shadowBlur = 18; ctx.shadowColor = `rgba(${glow}, 0.8)`
     if (sig && meta) {
       // The boss is its sigil — a serpent, a golem, a tornado — rather than an
       // anonymous circle, so each fight reads as its own encounter.
@@ -322,7 +699,13 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       ctx.save()
       ctx.translate(bp.x - size / 2, bp.y - size / 2)
       ctx.scale(k, k)
-      ctx.fillStyle = !b.alive ? '#4a4458' : isPrimary ? '#b79bff' : '#9a86e0'
+      // Same sigil twice on the Sentinels — it is the same golem model — so a
+      // sided entity is filled in its own colour rather than in the house violet.
+      ctx.fillStyle = !b.alive
+        ? '#4a4458'
+        : b.def.side
+          ? (b.def.side === 'red' ? '#ff9fae' : '#c2f294')
+          : isPrimary ? '#b79bff' : '#9a86e0'
       ctx.fill(sig)
       ctx.restore()
     } else {
@@ -452,6 +835,14 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // Same glyph as the allies so you read as one of the raid, but lime and
   // haloed so you never lose yourself in a crowd of twenty.
   const pp = toPx(cam, w.player.pos)
+  // Your own group, ringed OUTSIDE the lime halo so lime stays the one thing on
+  // the field that means "you". A side colour drawn over it would buy the split
+  // at the cost of the thing the halo is there for.
+  if (w.boss.sided && w.player.side) {
+    ctx.beginPath(); ctx.arc(pp.x, pp.y, 17, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${sideColour(w.player.side)}, 0.75)`
+    ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1
+  }
   ctx.beginPath()
   ctx.arc(pp.x, pp.y, w.player.aloft > 0 ? 15 : 13, 0, Math.PI * 2)
   ctx.fillStyle = 'rgba(182, 255, 92, 0.16)'
@@ -471,6 +862,26 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.strokeStyle = `rgba(${VIOLET}, 0.95)`; ctx.lineWidth = 2; ctx.stroke()
     ctx.lineWidth = 1
   }
+
+  // Standing in range of both golems. This is the split raid's characteristic
+  // mistake — both Marks stack, forever, and the healers pay for it for the rest
+  // of the pull — and it is invisible from inside it, because being in range of
+  // a golem looks exactly like being in range of the right golem.
+  if (insideOwn && insideOther) {
+    drawLabel(ctx, 'BOTH MARKS', pp.x, pp.y + 30, RED, 12, 0.7 + 0.3 * pulse)
+  }
+
+  // ── Helical Toxins orbs ──
+  // Last, over everything, because during the intermission this is the only
+  // thing on screen worth looking at: you are hunting the raider whose green
+  // count completes yours to four, and a partner obscured by a pool is a partner
+  // you cannot find. Colliding with the wrong one kills you outright.
+  for (const a of w.allies) {
+    if (!a.alive || !a.marked || a.presence < 0.03) continue
+    const p = toPx(cam, a.pos)
+    drawOrbs(ctx, p.x, p.y - 19, a.green)
+  }
+  if (w.player.marked) drawOrbs(ctx, pp.x, pp.y - 26, w.player.green, true)
 
   ctx.restore()
 }

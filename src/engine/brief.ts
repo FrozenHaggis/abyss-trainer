@@ -75,6 +75,13 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         yours: mine,
       }
 
+    case 'lethalGround':
+      return {
+        verb: 'STAY OFF IT',
+        line: 'This ground kills on contact and it never goes away. Treat it as a hole in the floor rather than damage to survive — do not clip the edge of it, and do not let a knockback put you in it.',
+        yours: mine,
+      }
+
     case 'beInside':
       return {
         verb: 'GET IN',
@@ -126,6 +133,13 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       return role === 'tank'
         ? { verb: 'PULL THEM APART', line: `Hold them at least ${def.rule.minYards} yards apart. Let them close and both gain 99% damage reduction — your damage stops mattering.`, yours: mine }
         : notYours('The tanks hold these apart. If they close, your damage does nothing until they are split again.')
+
+    case 'pairUp':
+      return {
+        verb: 'FIND YOUR PARTNER',
+        line: `Your orbs and theirs have to add up to exactly ${def.rule.target} green between you. Run into the player whose count completes yours — the wrong one kills you where you stand, and so does letting it expire.`,
+        yours: mine,
+      }
 
     case 'burnWindow':
       return kit.includes('burst')

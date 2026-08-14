@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Ability, AddDef, BossDef, MechanicDef, Prompt, Role, RunResult } from '../engine/types'
+import type {
+  Ability, AddDef, BossDef, MechanicDef, PhaseDef, Prompt, Role, RunResult, Side,
+} from '../engine/types'
 import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createDrill, createWorld, currentTank, step, upcoming } from '../engine/sim'
 import type { Input, World } from '../engine/sim'
 import { makeCamera, render } from '../engine/render'
@@ -13,6 +15,16 @@ import { initVoice, isTeaching, sayMechanic, sayVerb, setVoiceEnabled, stopVoice
 // fight. HUD state is sampled from the world a few times a second, not per frame.
 
 const KEY_ABILITY: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3 }
+
+/**
+ * How many orbs Helical Toxins puts over a player's head — always four, split
+ * 1+3, 2+2 or 3+1 between green and red. The number a PAIR has to reach is read
+ * off the `pairUp` rule instead, because that is the number the engine scores.
+ */
+const ORB_COUNT = 4
+
+/** A health gap this wide is worth shouting about. */
+const DELTA_WARN = 0.12
 
 interface HudSample {
   health: number
@@ -29,10 +41,41 @@ interface HudSample {
   next: { name: string; inSec: number }[]
   drillReps: number
   drillClean: number
+  /** Every entity's health, in the boss file's own order. */
+  units: { id: string; name: string; side?: Side; hp: number }[]
+  /** Yards between the closest pair of entities. Null when there is only one. */
+  separation: number | null
+  /** The separation the fight demands, from its own `keepApart` rule. */
+  minApart: number
+  /** Permanent proximity stacks the player is carrying, one row per aura. */
+  marks: { id: string; name: string; side?: Side; stacks: number }[]
+  /** Helical Toxins: the player's orbs, and what a partner has to bring. */
+  marked: boolean
+  green: number
+  pairTarget: number
+  /** The stage the fight is in, or null on a boss with no stages. */
+  phase: PhaseDef | null
 }
 
-export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
-  boss: BossDef; role: Role; drillId?: string
+/**
+ * Yards between the closest pair of live entities — the quantity `keepApart` is
+ * judged on, computed the same way the simulation computes it. Null on a
+ * single-entity fight, where the readout has nothing to say.
+ */
+function separationOf(w: World): number | null {
+  const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
+  if (live.length < 2) return null
+  let closest = Infinity
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      closest = Math.min(closest, Math.hypot(live[i].pos.x - live[j].pos.x, live[i].pos.y - live[j].pos.y))
+    }
+  }
+  return closest
+}
+
+export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
+  boss: BossDef; role: Role; side?: Side; drillId?: string
   onEnd: (r: RunResult) => void; onQuit: () => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -41,8 +84,12 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
     health: 1, raid: 1, bossHp: 1, energy: 0, elapsed: 0, cooldowns: {},
     alive: true, stacks: 0, tanking: false, raidAlive: 0,
     prompt: null, next: [], drillReps: 0, drillClean: 0,
+    units: [], separation: null, minApart: 0, marks: [],
+    marked: false, green: 0, pairTarget: ORB_COUNT, phase: null,
   })
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
+  // A phase announcement, held for a few seconds and then dropped.
+  const [banner, setBanner] = useState<PhaseDef | null>(null)
   const [voiceOn, setVoiceOn] = useState(voiceEnabled())
   const [callout, setCallout] = useState<MechanicDef | null>(null)
   // Set when the thing being briefed is an add, so it gets add guidance.
@@ -54,10 +101,20 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
   useEffect(() => {
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
-    const world = drillId ? createDrill(boss, role, drillId) : createWorld(boss, role)
+    const world = drillId ? createDrill(boss, role, drillId) : createWorld(boss, role, side)
     worldRef.current = world
     startMusic()
     initVoice()
+
+    // Read off the boss's own data rather than hard-coded per fight: the
+    // separation the tanks owe, the count a pair of orbs has to reach, and the
+    // proximity auras that stack for the rest of the pull. A boss with none of
+    // these samples empty and renders nothing extra.
+    const apartDef = boss.mechanics.find(m => m.rule.type === 'keepApart')
+    const minApart = apartDef?.rule.type === 'keepApart' ? apartDef.rule.minYards : 0
+    const pairDef = boss.mechanics.find(m => m.rule.type === 'pairUp')
+    const pairTarget = pairDef?.rule.type === 'pairUp' ? pairDef.rule.target : ORB_COUNT
+    const markDefs = boss.mechanics.filter(m => m.proximityStack)
 
     const input: Input = {
       up: false, down: false, left: false, right: false, pressed: [],
@@ -193,6 +250,23 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
           next: upcoming(world, 3),
           drillReps: world.drillReps,
           drillClean: world.drillClean,
+          units: world.bosses.map(b => ({
+            id: b.def.id, name: b.def.name, side: b.def.side, hp: Math.max(0, b.hp),
+          })),
+          separation: separationOf(world),
+          minApart,
+          // Floored, because a mark is a whole stack — a fractional one would
+          // read as a bug rather than as the aura ticking.
+          marks: markDefs.map(m => ({
+            id: m.id, name: m.name, side: m.side, stacks: Math.floor(world.player.marks[m.id] ?? 0),
+          })),
+          marked: world.player.marked,
+          green: world.player.green,
+          pairTarget,
+          // The PhaseDef itself, so its identity is stable while the phase runs
+          // and the banner below fires once per stage rather than ten times a
+          // second.
+          phase: boss.phases?.[world.phaseIndex] ?? null,
         })
       }
       raf = requestAnimationFrame(frame)
@@ -210,13 +284,23 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
       stopMusic()
       stopVoice()
     }
-  }, [boss, role, drillId, onEnd, abilities])
+  }, [boss, role, side, drillId, onEnd, abilities])
 
   useEffect(() => {
     if (!toast) return
     const t = window.setTimeout(() => setToast(null), 2600)
     return () => window.clearTimeout(t)
   }, [toast])
+
+  // A stage change is the one event that rewrites what everything else on this
+  // HUD means, so it gets announced. Keyed on the PhaseDef itself, which the
+  // sampler keeps stable for as long as the stage runs.
+  useEffect(() => {
+    if (!hud.phase) return
+    setBanner(hud.phase)
+    const t = window.setTimeout(() => setBanner(null), 3600)
+    return () => window.clearTimeout(t)
+  }, [hud.phase])
 
   // Esc abandons the pull. Its own effect so changing the handler cannot tear
   // down and restart the simulation.
@@ -244,6 +328,16 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
   }, [callout, resume])
 
   const remaining = Math.max(0, boss.pullLengthSec - hud.elapsed)
+  // The gap between the healthiest entity and the weakest. On the Sentinels the
+  // intermission heals the weaker one up to match, so this is damage you are
+  // about to hand back; on a fight with a synchronised kill it is the bar you
+  // are about to leave behind. Either way it is the number to close.
+  const hps = hud.units.map(u => u.hp)
+  const delta = hps.length > 1 ? Math.max(...hps) - Math.min(...hps) : 0
+  // Two auras at once means you are standing inside both golems' range, which
+  // is the specific mistake this readout exists to catch.
+  const bothMarks = hud.marks.filter(m => m.stacks > 0).length > 1
+  const needGreen = Math.max(0, hud.pairTarget - hud.green)
 
   return (
     <div className="arena">
@@ -273,6 +367,43 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
             <span className="bar-label">Energy</span>
             <div className="bar-track"><div className="bar-fill energy" style={{ width: `${hud.energy}%` }} /></div>
           </div>
+
+          {/* Both entities side by side, with the gap between them. The single
+              aggregate bar above hides the one thing that decides a two-golem
+              pull: which of them you have been feeding damage into. */}
+          {hud.units.length > 1 && (
+            <div className="golems">
+              {hud.units.map(u => (
+                // The one you are parked on is marked, because "stay inside 40
+                // yards of YOUR golem and outside the other's" is meaningless
+                // if the two bars read as interchangeable.
+                <div
+                  key={u.id}
+                  className={`golem${u.side ? ` side-${u.side}` : ''}${u.side && u.side === side ? ' yours' : ''}`}
+                >
+                  <span className="golem-name">{u.name}</span>
+                  <div className="bar-track">
+                    <div className="bar-fill golem" style={{ width: `${u.hp * 100}%` }} />
+                  </div>
+                  <span className="golem-num">{Math.round(u.hp * 100)}%</span>
+                </div>
+              ))}
+              <span className={`golem-delta${delta >= DELTA_WARN ? ' hot' : ''}`}>
+                Δ {Math.round(delta * 100)}%
+              </span>
+            </div>
+          )}
+
+          {/* Live separation. The tanks own this number and nobody could see it
+              before — a pair sliding into their own damage reduction looked
+              exactly like a pull where the damage had stopped working. */}
+          {hud.separation !== null && hud.minApart > 0 && (
+            <div className={`separation${hud.separation < hud.minApart ? ' hot' : ''}`}>
+              <span className="sep-lab">Apart</span>
+              <span className="sep-num">{Math.round(hud.separation)}<em>yd</em></span>
+              <span className="sep-need">hold {hud.minApart}+</span>
+            </div>
+          )}
         </div>
         {role === 'tank' && (
           <div className={`tankwatch${hud.tanking ? ' mine' : ''}`}>
@@ -312,6 +443,32 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
 
       {toast && (
         <div className="fail-toast" key={toast.id}>{toast.text}</div>
+      )}
+
+      {banner && (
+        <div className="phase-banner" key={banner.id} role="status">
+          <span className="phase-name">{banner.name}</span>
+          <span className="phase-line">{banner.banner}</span>
+        </div>
+      )}
+
+      {/* Your four orbs, during Stasis. Deliberately the largest thing on the
+          HUD: colliding with the wrong partner is instantly fatal, so a raider
+          must be able to read their own count without looking for it. */}
+      {hud.marked && (
+        <div className="orbs" role="status">
+          <div className="orb-row">
+            {Array.from({ length: ORB_COUNT }, (_, i) => (
+              <span key={i} className={`orb ${i < hud.green ? 'green' : 'red'}`} />
+            ))}
+          </div>
+          <div className="orb-need">
+            {needGreen > 0
+              ? <>Partner needs <strong>{needGreen} green</strong></>
+              : <>Partner needs <strong>no green</strong></>}
+          </div>
+          <div className="orb-warn">The wrong partner kills you</div>
+        </div>
       )}
 
       <div className="next-up">
@@ -378,6 +535,25 @@ export default function Arena({ boss, role, drillId, onEnd, onQuit }: {
             <span className="bar-num">{hud.raidAlive} up</span>
           </div>
         </div>
+
+        {/* Both Marks, always both, even at zero. They never fall off, so the
+            only thing you can do about them is not collect the second one —
+            and you cannot decide that without seeing the pair. */}
+        {hud.marks.length > 0 && (
+          <div className="marks">
+            {hud.marks.map(m => (
+              <div
+                key={m.id}
+                className={`mark${m.side ? ` side-${m.side}` : ''}${m.stacks > 0 ? ' on' : ''}`}
+              >
+                <span className="mark-num">{m.stacks}</span>
+                <span className="mark-name">{m.name}</span>
+              </div>
+            ))}
+            {bothMarks && <span className="mark-both">In range of both — pick a golem</span>}
+          </div>
+        )}
+
         <div className="abilities">
           {abilities.map((ab, i) => {
             const cd = hud.cooldowns[ab]

@@ -459,3 +459,149 @@ body {
   .brief-name { font-size: 20px; }
 }
 @media (prefers-reduced-motion: reduce) { .brief { animation: none; } }
+
+/* ── the split raid ─────────────────────────────────────────────────────────
+   Everything in this section only draws when the boss file declares the data
+   behind it — two entities, a keepApart rule, a proximity aura, a pairUp rule,
+   stages. The other six bosses render exactly what they rendered before.
+
+   Colour carries meaning here and nowhere else in the arena: green is Breath,
+   red is Blood. That collides with the telegraph contract at the top of this
+   file (red get out, green get in), so these readouts are kept off the floor
+   and in the HUD, where a colour means a side rather than an instruction. */
+
+.golems { display: flex; align-items: center; gap: 10px; margin-top: 1px; }
+.golem { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.golem-name {
+  font-family: var(--font-display); font-size: 11px; letter-spacing: .04em;
+  color: var(--muted); max-width: 116px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.golem .bar-track { height: 7px; min-width: 56px; }
+.golem-num {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text);
+  min-width: 32px; text-align: right;
+}
+.bar-fill.golem { background: linear-gradient(90deg, #8b1f2b, var(--danger) 60%, #ff9d3c); }
+.golem.side-green .bar-fill.golem { background: linear-gradient(90deg, #1f6b45, var(--venom)); }
+.golem.side-green .golem-name { color: #cfe9a8; }
+.golem.side-red .bar-fill.golem { background: linear-gradient(90deg, #6b1f26, var(--danger)); }
+.golem.side-red .golem-name { color: #f0b4b0; }
+/* The golem your half of the raid is parked on. */
+.golem.yours { padding-left: 7px; border-left: 2px solid var(--line); }
+.golem.side-green.yours { border-left-color: var(--venom); }
+.golem.side-red.yours { border-left-color: var(--danger); }
+.golem.yours .golem-name { color: var(--text); }
+
+/* The health gap. The intermission heals the weaker golem up to the healthier
+   one, so a wide delta is progress the raid is about to hand back. */
+.golem-delta {
+  font-family: var(--font-mono); font-size: 12px; color: var(--muted);
+  background: rgba(22, 16, 42, .7); border: 1px solid var(--line);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
+.golem-delta.hot { color: #ffd0cd; border-color: var(--danger); background: rgba(60, 14, 16, .72); }
+
+/* Live separation, in yards. Nothing on screen used to show it, so a pair
+   sliding into their own damage reduction looked identical to a pull where
+   your shots had simply stopped working. */
+.separation { display: flex; align-items: baseline; gap: 8px; }
+.sep-lab {
+  font-family: var(--font-display); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted);
+}
+.sep-num { font-family: var(--font-mono); font-size: 15px; color: var(--accent); }
+.sep-num em { font-style: normal; font-size: 10px; opacity: .6; margin-left: 2px; }
+.sep-need { font-size: 11px; color: var(--muted); }
+.separation.hot .sep-num { color: #ffb3ae; }
+.separation.hot .sep-need { color: #ffd0cd; }
+.separation.hot { animation: sep-pulse .5s ease-in-out infinite alternate; }
+@keyframes sep-pulse { from { opacity: .72; } to { opacity: 1; } }
+
+/* Both Marks, always both. They never fall off, so the only decision left is
+   whether to pick up the second — and that is invisible unless the pair is
+   shown together. */
+.marks { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 360px; }
+.mark {
+  display: flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 8px;
+  background: rgba(22, 16, 42, .8); border: 1px solid var(--line); opacity: .5;
+}
+.mark.on { opacity: 1; }
+.mark-num {
+  font-family: var(--font-mono); font-size: 17px; color: var(--text);
+  min-width: 14px; text-align: right;
+}
+.mark-name {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.mark.side-green.on { border-color: var(--accent-line); }
+.mark.side-green.on .mark-num { color: var(--venom); }
+.mark.side-red.on { border-color: rgba(248, 81, 73, .5); }
+.mark.side-red.on .mark-num { color: #ffb3ae; }
+.mark-both { flex-basis: 100%; font-size: 11px; letter-spacing: .04em; color: #ffd0cd; }
+
+/* Helical Toxins. The largest thing on the HUD on purpose: the wrong partner
+   kills you instantly, so your own count has to be readable at a glance rather
+   than counted. */
+.orbs {
+  position: absolute; left: 50%; top: 84px; transform: translateX(-50%);
+  z-index: 6; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 14px 28px 12px; border-radius: 14px;
+  background: rgba(10, 7, 20, .74);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--violet);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .55);
+}
+.orb-row { display: flex; gap: 12px; }
+.orb { display: block; width: 46px; height: 46px; border-radius: 50%; }
+.orb.green {
+  background: radial-gradient(circle at 34% 30%, #eaffc0, var(--venom) 55%, #2c6b33);
+  box-shadow: 0 0 22px rgba(182, 255, 92, .55);
+}
+.orb.red {
+  background: radial-gradient(circle at 34% 30%, #ffc6c1, var(--danger) 55%, #6b1f26);
+  box-shadow: 0 0 22px rgba(248, 81, 73, .5);
+}
+.orb-need { font-family: var(--font-display); font-size: 20px; letter-spacing: .04em; }
+.orb-need strong { color: var(--venom); }
+.orb-warn {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
+  color: #ffb3ae; opacity: .85;
+}
+
+/* A stage change rewrites what the rest of the HUD means, so it is announced
+   and then gets out of the way. */
+.phase-banner {
+  position: absolute; left: 50%; top: 30%; transform: translateX(-50%);
+  z-index: 7; pointer-events: none; text-align: center; max-width: 70vw;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 30px; border-radius: 12px;
+  background: rgba(10, 7, 20, .8); border: 1px solid var(--violet);
+  box-shadow: 0 0 40px rgba(124, 77, 255, .28);
+  animation: phase-in .3s ease-out;
+}
+.phase-name {
+  font-family: var(--font-display); font-size: 30px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--venom); line-height: 1.1;
+}
+.phase-line { font-size: 13px; color: var(--muted); line-height: 1.5; }
+@keyframes phase-in {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Side picker. Green and red are the fight's own colours, so these two cards
+   wear them instead of the interface accent every other card uses. */
+.side-dot { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 50%; }
+.side-dot.side-green { background: var(--venom); box-shadow: 0 0 10px rgba(182, 255, 92, .6); }
+.side-dot.side-red { background: var(--danger); box-shadow: 0 0 10px rgba(248, 81, 73, .55); }
+.card.side-green:hover { border-color: rgba(182, 255, 92, .45); background: rgba(182, 255, 92, .06); }
+.card.side-green.on { border-color: var(--venom); background: rgba(182, 255, 92, .09); }
+.card.side-red:hover { border-color: rgba(248, 81, 73, .45); background: rgba(248, 81, 73, .06); }
+.card.side-red.on { border-color: var(--danger); background: rgba(248, 81, 73, .10); }
+.card.side-red .card-real { color: #f0b4b0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .separation.hot, .phase-banner { animation: none; }
+}

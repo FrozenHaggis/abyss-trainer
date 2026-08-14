@@ -73,6 +73,25 @@ export type Rule =
    */
   | { type: 'pairUp'; target: number }
   /**
+   * Drain the `count` altars nearest the boss.
+   *
+   * Imbibe, and the whole shape of Vashnik. Because the boss follows its tank,
+   * where the tank stands decides which two fountains fire — which adds spawn
+   * and which two debuffs land on the raid. Draining the same altar on
+   * consecutive casts stacks its Infusion and empowers both, so the tank has to
+   * keep walking the boss to a fresh pair. Standing still is the failure.
+   */
+  | { type: 'drainNearest'; count: number }
+  /**
+   * A debuff that drops a hazard under the carrier every `everyMs` until it
+   * falls off, and falls off sooner if a healer spends a heal on them.
+   *
+   * Stygian Infection. Modelled this way because the trainer abstracts healing
+   * everywhere else: a raider's real job here is to keep walking so the trail
+   * they leave misses everyone, and that lesson survives without an absorb model.
+   */
+  | { type: 'trail'; defId: string; everyMs: number; healShortensMs: number }
+  /**
    * A burn window: the boss takes bonus damage for a fixed stretch.
    *
    * Every fight with one says the same thing about it — Sszorak's Dig In is
@@ -201,6 +220,15 @@ export interface AddDef {
   auraDps?: number
   /** Where it spawns, in yards from the arena centre. */
   spawnRadius?: number
+  /**
+   * Spawns beside this entity instead of on a ring around the room.
+   *
+   * Venom Coagulation is summoned by Breath and is the green group's problem, so
+   * putting it on a generic spawn ring could drop it in the red half — a job
+   * handed to people who must not walk over and do it. It belongs next to the
+   * golem that made it.
+   */
+  spawnAtEntity?: string
   /** `intercept` adds walk to the centre; arriving is the failure. */
   marchSpeed?: number
   /** `kick` adds cast this often, in seconds. */
@@ -230,6 +258,37 @@ export interface AddDef {
   leavesCorpse?: boolean
   /** Energy granted to the boss when this add reaches its goal. */
   leakEnergy?: number
+  /**
+   * Only ever arrives because a stage asked for it — never from the wave timer.
+   *
+   * The Echoes of Jawae are the intermission. They were being dealt out as
+   * ordinary trash in Stages One and Two too, because the wave timer cycles
+   * through every entry in `adds` and had no way to know that one of them was a
+   * set piece. A test checks that a `phaseOnly` add is named by some phase's
+   * `onEnter`, so flagging one cannot quietly stop it spawning at all.
+   */
+  phaseOnly?: boolean
+  /**
+   * On death it becomes this many copies of `splitsInto`, which carry on toward
+   * the goal. Clotting Venom does this, and it is why killing it early and far
+   * from the pool matters more than killing it fast.
+   */
+  splits?: { intoId: string; count: number }
+  /**
+   * On death, drop `defId` at EVERY player's position rather than at the corpse.
+   *
+   * Shrouded Venom does this. It turns one add dying into a whole-raid
+   * relocation, which is a completely different demand from "dodge the puddle
+   * where it fell" and the reason the purple side feels chaotic.
+   */
+  deathSpawnsAtAllPlayers?: string
+  /**
+   * Two of these dying within `withinSec` of each other wipes the raid.
+   *
+   * The Burning Venom pair. "Kill it fast" is the wrong reflex here — the raid
+   * has to hold one deliberately — so the trainer has to punish the reflex.
+   */
+  noSimultaneousDeath?: { withinSec: number }
 }
 
 /**
@@ -326,6 +385,16 @@ export interface MechanicDef {
    * group mechanic personally consequential without scripting it per boss.
    */
   soakers?: number
+  /**
+   * A `line` mechanic that fires from where it spawned back into the entity
+   * that cast it, reaching exactly that far.
+   *
+   * Toxic Droplets are defused by standing on them, and each one soaked shoots
+   * a Living Venom back into Breath. Drawn as an ordinary floor circle it read
+   * as "another puddle"; drawn as a beam between the droplet and the golem it
+   * reads as the thing it is, and the raid can see which lane to leave clear.
+   */
+  aimsAtCaster?: boolean
   /** Hazards that drift, e.g. Sszorak's Tempest vortices. */
   driftSpeed?: number
   /** Pushes the player this many yards away from the shape's origin. */
@@ -445,6 +514,15 @@ export interface PhaseDef {
   endsWhenAddsDead?: string
   /** On entry, spawn this add once, outside the normal wave cadence. */
   onEnter?: { addId: string; count: number }[]
+  /**
+   * No ordinary add waves for the duration.
+   *
+   * A set-piece stage used to be detected by "does it bring its own adds", which
+   * silently failed for an intermission that brings none — Vitriolic Stasis is
+   * the orb game and nothing else, but the wave timer kept delivering Venom
+   * Coagulations into the middle of it. Stating it beats inferring it.
+   */
+  suppressAddWaves?: boolean
   /** Every entity takes this much reduced damage for the duration, 0..1. */
   entitiesReduction?: number
   /** The entities walk toward one another instead of being held at station. */
@@ -461,9 +539,43 @@ export interface PhaseDef {
   resurrectCorpsesAs?: string
 }
 
+/**
+ * A fountain Vashnik drinks from, and everything that drinking brings.
+ *
+ * The three altars are colour-coded — red north, orange south-west, purple
+ * south-east — and the colour is not decoration. It is how the raid calls which
+ * pair is about to fire, so the renderer has to carry it as faithfully as the
+ * mechanics do.
+ *
+ * Imbibe drains the two NEAREST the boss, and the boss follows its tank. That
+ * makes this the only mechanic in the raid where the tank's footwork chooses
+ * what everybody else has to deal with — the tactic file puts it exactly that
+ * way: "his position picks the fountains, so the tank picks the raid's next
+ * mechanics". Draining the same altar twice running stacks its Infusion and
+ * empowers both its add and its debuff, so standing still is the failure.
+ */
+export interface AltarDef {
+  id: string
+  name: string
+  /** Where it stands, in yards from the arena centre. */
+  pos: Vec
+  /** The raid's name for it, and the colour the arena paints it. */
+  colour: string
+  /** Real spell id of the Infusion draining it grants. */
+  infusionSpellId: number
+  /** The add it sends toward the Cavity. */
+  addId: string
+  /** The Adaptive Infection variant it puts on the raid. */
+  debuffId: string
+  /** The unavoidable Expulsion it fires when drained. */
+  expulsionId: string
+}
+
 export interface BossDef {
   key: string
   name: string
+  /** Fountains the boss drinks from. Vashnik is the only fight with them. */
+  altars?: AltarDef[]
   /** Playable radius in yards. Leaving it is a fall — the real killer on Sszorak. */
   arenaRadius: number
   /** A non-circular floor. When absent the room is a circle of `arenaRadius`. */
@@ -549,6 +661,16 @@ export interface Instance {
   carriedByPlayer: boolean
   /** Entity id that cast this, so a boss-anchored shape tracks the right one. */
   fromId: string
+  /**
+   * Overrides a `line` shape's length for this instance only.
+   *
+   * A beam that travels from where it started to a thing that moves cannot have
+   * its length written down in advance. Living Venom is shot back from the
+   * droplet that was soaked into the golem that spat it, so its reach is the
+   * distance between those two at the moment it fires — anything else either
+   * falls short of the boss or shoots straight through and out the far side.
+   */
+  reach?: number
   drift?: Vec
 }
 

@@ -116,7 +116,9 @@ export const sentinels: BossDef = {
   adds: [
     {
       id: 'coagulation_add', name: 'Venom Coagulation', npcId: 260766, spellId: 1284257,
-      job: 'kill', count: 2, hp: 11, fuseSec: 17, auraDps: 0.5, spawnRadius: 26,
+      // Beside Breath, which summoned it, rather than on a ring around the room:
+      // it belongs to the green group and must never appear in the red half.
+      job: 'kill', count: 2, hp: 11, fuseSec: 17, auraDps: 0.5, spawnAtEntity: 'breath',
       good: 'Kill it quickly — Contaminate cannot be interrupted, only outpaced.',
       failText: 'A Venom Coagulation contaminated the raid',
     },
@@ -191,6 +193,10 @@ export const sentinels: BossDef = {
       // the only thing in the room is finding your partner.
       loop: ['helical'],
       loopIntervalSec: 12,
+      // The orb game and nothing else. Toxic Droplets and Venom Coagulation are
+      // phase one's problems; a slime wandering in mid-puzzle is noise during the
+      // one window where reading other people's orbs is the entire job.
+      suppressAddWaves: true,
       entitiesReduction: 0.99,
       entitiesConverge: true,
       // "healing the weaker up to match the healthier — so uneven damage is a
@@ -464,15 +470,20 @@ export const sentinels: BossDef = {
       side: 'green',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,             // "returns to the golem after 4s"
-      // The return path, drawn as a line out of the golem. Boss-origin lines
-      // track the boss's facing until they fire, so where the tank stands
-      // decides which slice of the green side the slime sweeps.
+      // The return path, drawn as a beam from the defused droplet into the golem.
       //
       // Two sources feed this: Breath ejects them on its own, and every droplet
       // somebody soaks launches one back. Both paths are real and both are wired
       // — it appears in the loop AND as the droplets' `spawns`.
       shape: { kind: 'line', length: 46, width: 8 },
-      origin: 'boss',
+      // Fired from the defused droplet back INTO Breath, so the beam is drawn
+      // between two real points and its reach is the gap between them. Length
+      // above is only the fallback for a beam with no caster to aim at.
+      aimsAtCaster: true,
+      // NOT boss-origin: a boss-anchored line re-anchors to the golem every tick,
+      // which would drag the beam off the droplet it is supposed to start at.
+      // The parent droplet passes its own position in.
+      origin: 'random',
       rule: { type: 'avoid' },
       damage: 0.34,
       good: 'Everyone reads the return line and steps out of it.',

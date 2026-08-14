@@ -202,11 +202,15 @@ function mechanicDefs(key) {
   return defs
 }
 
+/** The add objects, in order. Empty on a boss that spawns nothing. */
+function addDefs(key) {
+  const arr = literalAfter(codeOf(key), 'adds')
+  return arr ? objectsIn(arr) : []
+}
+
 /** Add ids, for the phase fields that name an add rather than a mechanic. */
 function addIds(key) {
-  const arr = literalAfter(codeOf(key), 'adds')
-  if (!arr) return []
-  return objectsIn(arr).map(blk => strField(blk, 'id')).filter(Boolean)
+  return addDefs(key).map(blk => strField(blk, 'id')).filter(Boolean)
 }
 
 /** The phase objects, in order. Empty on the fights that have no stages. */
@@ -216,6 +220,16 @@ function phaseDefs(key) {
   const phases = objectsIn(arr)
   assert.ok(phases.length > 0, `${key}: declares phases but none parsed — the phase checks would be vacuous`)
   return phases
+}
+
+/** The altar objects, in order. Empty on the seven fights with no fountains. */
+function altarDefs(key) {
+  const arr = literalAfter(codeOf(key), 'altars')
+  if (!arr) return []
+  const altars = objectsIn(arr)
+  assert.ok(altars.length > 0,
+    `${key}: declares altars but none parsed — every fountain check below would be vacuous`)
+  return altars
 }
 
 test('every boss in the registry has a file', () => {
@@ -343,8 +357,13 @@ for (const [key, dir] of present) {
     for (const a of raw.adds ?? []) {
       for (const s of a.spells ?? []) if (!owner.has(s.spellId)) owner.set(s.spellId, a)
     }
+    // Comment lines are allowed between the identity fields and `job`. The
+    // regex used to demand they be adjacent, so adding a comment to an add
+    // silently emptied this test's input and it passed by parsing nothing —
+    // a test that discourages comments in a codebase built on them, and one
+    // whose failure mode is a false pass.
     const authored = [...block[1].matchAll(
-      /name: '([^']+)', npcId: (\d+), spellId: (\d+),\s*\n\s*job: '([^']+)'/g)]
+      /name: '([^']+)', npcId: (\d+), spellId: (\d+),(?:\s*\/\/[^\n]*)*\s*job: '([^']+)'/g)]
     assert.ok(authored.length > 0, 'adds block parsed no entries')
     for (const [, name, npcId, spellId, job] of authored) {
       const real = owner.get(Number(spellId))
@@ -543,6 +562,145 @@ for (const [key, dir] of present) {
           `${key}: arena walls ${i} and ${j} cross — the floor is not a simple polygon, ` +
           'so it has no inside to stand in')
       }
+    }
+  })
+
+  // ── the fountains ──────────────────────────────────────────────────────────
+  //
+  // An altar is nothing but a bundle of references: the add it sends at the
+  // pool, the infection it hands the raid, the Expulsion it fires, the Infusion
+  // it stacks. Every one of them is a plain string or a bare number, so nothing
+  // but these checks stands between a renamed mechanic and a fountain that
+  // drains into thin air — and the drain is the mechanic the whole fight turns
+  // on, because the boss follows its tank and his footwork picks the pair.
+
+  test(`${key}: every altar points at a real add, debuff and Expulsion`, () => {
+    const altars = altarDefs(key)
+    if (!altars.length) return              // only one fight in the raid has fountains
+    const mechanics = new Set(mechanicDefs(key).map(m => m.id))
+    const adds = new Set(addIds(key))
+    const seen = new Set()
+
+    for (const a of altars) {
+      const id = strField(a, 'id')
+      assert.ok(id, `${key}: an altar has no id — nothing can refer to it`)
+      // Two fountains under one id is the drain quietly reading the wrong one:
+      // the raid is told red is up while orange's add is walking at the pool.
+      assert.ok(!seen.has(id),
+        `${key}: two altars share the id '${id}' — the drain can only ever find the first, ` +
+        'so one fountain fires under the other\'s name')
+      seen.add(id)
+
+      const addId = strField(a, 'addId')
+      assert.ok(addId && adds.has(addId),
+        `${key}: altar '${id}' sends '${addId}', which is not an add on this boss — ` +
+        'draining it would spawn nothing and the raid would never learn what that colour means')
+
+      // The infection and the Expulsion are mechanics: the debuff the drain puts
+      // on two random raiders, and the unavoidable hit it fires on the way past.
+      for (const field of ['debuffId', 'expulsionId']) {
+        const ref = strField(a, field)
+        assert.ok(ref && mechanics.has(ref),
+          `${key}: altar '${id}' names ${field} '${ref}', which is not a mechanic on this boss`)
+      }
+    }
+  })
+
+  // The Infusion is what makes draining the same pair twice running a mistake,
+  // so it is the id a raider is actually being taught to read off the altar. It
+  // has to be the real spell, like every other id in this game.
+  test(`${key}: every altar's Infusion is a real spell`, () => {
+    const altars = altarDefs(key)
+    if (!altars.length) return
+    const byId = new Map(realSpells(dir).map(s => [s.spellId, s]))
+    for (const a of altars) {
+      const id = strField(a, 'id')
+      const spell = /\binfusionSpellId:\s*(\d+)/.exec(a)
+      assert.ok(spell, `${key}: altar '${id}' has no infusionSpellId — stacking it would show nothing`)
+      assert.ok(byId.has(Number(spell[1])),
+        `${key}: altar '${id}' stacks Infusion ${spell[1]}, which is not in ${dir}/abilities.json — invented content`)
+    }
+  })
+
+  // Draining fewer than one fountain is a cast that does nothing. Draining more
+  // than the room holds is the same cast every single time: every altar fires,
+  // every Infusion stacks, and the tank's position — the one thing this fight
+  // asks him to think about — stops choosing anything at all.
+  test(`${key}: a drain takes a number of fountains the room actually has`, () => {
+    const altars = altarDefs(key)
+    for (const m of mechanicDefs(key)) {
+      if (m.rule !== 'drainNearest') continue
+      const count = Number(/\bcount:\s*(\d+)/.exec(m.ruleLiteral)?.[1])
+      assert.ok(Number.isFinite(count), `${key}/${m.id} is a drainNearest with no count`)
+      assert.ok(count >= 1,
+        `${key}/${m.id} drains ${count} fountains — the cast resolves and nothing happens`)
+      // A drain on a boss with no fountains at all is the next test's story to
+      // tell, and it tells it far better than "2 of 0" would.
+      if (!altars.length) continue
+      assert.ok(count <= altars.length,
+        `${key}/${m.id} drains ${count} of ${altars.length} fountains, so it always drains all of them — ` +
+        'the pair stops depending on where the boss is standing, and the fight loses its only tank decision')
+    }
+  })
+
+  // The two halves have to arrive together. Altars with nothing to drain them
+  // are scenery the renderer paints and the fight never uses; a drain with no
+  // altars picks the nearest of nothing and quietly fires no mechanics at all.
+  test(`${key}: altars and the mechanic that drains them arrive together`, () => {
+    const altars = altarDefs(key)
+    const drains = mechanicDefs(key).filter(m => m.rule === 'drainNearest')
+    if (altars.length) {
+      assert.ok(drains.length > 0,
+        `${key} declares ${altars.length} altars but no drainNearest mechanic — ` +
+        'nothing ever drinks from them, so they are scenery')
+    }
+    if (drains.length) {
+      assert.ok(altars.length > 0,
+        `${key}/${drains[0].id} drains the nearest fountains but the boss declares none — ` +
+        'the cast has nothing to pick from and fires nothing')
+    }
+  })
+
+  // What an add leaves behind is the whole reason two of them are dangerous:
+  // the Clotting Venom that becomes two smaller ones still walking, and the
+  // Shrouded Venom that drops a pool at every player at once. Both are id
+  // references, and a dangling one turns the scariest death in the fight into
+  // an add that simply disappears.
+  test(`${key}: what an add leaves behind when it dies is real`, () => {
+    const blocks = addDefs(key)
+    if (!blocks.length) return
+    const adds = new Set(addIds(key))
+    const mechanics = new Set(mechanicDefs(key).map(m => m.id))
+    for (const blk of blocks) {
+      const id = strField(blk, 'id')
+      const splits = literalAfter(blk, 'splits')
+      if (splits) {
+        const into = strField(splits, 'intoId')
+        assert.ok(into && adds.has(into),
+          `${key}: add '${id}' splits into '${into}', which is not an add on this boss — ` +
+          'killing it would end the threat instead of doubling it')
+      }
+      const drops = strField(blk, 'deathSpawnsAtAllPlayers')
+      if (drops) {
+        assert.ok(mechanics.has(drops),
+          `${key}: add '${id}' drops '${drops}' at every player on death, but that is not a ` +
+          'mechanic on this boss — the raid would never be made to relocate')
+      }
+    }
+  })
+
+  // A trail is a debuff that keeps dropping the same hazard under whoever holds
+  // it. Name a hazard that does not exist and the carrier walks a clean floor,
+  // which teaches the exact opposite of the mechanic.
+  test(`${key}: a trail drops a hazard that exists`, () => {
+    const defs = mechanicDefs(key)
+    const mechanics = new Set(defs.map(m => m.id))
+    for (const m of defs) {
+      if (m.rule !== 'trail') continue
+      const defId = strField(m.ruleLiteral, 'defId')
+      assert.ok(defId && mechanics.has(defId),
+        `${key}/${m.id} trails '${defId}', which is not a mechanic on this boss — ` +
+        'the carrier would leave nothing behind them')
     }
   })
 }

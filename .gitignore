@@ -12,3 +12,8 @@ public/music/*.mp3
 .probe/
 .verify/
 .scratch/
+
+# Bundler output written by a mistyped --outfile. "nul" is a reserved device
+# name on Windows, so git cannot even index it and the commit fails outright.
+nul.css
+nul

@@ -129,6 +129,33 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         ? { verb: 'TAUNT', line: 'Watch the stacks. Taunt it off the other tank before their stacks turn lethal, and expect it back.', yours: mine }
         : notYours('A tank swap. Nothing for you here beyond healing the pair through it.')
 
+    case 'drainNearest':
+      // The only mechanic in the raid where a tank's footwork picks what
+      // everybody else has to deal with, so the tank's line names the choice and
+      // everyone else's names the tell. "Not yours" here does not mean "ignore
+      // it" — the pair the boss is standing between IS the raid's next two
+      // debuffs, and reading it early is how the raid gets ahead of them.
+      return role === 'tank'
+        ? {
+            verb: 'WALK HIM ROUND',
+            line: `He drinks from the ${def.rule.count} altars nearest him, so where you park him picks which adds spawn and which debuffs land. Keep walking him to a fresh pair — draining the same altar twice running stacks its Infusion and empowers both.`,
+            yours: mine,
+          }
+        : notYours('The tank picks the pair by where he stands. Watch which two altars he is nearest — those are the two infections about to go out.')
+
+    case 'trail':
+      return role === 'healer'
+        ? {
+            verb: 'KEEP MOVING',
+            line: 'It drops a pool under whoever is carrying it. Keep walking when it is on you, and put a heal on anyone else who has it — a heal ends it early, which is the only thing that shortens it.',
+            yours: mine,
+          }
+        : {
+            verb: 'KEEP MOVING',
+            line: `It drops a pool under you every ${Math.round(def.rule.everyMs / 1000)} seconds until it falls off. The ground you leave behind is the problem, not the damage — keep walking so the trail lands where nobody needs to stand, and expect a healer to cut it short.`,
+            yours: mine,
+          }
+
     case 'keepApart':
       return role === 'tank'
         ? { verb: 'PULL THEM APART', line: `Hold them at least ${def.rule.minYards} yards apart. Let them close and both gain 99% damage reduction — your damage stops mattering.`, yours: mine }

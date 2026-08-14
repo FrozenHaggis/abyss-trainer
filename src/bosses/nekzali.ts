@@ -83,6 +83,9 @@ export const nekzali: BossDef = {
     },
     {
       id: 'echo', name: 'Echo of Jawae', npcId: 263050, spellId: 1294742,
+      // The intermission, and only the intermission. Without this the wave timer
+      // deals Echoes out as ordinary trash in Stages One and Two as well.
+      phaseOnly: true,
       job: 'kill', count: 2, hp: 30, fuseSec: 70, spawnRadius: 26,
       // No marchSpeed: an Echo holds its ground and is tanked where it stands.
       // They spawn on opposite sides, which is why the raid kills them one at a
@@ -273,7 +276,10 @@ export const nekzali: BossDef = {
       name: 'Essence Rend',
       spellId: 1287434,
       what: "Ensnares several players, drags then flings them, and leaves a 15s Shadow DoT that spawns a Latent Cultist where it ends — an explosion plus a persistent puddle ticking Shadow damage and snaring 40%.",
-      roles: ['tank', 'dps', 'healer'],
+      // Never lands on a tank. The tank still sees rent players walking it to the
+      // wall — that is the shape of the mechanic and worth watching — but it is
+      // not a job they will ever be handed.
+      roles: ['dps', 'healer'],
       telegraphMs: 15000,              // "leaves a 15s Shadow DoT"
       shape: { kind: 'circle', radius: 8 },
       origin: 'targeted',
@@ -331,7 +337,10 @@ export const nekzali: BossDef = {
       name: 'Possession Barrage',
       spellId: 1284103,
       what: "Spectral echoes launched at the current tank burst for Shadow damage , hitting harder the less distance they travel. Boss melee applies Hollowing Strikes , a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also call it Sever/Hollowed).",
-      roles: ['tank', 'dps', 'healer'],
+      // The tank's mechanic and nobody else's. A dps or healer cannot influence
+      // where the tank was standing when the echoes launched, so telling them
+      // about it is noise in the one place a trainer must not add noise.
+      roles: ['tank'],
       telegraphMs: 3500,
       // A range band, not a circle to sidestep: "hitting harder the less distance
       // they travel". Being close is the failure and there is no such thing as
@@ -364,7 +373,12 @@ export const nekzali: BossDef = {
       // — the fight's swap driver, and the reason the barrage tank must not be
       // the one sitting at high stacks. The two mechanics share a Good line
       // because they are one decision.
-      rule: { type: 'tankSwap', maxStacks: 5 },
+      // Swap on two, not five. Hollowing Strikes lands about every 26 seconds,
+      // so a five-stack threshold was not reached until roughly two minutes in —
+      // one swap in a whole pull, which reads as two tanks who never trade at
+      // all. At two the co-tank taunts every fifty seconds or so and the
+      // partnership is visible, which is the thing being taught.
+      rule: { type: 'tankSwap', maxStacks: 2 },
       good: 'Tank out of the stack with a defensive up, raid spread wide, tanks swapping on an agreed stack count so the barrage tank is never the one at high stacks.',
       failText: 'Held Hollowing Strikes too long — taunt the swap sooner',
     },

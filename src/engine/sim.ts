@@ -1,5 +1,5 @@
 import type {
-  Ability, AddDef, Ally, BossDef, BossEntityDef, Corpse, FailureRow, Instance, MechanicDef,
+  Ability, AddDef, Ally, AltarDef, BossDef, BossEntityDef, Corpse, FailureRow, Instance, MechanicDef,
   PhaseDef, PlayerState, Prompt, Role, RunResult, Side, Vec,
 } from './types'
 
@@ -135,6 +135,31 @@ export interface BossUnit {
   alive: boolean
 }
 
+/**
+ * A fountain on the field, and the record of who has been drinking from it.
+ *
+ * Vashnik is the only fight in this tier with altars, and everything that makes
+ * it a fight is in this struct. Imbibe drains the two NEAREST the boss, the boss
+ * walks after its tank, and draining the same one twice running stacks its
+ * Infusion — so `infusion` is a written record of where the tank has been
+ * standing, and it is the one number on this fight anybody can do something
+ * about.
+ */
+export interface AltarState {
+  def: AltarDef
+  /**
+   * Empowerment stacks. 1 the first time it is drained, +1 for every consecutive
+   * re-drain, and back to 0 the moment a drink passes it by — walking the boss
+   * to a fresh pair has to be visibly worth something, or the tank's footwork is
+   * just decoration.
+   */
+  infusion: number
+  /** Taken by the PREVIOUS drink. Taking it again is what stacks the Infusion. */
+  drainedLast: boolean
+  /** When it last fired, for the renderer's drain flash. -1 if it never has. */
+  drainedAtMs: number
+}
+
 export interface World {
   boss: BossDef
   player: PlayerState
@@ -265,6 +290,40 @@ export interface World {
    * every delivery landed on empty floor.
    */
   carriers: Record<number, number>
+
+  // ── the fountains ────────────────────────────────────────────────────────
+  /** One per `boss.altars`, in the order the boss file lists them. Empty elsewhere. */
+  altars: AltarState[]
+  /**
+   * The altar ids the most recent Imbibe took, and when.
+   *
+   * Kept on the world rather than worked out again by whoever wants it: the
+   * renderer paints those two fountains draining, the HUD names the pair, and
+   * the debrief reads the same list. Three places re-deriving "nearest two"
+   * against a boss that has since walked away would disagree with each other and
+   * with what actually fired.
+   */
+  lastDrained: string[]
+  lastDrainAtMs: number
+  /**
+   * Mechanic id -> damage multiplier from the Infusion behind it.
+   *
+   * The Infusion empowers an altar's Expulsion and its infection, and those are
+   * ordinary MechanicDefs shared by every world — mutating their `damage` would
+   * leak one pull's mistakes into the next. So the empowerment lives here, on
+   * the run, and defaults to 1 for every mechanic on every other boss.
+   */
+  infusionMult: Record<string, number>
+  /** Instance uid -> ms until a `trail` debuff drops its next hazard. */
+  trailTimers: Record<number, number>
+  /**
+   * Add id -> when one was last killed, for `noSimultaneousDeath`.
+   *
+   * Only deaths, never leaks: the Burning Venom pair wipes the raid when the
+   * two are BURNED DOWN together, and an add that walked into the Cavity has
+   * already been paid for as a leak.
+   */
+  addDeathMs: Record<string, number>
 }
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
@@ -342,6 +401,22 @@ function assignSides(allies: Ally[], playerRole: Role, playerSide: Side) {
 }
 
 /**
+ * Where a synthesised single boss stands at the pull.
+ *
+ * The middle of the room, unless the middle of the room kills. Vashnik's
+ * Malignant Cavity is a lethal fixture at the centre, so the default put him
+ * inside it — and every raider who walked to melee walked into a hole in the
+ * floor until his tank had dragged him clear. A boss does not open standing in
+ * his own fight's furniture.
+ */
+function synthStart(boss: BossDef): Vec {
+  const pit = boss.mechanics.find(m =>
+    m.atCentre && m.rule.type === 'lethalGround' && m.shape?.kind === 'circle')
+  if (!pit || pit.shape?.kind !== 'circle') return { x: 0, y: 0 }
+  return { x: 0, y: pit.shape.radius + 10 }
+}
+
+/**
  * Build the encounter's entities. A fight that declares none gets a single
  * unnamed one at the centre, which is exactly how every boss behaved before
  * multi-boss support existed — so single-boss fights are untouched.
@@ -349,19 +424,36 @@ function assignSides(allies: Ally[], playerRole: Role, playerSide: Side) {
 function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
   const defs: BossEntityDef[] = boss.entities?.length
     ? boss.entities
-    : [{ id: boss.key, name: boss.name, npcId: 0, start: { x: 0, y: 0 } }]
+    : [{ id: boss.key, name: boss.name, npcId: 0, start: synthStart(boss) }]
 
   // Two tanks exist, so at most two entities can be held. The primary opens on
   // the co-tank; a `tankedApart` entity takes the other tank.
-  const tanks = allies.filter(a => a.role === 'tank').map(a => a.id)
-  let nextTank = 0
+  const tanks = allies.filter(a => a.role === 'tank')
+  const taken = new Set<number>()
+  /**
+   * The tank who belongs on this entity.
+   *
+   * Matched by SIDE first, in order only as a fallback. Taking them in order
+   * happened to pair correctly for a green-side player and cross-paired for a
+   * red-side one — the red tank held the green golem and vice versa. Each then
+   * walked to their own group's half of the room, dragging both golems together
+   * and parking the pair at 99% damage reduction for the whole pull. Red side
+   * was unplayable and green worked purely by luck of array order.
+   */
+  const pickTank = (d: BossEntityDef): number => {
+    const bySide = d.side && tanks.find(t => t.side === d.side && !taken.has(t.id))
+    const t = bySide || tanks.find(x => !taken.has(x.id))
+    if (!t) return -1
+    taken.add(t.id)
+    return t.id
+  }
   return defs.map((d, i) => {
     const wants = i === 0 || d.tankedApart
     return {
       def: d,
       pos: { ...d.start },
       angle: -Math.PI / 2,
-      targetId: wants && nextTank < tanks.length ? tanks[nextTank++] : -1,
+      targetId: wants ? pickTank(d) : -1,
       hp: 1,
       alive: true,
     }
@@ -385,8 +477,16 @@ function seatPlayerTank(w: World) {
   if (!ours) return
   const displaced = ours.targetId
   ours.targetId = 0
-  // The ally who was on it takes whatever the player would otherwise have had,
-  // so the other golem is never left untanked and walking free.
+  // Whoever the player just took the golem from picks up the other one.
+  //
+  // The old version looked for an entity already held by the player, which
+  // never exists at this point — so on a green-side tank the displaced ally was
+  // simply left idle and the red golem stayed untanked all pull, walking
+  // wherever it liked. Hand them the first entity that wants a tank and has
+  // none; only fall back to a swap if everything is already held.
+  if (displaced <= 0) return
+  const orphan = w.bosses.find(b => b !== ours && b.targetId === -1 && !b.def.untargetable)
+  if (orphan) { orphan.targetId = displaced; return }
   const other = w.bosses.find(b => b !== ours && b.targetId === 0)
   if (other) other.targetId = displaced
 }
@@ -543,6 +643,16 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     pairMs: 0,
     pairFired: false,
     carriers: {},
+    // Seeded from the boss file, in its own order, so "the red one" means the
+    // same thing to the engine, the renderer and the raid calling the fight.
+    altars: (boss.altars ?? []).map(def => ({
+      def, infusion: 0, drainedLast: false, drainedAtMs: -1,
+    })),
+    lastDrained: [],
+    lastDrainAtMs: -1,
+    infusionMult: {},
+    trailTimers: {},
+    addDeathMs: {},
   }
   // A split fight seats the player on their own side’s entity before the first
   // tick, so their group, their mechanics and their golem are all in one place.
@@ -727,6 +837,53 @@ function sideExclusion(w: World): number {
 }
 
 /**
+ * Push a floor placement into the band that belongs to one group: inside its own
+ * golem's Mark radius, and outside the other golem's entirely.
+ *
+ * Toxic Droplets are the green group's job, so a droplet in the red half is a
+ * job nobody can do, and one in the overlap drags a green sweeper into range of
+ * Blood and double-stacks their Marks for the rest of the pull. Anchoring on a
+ * green raider got most of the way there, but the jitter still crossed the line
+ * often enough to matter — a soft tendency is not a rule.
+ */
+function confineToSide(w: World, side: Side, p: Vec): Vec {
+  const own = w.bosses.find(b => b.def.side === side)
+  const other = w.bosses.find(b => b.def.side && b.def.side !== side)
+  if (!own) return p
+  const R = sideBubble(w)
+  // Margin on both bounds: the golems walk to their tanks, so a placement
+  // sitting exactly on a boundary is outside it a second later.
+  const inner = R - 8
+  const clear = R + 4
+  const okHere = (q: Vec) =>
+    dist(q, own.pos) <= inner && (!other || dist(q, other.pos) >= clear)
+  if (okHere(p) || !other) return clampToArena(w.boss, p, 2)
+
+  // Two nudges cannot solve this. Pushing clear of the far golem and then
+  // pulling back inside our own drags the point straight back towards the far
+  // one whenever the pair are closer than twice the Mark radius — which they
+  // are for most of a pull, because the tanks drift. The second correction
+  // silently undid the first and a droplet landed in the overlap.
+  //
+  // The region that always works is the lobe on the far side of our own golem,
+  // directly away from theirs: distance from them is the separation PLUS the
+  // offset, so it can only get safer. The original placement’s sideways spread
+  // is kept so droplets still scatter rather than stacking on one spot.
+  const ax = own.pos.x - other.pos.x
+  const ay = own.pos.y - other.pos.y
+  const al = Math.hypot(ax, ay) || 1
+  const ux = ax / al, uy = ay / al
+  const px = -uy, py = ux
+  const perp = (p.x - own.pos.x) * px + (p.y - own.pos.y) * py
+  const spread = Math.max(-inner * 0.55, Math.min(inner * 0.55, perp))
+  const out = {
+    x: own.pos.x + ux * inner * 0.5 + px * spread,
+    y: own.pos.y + uy * inner * 0.5 + py * spread,
+  }
+  return clampToArena(w.boss, out, 2)
+}
+
+/**
  * Everything the pull has already cost you, as a damage-taken multiplier.
  *
  * Marks of Acid and Blood stack forever and Ritual Burn never falls off, so a
@@ -771,7 +928,9 @@ export function isInside(inst: Instance, p: Vec): boolean {
       const sa = Math.sin(inst.angle)
       const along = dx * ca + dy * sa
       const across = -dx * sa + dy * ca
-      return along >= 0 && along <= s.length && Math.abs(across) <= s.width / 2
+      // A beam carries its own reach; a fixed frontal uses the shape’s.
+      const len = inst.reach ?? s.length
+      return along >= 0 && along <= len && Math.abs(across) <= s.width / 2
     }
   }
 }
@@ -852,8 +1011,12 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
   // A side-tagged mechanic only ever fires at its own group. Landing a green
   // mechanic on a red player would teach them to answer a call that is not
   // theirs, which is worse than not practising it at all.
-  const group = sideAllies(w, def.side)
-  const mine = onPlayersSide(w, def)
+  // Candidates for anything that picks a raider: the right side, AND a role the
+  // ability actually lands on. Essence Rend never touches a tank, so a tank has
+  // to be able to watch rent players walk it to the wall without ever being
+  // handed it themselves — which they were, because the filter was side-only.
+  const group = sideAllies(w, def.side).filter(a => def.roles.includes(a.role))
+  const mine = def_scored(w, def)
   let pos: Vec
   switch (def.origin) {
     case 'boss': pos = { ...src.pos }; break
@@ -865,8 +1028,12 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       const onPlayer = mine && rnd() < 0.72
       if (onPlayer) pos = { ...w.player.pos }
       else {
-        const a = group[Math.floor(rnd() * Math.max(1, group.length))]
-        pos = a ? { ...a.pos } : { ...w.player.pos }
+        // Fall back to the whole group rather than to the player: if this
+        // ability cannot land on the player's role, putting it on them anyway
+        // is precisely the bug being fixed.
+        const pool = group.length ? group : sideAllies(w, def.side)
+        const a = pool[Math.floor(rnd() * Math.max(1, pool.length))]
+        pos = a ? { ...a.pos } : { ...src.pos }
       }
       break
     }
@@ -894,6 +1061,8 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       pos = { x: anchor.x + Math.cos(a) * r, y: anchor.y + Math.sin(a) * r }
       // Never outside the floor — and on an octagon "outside" is not a radius.
       pos = clampToArena(w.boss, pos, w.boss.arenaRadius * 0.08)
+      // A side's floor mechanic lands on that side's floor. Not a preference.
+      if (def.side) pos = confineToSide(w, def.side, pos)
     }
   }
   // Furniture sits in the middle of the room and stays there: the Soulcoil Well
@@ -931,8 +1100,15 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
     inst.resolved = true
     inst.timer = 0
   }
+  // A trail starts dripping after one interval rather than instantly, so the
+  // carrier gets the beat they need to walk clear of whoever they were stood
+  // next to when it landed.
+  if (def.rule.type === 'trail') w.trailTimers[inst.uid] = def.rule.everyMs
   // A debuff that landed on a raider stays with that raider until it expires.
-  if (def.rule.type === 'carryOut' && !inst.carriedByPlayer) {
+  // Trails ride their carrier for exactly the same reason a carried bomb does:
+  // the pools have to come out from under the body that is walking, not from
+  // the patch of floor where the debuff was applied.
+  if ((def.rule.type === 'carryOut' || def.rule.type === 'trail') && !inst.carriedByPlayer) {
     let best: Ally | null = null
     let bd = Infinity
     for (const a of group) {
@@ -943,7 +1119,16 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
   }
   w.instances.push(inst)
 
-  if (!w.seen.has(def.id)) {
+  // Teach it once, and only if it is yours to do something about.
+  //
+  // `roles` and `side` used to govern blame alone: a mechanic you could not be
+  // scored on still stopped the fight to explain itself. So a dps had the
+  // encounter pause for Hollowing Strikes, and a green-side raider had it pause
+  // for red-side mechanics they were never going to be handed. Visuals stay
+  // unconditional — a tank should watch rent players walk Essence Rend to the
+  // wall, and green should see what red is dealing with — but attention is not
+  // free, and spending it on somebody else's job is worse than saying nothing.
+  if (!w.seen.has(def.id) && def_scored(w, def)) {
     w.seen.add(def.id)
     w.announce = def
   }
@@ -994,7 +1179,13 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
       // Clamped to the floor: a ring drawn as a circle puts its diagonals
       // outside an octagon, and a droplet nobody can stand on is a droplet
       // nobody can sweep.
-      spawn(w, def, clampToArena(w.boss, { x: Math.cos(a) * r, y: Math.sin(a) * r }, 3))
+      let p = clampToArena(w.boss, { x: Math.cos(a) * r, y: Math.sin(a) * r }, 3)
+      // And onto the right half. This ring is drawn around the ARENA CENTRE, so
+      // on a split fight it happily scattered green droplets across the red side
+      // and through the overlap — sending the green sweepers into Blood's Mark
+      // radius to do their job, or handing the job to people who must not cross.
+      if (def.side) p = confineToSide(w, def.side, p)
+      spawn(w, def, p)
     }
     return
   }
@@ -1070,6 +1261,138 @@ function burnCorpses(w: World, at: Vec, radius: number): number {
   return burned
 }
 
+// ── the fountains ────────────────────────────────────────────────────────────
+
+/**
+ * What one Infusion stack is worth.
+ *
+ * Linear and deliberately unsubtle. The lesson is that re-draining a fountain
+ * makes both the venom it sends and the infection it hands out worse; a curve
+ * nobody can read teaches that less well than a number that plainly climbs.
+ */
+const infusionMultiplier = (stacks: number) => 1 + 0.5 * Math.max(0, stacks - 1)
+
+/** How hard an altar-fed mechanic hits this pull. 1 on every other fight. */
+function empowerment(w: World, def: MechanicDef): number {
+  return w.infusionMult[def.id] ?? 1
+}
+
+/** The `count` fountains nearest a point — which is all Imbibe is choosing. */
+function nearestAltars(w: World, count: number, from: Vec = w.bosses[0].pos): AltarState[] {
+  return [...w.altars]
+    .sort((a, b) => dist(a.def.pos, from) - dist(b.def.pos, from))
+    .slice(0, Math.max(1, Math.min(count, w.altars.length)))
+}
+
+/**
+ * Imbibe. The fountains nearest the boss drain, and everything the raid deals
+ * with for the next ninety seconds follows from which ones those were.
+ *
+ * The boss walks after its tank, so this is the only mechanic in the raid where
+ * one player's footwork picks everybody else's job. Each drained altar sends its
+ * venom at the Cavity, fires its unavoidable Expulsion and hands its infection
+ * to somebody — BOTH of them do, every drink, which is why the raid is always
+ * juggling two of the three infection types at once.
+ *
+ * Re-draining the same fountain stacks its Infusion and empowers both halves of
+ * that. It is the fight's own answer to a tank who stands still, and it is the
+ * reason the boss has to be walked.
+ */
+function drainAltars(w: World, def: MechanicDef, count: number) {
+  if (!w.altars.length) return
+  const taken = nearestAltars(w, count)
+  const chosen = new Set(taken)
+
+  // A fountain this drink passed by loses its Infusion. The stacks are not a
+  // running total of the pull — they are a statement about where the boss has
+  // been standing for the last two drinks, and walking him off one has to be
+  // worth something the moment it happens.
+  for (const a of w.altars) {
+    if (chosen.has(a)) continue
+    a.infusion = 0
+    a.drainedLast = false
+    w.infusionMult[a.def.debuffId] = 1
+    w.infusionMult[a.def.expulsionId] = 1
+  }
+
+  // Did the boss not move at all?
+  //
+  // The whole PAIR, never a single fountain. Three fountains and two drinks
+  // means any two consecutive pairs share exactly one altar — there is no
+  // footwork on earth that avoids re-draining something — so scoring "an altar
+  // repeated" would put a failure on the tank every single Imbibe for playing it
+  // perfectly. That is precisely the defect this project keeps having to re-fix,
+  // and here it would have been unavoidable by construction. What a tank can
+  // actually get wrong is standing still, which is both of them repeating.
+  //
+  // The forced single repeat still stacks its own Infusion. Good footwork holds
+  // that at one stack and resets the other fountain to nothing; standing still
+  // climbs both, forever.
+  const stoodStill = taken.every(a => a.drainedLast)
+
+  for (const a of taken) {
+    a.infusion = a.drainedLast ? a.infusion + 1 : 1
+    a.drainedLast = true
+    a.drainedAtMs = w.elapsedMs
+    const mult = infusionMultiplier(a.infusion)
+    w.infusionMult[a.def.debuffId] = mult
+    w.infusionMult[a.def.expulsionId] = mult
+
+    // Its venom, out of the fountain itself rather than off the rim — the raid
+    // has to be able to see which colour it came from and how far it still has
+    // to walk before it reaches the Cavity.
+    const add = w.boss.adds?.find(x => x.id === a.def.addId)
+    if (add) spawnAdds(w, add, add.count, mult, a.def.pos)
+    fire(w, a.def.expulsionId)
+    fire(w, a.def.debuffId)
+  }
+
+  w.lastDrained = taken.map(a => a.def.id)
+  w.lastDrainAtMs = w.elapsedMs
+  if (taken.length) w.shake = Math.min(1, w.shake + 0.4)
+
+  // Only ever answered against the tank who is actually holding him. Nobody else
+  // in the raid has a lever on where the boss stands, so nobody else can be
+  // blamed for it — and a healer being told they drained the wrong fountain
+  // would be the trainer inventing a job for them.
+  if (stoodStill && w.player.role === 'tank' && w.bosses[0].targetId === 0
+      && !def.collective && def.roles.includes('tank')) {
+    recordFailure(w, def)
+  }
+}
+
+/**
+ * Where the boss ought to be standing next: out toward the pair of fountains
+ * carrying the least Infusion.
+ *
+ * Pushed away from the middle on purpose. The Malignant Cavity is a hole in the
+ * floor at the centre of the room and the midpoint of two altars is very nearly
+ * in it, so the honest mark is out along the pair's bearing rather than between
+ * them.
+ */
+function altarStation(w: World): Vec | null {
+  if (w.altars.length < 2) return null
+  let best: Vec | null = null
+  let bestScore = Infinity
+  for (let i = 0; i < w.altars.length; i++) {
+    for (let j = i + 1; j < w.altars.length; j++) {
+      const l = w.altars[i]
+      const r = w.altars[j]
+      // Infusion first, then whether the last drink already took it — a fresh
+      // pair beats a rested one, which is what keeps the boss circling rather
+      // than rocking between the same two marks.
+      const score = l.infusion + r.infusion + (l.drainedLast ? 2 : 0) + (r.drainedLast ? 2 : 0)
+      if (score >= bestScore) continue
+      bestScore = score
+      const mid = { x: (l.def.pos.x + r.def.pos.x) / 2, y: (l.def.pos.y + r.def.pos.y) / 2 }
+      const len = lenOf(mid) || 1
+      const out = Math.max(w.boss.arenaRadius * 0.45, len)
+      best = { x: (mid.x / len) * out, y: (mid.y / len) * out }
+    }
+  }
+  return best ? clampToArena(w.boss, best, w.boss.arenaRadius * 0.12) : null
+}
+
 function resolveInstance(w: World, inst: Instance) {
   const { def } = inst
   inst.resolved = true
@@ -1102,9 +1425,11 @@ function resolveInstance(w: World, inst: Instance) {
       // flip, and it killed all three roles at the 90 second mark in playtests.
       if (inside && !def.popsOnContact) {
         if (scored) recordFailure(w, def)
-        // Deadly means deadly. Everything else is damage you get healed through.
+        // Deadly means deadly. Everything else is damage you get healed through
+        // — scaled by the Infusion behind it, so an Expulsion off a fountain
+        // drained twice running really does hit harder than the first one did.
         if (def.lethal) killPlayer(w, def.name)
-        else hurt(w, def.damage ?? 0.3, def.name)
+        else hurt(w, (def.damage ?? 0.3) * empowerment(w, def), def.name)
       }
       break
 
@@ -1162,15 +1487,29 @@ function resolveInstance(w: World, inst: Instance) {
         // stand and takes a chunk of the group with it — which is why running
         // it out is the mechanic.
         if (def.lethal) {
-          w.raidHealth -= 0.25
+          w.raidHealth -= 0.25 * empowerment(w, def)
           killPlayer(w, def.name)
         } else {
-          w.raidHealth -= 0.1
+          w.raidHealth -= 0.1 * empowerment(w, def)
         }
       }
       delete w.player.carrying[def.id]
       break
     }
+
+    case 'trail': {
+      // It simply ends. Dropping the trail was the mechanic working, not the
+      // player failing it — their job was to keep walking so the pools they left
+      // missed everybody, and the pools already said whether they managed it.
+      // Scoring the carrier here would blame them for having been targeted.
+      delete w.player.carrying[def.id]
+      delete w.trailTimers[inst.uid]
+      break
+    }
+
+    case 'drainNearest':
+      drainAltars(w, def, def.rule.count)
+      break
 
     case 'survive':
       if (inside && def.knockbackYards) {
@@ -1234,8 +1573,9 @@ function resolveInstance(w: World, inst: Instance) {
       // Ambient attrition is ticked in step() and never arrives here. One fired
       // as a CAST does: a channelled Rite has to land as a discrete lump or the
       // healer cannot see what they are covering. Unavoidable either way, and it
-      // can never name anybody.
-      w.raidHealth -= def.rule.dps / 100
+      // can never name anybody — an empowered Expulsion is a bigger number for
+      // the healer to cover, never a bigger stick to beat them with.
+      w.raidHealth -= (def.rule.dps / 100) * empowerment(w, def)
       break
 
     case 'keepApart':
@@ -1272,7 +1612,20 @@ function resolveInstance(w: World, inst: Instance) {
       // it expires — that is the point of running it out.
       const carried = def.rule.type === 'carryOut' && inst.carriedByPlayer
       const at = carried ? { ...w.player.pos } : inst.pos
-      spawn(w, child, at, inst.angle)
+      // A beam fires from where it spawned back into whatever cast the parent,
+      // and reaches exactly that far — not the parent's own facing, which for a
+      // floor circle is a random number.
+      let ang = inst.angle
+      if (child.aimsAtCaster) {
+        const tgt = bossUnitFor(w, child.from ?? def.from)
+        ang = Math.atan2(tgt.pos.y - at.y, tgt.pos.x - at.x)
+      }
+      spawn(w, child, at, ang)
+      if (child.aimsAtCaster) {
+        const beam = w.instances[w.instances.length - 1]
+        const tgt = bossUnitFor(w, child.from ?? def.from)
+        if (beam) beam.reach = dist(at, tgt.pos)
+      }
       if (carried) {
         // Give the carrier a beat to walk clear. Without it the pool lands on
         // top of you and resolves in the same frame, which is not a mechanic —
@@ -1329,6 +1682,12 @@ function resolveInstance(w: World, inst: Instance) {
   if (def.driftSpeed && !def.shape) {
     for (const other of w.instances) {
       if (other === inst || !other.def.permanent || other.drift) continue
+      // Furniture does not walk. The Soulcoil Well is `permanent` because it
+      // never expires, not because it is a puddle somebody dropped — and it was
+      // being swept up by this and sent wandering around the room in Stage Two.
+      // A fixed hazard the whole fight is built around has to stay where the
+      // fight put it, or every route the raid learned in Stage One is a lie.
+      if (other.def.fixture || other.def.atCentre) continue
       const a = rnd() * Math.PI * 2
       other.drift = { x: Math.cos(a) * def.driftSpeed, y: Math.sin(a) * def.driftSpeed }
     }
@@ -1532,6 +1891,17 @@ function allyThink(w: World) {
     } else if (held) {
       a.want.x = held.pos.x + Math.cos(held.angle) * 5
       a.want.y = held.pos.y + Math.sin(held.angle) * 5
+      // On a fight with fountains, standing in front of the boss is not enough.
+      // The two nearest him are the two that drain, and a tank who holds station
+      // feeds the same pair every drink and stacks its Infusion forever — the
+      // one thing this fight asks a tank never to do. So the AI tank walks him
+      // to the freshest pair, which is exactly the footwork a player tank has to
+      // copy, performed where they can watch it.
+      const mark = altarStation(w)
+      if (mark) {
+        a.want.x = mark.x
+        a.want.y = mark.y
+      }
     } else if (a.role === 'tank') {
       const p = w.bosses[0]
       a.want.x = p.pos.x - Math.cos(p.angle) * 7
@@ -1598,6 +1968,17 @@ function allyThink(w: World) {
             a.want.x = (a.pos.x / r) * out
             a.want.y = (a.pos.y / r) * out
           }
+        }
+      } else if (rt === 'trail') {
+        // The carrier keeps walking, so the trail they leave behind falls on
+        // empty floor. A raider who stood still with one would bury the raid in
+        // pools — that is the mechanic played backwards, and it is the single
+        // thing worth demonstrating about it.
+        if (w.carriers[inst.uid] === a.id) {
+          const r = Math.hypot(a.pos.x, a.pos.y) || 1
+          const out = Math.min(arena * 0.8, r + 14)
+          a.want.x = (a.pos.x / r) * out + Math.cos(w.elapsedMs / 700 + a.id) * 6
+          a.want.y = (a.pos.y / r) * out + Math.sin(w.elapsedMs / 700 + a.id) * 6
         }
       } else if (rt === 'survive') {
         // A knockback is coming: spread out and stand where the push carries
@@ -1758,7 +2139,15 @@ function allyThink(w: World) {
     //     after its tank, so two tanks fleeing the same telegraph dragged their
     //     bosses together and linked them. That reads as the raid failing a
     //     mechanic the AI is simply not careful enough to play.
+    //
+    //     The fountains are the same problem wearing a different hat. Where the
+    //     boss stands picks which two drain, so a tank talked a few yards off
+    //     their mark by every telegraph on the floor re-drains the pair they
+    //     were walking away from — and the Infusion the raid then eats is the
+    //     AI's dithering rather than anything a player did. Sidestep, yes;
+    //     wander, no.
     const station = w.bosses.find(b => b.targetId === a.id && b.def.tankedApart)?.def.start
+      ?? (w.bosses[0].targetId === a.id ? altarStation(w) : null)
     if (station) {
       const sdx = a.want.x - station.x
       const sdy = a.want.y - station.y
@@ -1827,14 +2216,23 @@ function allyMove(w: World, dt: number) {
     i.def.rule.type === 'beInside' ||
     i.def.rule.type === 'carryOut' ||
     i.def.rule.type === 'pairUp' ||
+    // A trail is one raider's job, but it is a job about everybody else: the
+    // point of walking it is that the pools miss the raid, and with an empty
+    // floor there is nothing for them to miss.
+    i.def.rule.type === 'trail' ||
     (i.def.rule.type === 'press' && i.def.rule.ability === 'dispel')))
   // Corpse duty is group work too — a pile of bodies to burn between nineteen
   // people is the most collective thing in the raid.
   const corpseWork = !!activePhase(w)?.resurrectCorpsesAs && w.corpses.some(c => !c.burned)
+  // An add that drops a pool at every body when it dies turns its death into a
+  // whole-raid relocation. That only reads as one if the bodies are on the floor
+  // when it happens.
+  const relocateWork = w.adds.some(a => a.alive && a.def.deathSpawnsAtAllPlayers)
 
   for (const a of w.allies) {
     if (!a.alive) { a.presence = Math.max(0, a.presence - dt * 3); continue }
-    const wanted = a.role === 'tank' || groupWork || corpseWork || a.debuff || a.marked ? 1 : 0
+    const wanted = a.role === 'tank' || groupWork || corpseWork || relocateWork
+      || a.debuff || a.marked ? 1 : 0
     // Walk on briskly, drift off gently — a raid that blinks out mid-mechanic
     // reads as a bug.
     a.presence += Math.max(-dt * 1.1, Math.min(dt * 3.4, wanted - a.presence))
@@ -1903,10 +2301,41 @@ function computePrompt(w: World): Prompt | null {
     if (d) consider({ verb: 'PULL THEM APART', mechanic: d.name, urgency: 1 }, 0)
   }
 
+  // Where the boss is standing, on a fight with fountains.
+  //
+  // Deliberately NOT tied to a live Imbibe instance. He is rooted while he
+  // drinks, so a warning that only appears during the cast is a warning about
+  // something the tank can no longer change. The window to fix this is the whole
+  // gap between drinks, and the urgency is how full the bar is.
+  const drainDef = w.boss.mechanics.find(m => m.rule.type === 'drainNearest')
+  if (drainDef && drainDef.rule.type === 'drainNearest' && w.altars.length
+      && w.player.role === 'tank' && w.bosses[0].targetId === 0) {
+    // Every one of them, not any of them. One repeat is forced by there being
+    // three fountains and two drinks, so a prompt that fired on `some` would be
+    // lit for the whole pull and would be telling the tank to fix something that
+    // cannot be fixed. Both repeating means he has not moved.
+    if (nearestAltars(w, drainDef.rule.count).every(a => a.drainedLast)) {
+      consider({ verb: 'WALK HIM OFF', mechanic: drainDef.name, urgency: w.bossEnergy / 100 }, 1)
+    }
+  }
+
   // Adds first — a cast landing in two seconds beats any floor telegraph.
   for (const add of w.adds) {
     if (!add.alive) continue
     const d = add.def
+
+    // One of these just died and the next must not follow it yet. The
+    // instruction is the exact opposite of what every other add in this raid
+    // asks for, so it outranks all of them: the reflex to burn the second one
+    // down is what wipes the raid, and telling you to stop is the only warning
+    // the fight gives. The clock lives on `addDeathMs`, so the HUD can count it
+    // down beside this.
+    if (d.noSimultaneousDeath) {
+      const last = w.addDeathMs[d.id]
+      if (last !== undefined && w.elapsedMs - last < d.noSimultaneousDeath.withinSec * 1000) {
+        consider({ verb: 'HOLD IT — STOP DPS', mechanic: d.name, urgency: 1 }, 0)
+      }
+    }
     if (d.job === 'kick' && add.castMs >= 0 && !add.kicked) {
       const t = 1 - add.castMs / ((d.castEverySec ?? 8) * 1000)
       if (abilitiesFor(w.player.role).includes('interrupt')) {
@@ -1956,7 +2385,22 @@ function computePrompt(w: World): Prompt | null {
     if (!onPlayersSide(w, def)) continue
     const t = def.telegraphMs > 0 ? 1 - inst.timer / def.telegraphMs : 1
     const inside = isInside(inst, w.player.pos)
+    /**
+     * Is this instruction for me?
+     *
+     * The line is between "this will hurt you" and "this is your job". Damage
+     * lands on whoever is standing in it whatever the roles say, so `avoid` and
+     * `survive` still warn everybody. Everything else is an assignment, and
+     * handing a dps a tank's assignment is worse than silence.
+     *
+     * A tank-only mechanic goes further: it only speaks to the tank who is
+     * actually holding the entity casting it. Possession Barrage is aimed at
+     * whoever has aggro, so an off-tank being told to run out is being told to
+     * solve somebody else's problem.
+     */
     const mine = def.roles.includes(w.player.role)
+      && (!(def.roles.length === 1 && def.roles[0] === 'tank')
+        || currentTank(w, bossUnitFor(w, def.from)).isPlayer)
 
     switch (def.rule.type) {
       case 'press':
@@ -1966,11 +2410,11 @@ function computePrompt(w: World): Prompt | null {
         }
         break
       case 'beInside':
-        if (!inside) consider({ verb: 'GET IN', mechanic: def.name, urgency: t }, 2)
+        if (!inside && mine) consider({ verb: 'GET IN', mechanic: def.name, urgency: t }, 2)
         break
       case 'collect':
         // Only prompt for the nearest one — a instruction per globule is noise.
-        if (!inst.answered && dist(inst.pos, w.player.pos) < 22) {
+        if (!inst.answered && mine && dist(inst.pos, w.player.pos) < 22) {
           consider({ verb: 'RUN OVER IT', mechanic: def.name, urgency: t }, 2)
         }
         break
@@ -1987,6 +2431,12 @@ function computePrompt(w: World): Prompt | null {
             consider({ verb: 'RUN IT OUT', mechanic: def.name, urgency: t }, 2)
           }
         }
+        break
+
+      case 'trail':
+        // There is nothing to press and nowhere to be. The whole instruction is
+        // "do not stand still", so that is the whole instruction.
+        if (inst.carriedByPlayer) consider({ verb: 'KEEP MOVING', mechanic: def.name, urgency: t }, 1)
         break
 
       case 'avoid':
@@ -2033,8 +2483,13 @@ export function unlockedCount(w: World): number {
  * `count` overrides the def's own, for a stage that summons a set piece: the two
  * Echoes arrive at opposite ends of the room because there are two of them and
  * the fan below is a full circle, not because anything hard-codes "opposite".
+ *
+ * `empower` is an Infusion multiplier and `at` a spawn point, both for the
+ * fountains: a venom dragged out of a fountain that was drained last time too is
+ * a tougher venom, and it comes out of the fountain rather than off the rim.
+ * Both default to the old behaviour, so every other fight spawns as it did.
  */
-function spawnAdds(w: World, def: AddDef, count = def.count) {
+function spawnAdds(w: World, def: AddDef, count = def.count, empower = 1, at?: Vec) {
   const r = def.spawnRadius ?? w.boss.arenaRadius * 0.72
   // An add that walks at the middle starts at the wall, so the raid has the
   // whole room to stop it in.
@@ -2042,16 +2497,30 @@ function spawnAdds(w: World, def: AddDef, count = def.count) {
   if (ph?.endsWhenAddsDead === def.id) w.phaseAddsSpawned = true
   for (let i = 0; i < count; i++) {
     // Fanned around the rim so a wave arrives from several sides at once and
-    // has to be prioritised rather than cleaved down in one spot.
-    const a = (w.addWave * 1.7) + (i / count) * Math.PI * 2
+    // has to be prioritised rather than cleaved down in one spot. A wave with a
+    // spawn point of its own fans around THAT instead, tightly, so a pair out of
+    // one fountain reads as two bodies rather than one.
+    const a = at ? (i / Math.max(1, count)) * Math.PI * 2 : (w.addWave * 1.7) + (i / count) * Math.PI * 2
+    // Summoned beside a named golem, dropped at an explicit point, or scattered
+    // on a ring around the room. Venom Coagulation is Breath's, and a generic
+    // ring could put it in the red half — a job handed to the people who are
+    // specifically not allowed to walk over and do it.
+    const host = def.spawnAtEntity
+      ? w.bosses.find(b => b.def.id === def.spawnAtEntity)
+      : undefined
+    const pos = at
+      ? { x: at.x + Math.cos(a) * 3.5, y: at.y + Math.sin(a) * 3.5 }
+      : host
+        ? { x: host.pos.x + Math.cos(a) * 9, y: host.pos.y + Math.sin(a) * 9 }
+        : { x: Math.cos(a) * r, y: Math.sin(a) * r }
     w.adds.push({
       uid: w.nextUid++,
       def,
       // Clamped to the floor rather than to a radius: on the octagon a spawn
       // ring drawn as a circle would put half a wave outside the room.
-      pos: clampToArena(w.boss, { x: Math.cos(a) * r, y: Math.sin(a) * r }, 1),
-      hp: def.hp,
-      shield: def.shieldHp ?? 0,
+      pos: clampToArena(w.boss, pos, 1),
+      hp: Math.max(1, Math.round(def.hp * empower)),
+      shield: Math.round((def.shieldHp ?? 0) * empower),
       fuse: def.fuseSec * 1000,
       castMs: -1,
       kicked: false,
@@ -2085,6 +2554,53 @@ function killAdd(w: World, add: Add, credited: boolean) {
     w.corpses.push({
       uid: w.nextUid++, addId: add.def.id, pos: { ...add.pos }, burned: false, burnedAtMs: 0,
     })
+  }
+
+  // Two of these dying together wipes the raid.
+  //
+  // The Burning Venom pair: each one erupts as it dies and the raid cannot eat
+  // two eruptions at once, so "kill it fast" — the reflex every other add in
+  // this raid rewards — is precisely the wrong answer, and the trainer has to
+  // punish the reflex or it is teaching the habit that wipes the pull.
+  //
+  // Only deaths count, never leaks. An add that reached the Cavity has already
+  // been paid for as a leak, and charging the raid twice for one mistake would
+  // put a wipe in the debrief with nothing anybody could have done about it.
+  const sync = add.def.noSimultaneousDeath
+  if (sync) {
+    const last = w.addDeathMs[add.def.id]
+    if (last !== undefined && w.elapsedMs - last < sync.withinSec * 1000) {
+      recordAddFailure(w, add.def)
+      w.raidHealth = 0
+      w.shake = 1
+      killPlayer(w, `${add.def.name} — two died within ${sync.withinSec}s`)
+    }
+    w.addDeathMs[add.def.id] = w.elapsedMs
+  }
+
+  // It splits, and the pieces keep walking. Killing a Clotting Venom early and
+  // FAR from the pool is what matters, not killing it quickly — the splits
+  // inherit the march, so a clot killed on the doorstep is two clots on the
+  // doorstep.
+  const sp = add.def.splits
+  if (sp) {
+    // An add that split into itself would double on every death until the field
+    // was nothing else. Refused rather than trusted: a boss file typo should not
+    // be able to end a pull with an unreadable swarm.
+    const into = sp.intoId === add.def.id ? undefined : w.boss.adds?.find(x => x.id === sp.intoId)
+    if (into) spawnAdds(w, into, sp.count, 1, add.pos)
+  }
+
+  // It drops a pool at EVERY body rather than where it fell. One add dying is
+  // then a whole-raid relocation, which is a completely different demand from
+  // "dodge the puddle where it died" and the reason the purple side feels like
+  // chaos rather than like a dps check.
+  if (add.def.deathSpawnsAtAllPlayers) {
+    const child = w.boss.mechanics.find(m => m.id === add.def.deathSpawnsAtAllPlayers)
+    if (child) {
+      spawn(w, child, { ...w.player.pos })
+      for (const a of w.allies) if (a.alive) spawn(w, child, { ...a.pos })
+    }
   }
 }
 
@@ -2138,13 +2654,19 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // set the clock" means, and a flat per-add drain never conveyed it.
     if (d.auraDps) w.raidHealth -= (d.auraDps / 100) * dt * (1 + 0.2 * (w.adds.length - 1))
 
-    if (d.job === 'intercept' && d.marchSpeed) {
-      // Walks to the centre. Standing in its path stops it; killing it is not
-      // the job and for some of these is not even possible.
+    // Anything with a march walks at the middle of the room, whatever its job
+    // is. Marching used to be an `intercept` privilege, which made "all the
+    // venoms are walking at the Cavity and one arriving is what wipes you" —
+    // the whole shape of Vashnik — impossible to express for an add you are
+    // supposed to shoot rather than body-block.
+    if (d.marchSpeed) {
       const len = lenOf(add.pos) || 1
       add.pos.x -= (add.pos.x / len) * d.marchSpeed * dt
       add.pos.y -= (add.pos.y / len) * d.marchSpeed * dt
-      if (dist(add.pos, w.player.pos) < 3.5) {
+      // Standing in its path stops an `intercept` add; killing it is not the job
+      // and for some of these is not even possible. A venom is not stopped by a
+      // body — it is stopped by being killed, and walking into one does nothing.
+      if (d.job === 'intercept' && dist(add.pos, w.player.pos) < 3.5) {
         killAdd(w, add, true)
         continue
       }
@@ -2191,16 +2713,25 @@ function stepAdds(w: World, dtMs: number, dt: number) {
   // It stands down during a set-piece stage — one that brings its own adds. An
   // intermission you are meant to burn down two Echoes in is not the moment for
   // the next wave of trash to arrive on top of it.
-  const setPiece = (activePhase(w)?.onEnter?.length ?? 0) > 0
+  // Stated, not inferred. "Does this stage bring its own adds" was a decent
+  // proxy right up against an intermission that brings none: Vitriolic Stasis is
+  // the orb game and nothing else, and the timer kept delivering Venom
+  // Coagulations into the middle of it because the stage declared no `onEnter`.
+  const ph = activePhase(w)
+  const setPiece = (ph?.onEnter?.length ?? 0) > 0 || (ph?.suppressAddWaves ?? false)
   if (w.boss.adds?.length && !setPiece) {
     w.addTimerMs += dtMs
     const every = (w.boss.addEverySec ?? 22) * 1000
+    // Set-piece adds are never dealt out as trash. The Echoes of Jawae belong to
+    // the intermission; cycling them into the Stage One rotation gave the fight
+    // two enormous tanked adds it was never supposed to have.
+    const list = w.boss.adds.filter(a => !a.phaseOnly)
     // Never more than a handful on the field. A wave landing on top of a wave
     // you have not cleared is a wipe you cannot play out of, and it teaches
     // nothing except that the trainer is unfair.
-    if (w.addTimerMs >= every && w.adds.length < (w.boss.maxAdds ?? MAX_CONCURRENT_ADDS)) {
+    if (list.length && w.addTimerMs >= every
+        && w.adds.length < (w.boss.maxAdds ?? MAX_CONCURRENT_ADDS)) {
       w.addTimerMs = 0
-      const list = w.boss.adds
       spawnAdds(w, list[w.addWave % list.length])
       w.addWave++
     }
@@ -2222,10 +2753,15 @@ export function upcoming(w: World, count = 3): { name: string; inSec: number }[]
   const untilNext = period - w.loopTimerMs
   const live = unlockedCount(w)
   const loop = activeLoop(w)
-  for (let i = 0; i < count; i++) {
+  // Walk further than `count` so the strip still fills up when most of the loop
+  // belongs to somebody else — a green-side healer's next three are three of
+  // their own, not "red mechanic, red mechanic, red mechanic".
+  for (let i = 0; i < live * 2 && out.length < count; i++) {
     const id = loop[(w.loopIndex + i) % live]
     const def = w.boss.mechanics.find(m => m.id === id)
-    if (def) out.push({ name: def.name, inSec: (untilNext + i * period) / 1000 })
+    if (def && def_scored(w, def)) {
+      out.push({ name: def.name, inSec: (untilNext + i * period) / 1000 })
+    }
   }
   return out
 }
@@ -2533,6 +3069,18 @@ export function step(w: World, input: Input, dtMs: number) {
     if (ab === 'raidcd') {
       w.raidHealth = Math.min(1, w.raidHealth + 0.35)
       for (const a of w.allies) if (a.alive) a.health = Math.min(1, a.health + 0.4)
+      // A heal spent on a trail carrier cuts the trail short.
+      //
+      // The only place this trainer models healing as anything but a bar, and it
+      // is here because Stygian Infection makes the healer part of the answer:
+      // the debuff ends early if somebody heals through the absorb, so a healer
+      // who spends their cooldown genuinely stops the pools. The raid's own
+      // healers stay abstracted, as they are everywhere else.
+      for (const inst of w.instances) {
+        const r = inst.def.rule
+        if (inst.resolved || r.type !== 'trail') continue
+        inst.timer -= r.healShortensMs
+      }
     }
     if (ab === 'taunt') {
       // A taunt takes the nearest entity. Anything else you were holding goes
@@ -2716,6 +3264,12 @@ export function step(w: World, input: Input, dtMs: number) {
       // their spawn points, and "hold them 40 yards apart" was not something a
       // tank could get right or wrong — the separation was whatever the boss file
       // hard-coded. Slower than a player so leading one somewhere is deliberate.
+      //
+      // A single-entity fight is included, and has to be: `makeBosses` hands the
+      // synthesised entity to the co-tank, so Vashnik walks after whoever holds
+      // him and the tank's footwork picks the fountains. What stays put is an
+      // entity nobody is tanking — targetId -1, a caster at its station — which
+      // is the only thing this branch ever excluded.
       const to = currentTank(w, b).pos
       const d = dist(b.pos, to)
       if (d > MELEE_RANGE) {
@@ -2935,7 +3489,10 @@ export function step(w: World, input: Input, dtMs: number) {
     // marker stayed on the floor while you ran, and the pool then dropped where
     // you were when you got it rather than where you took it — which is exactly
     // backwards, since walking it out IS the mechanic.
-    if (!inst.resolved && inst.def.rule.type === 'carryOut') {
+    // A trail rides its carrier for the same reason: the pools have to come out
+    // from under the body that is walking.
+    const carried = inst.def.rule.type === 'carryOut' || inst.def.rule.type === 'trail'
+    if (!inst.resolved && carried) {
       if (inst.carriedByPlayer) {
         inst.pos = { ...w.player.pos }
         w.player.carrying[inst.def.id] = inst.timer
@@ -2946,6 +3503,21 @@ export function step(w: World, input: Input, dtMs: number) {
         // unwinnable if the player is the only body that can carry one.
         const holder = w.allies.find(a => a.id === w.carriers[inst.uid] && a.alive)
         if (holder) inst.pos = { ...holder.pos }
+      }
+    }
+
+    // A trail drips a hazard under its carrier on a fixed cadence until it falls
+    // off. Dropping one is NEVER a failure and never a scored event: the
+    // carrier's whole job is to keep walking so the pools land where nobody is,
+    // and the pools themselves already say whether they managed it.
+    const trail = inst.def.rule
+    if (!inst.resolved && trail.type === 'trail') {
+      const left = (w.trailTimers[inst.uid] ?? trail.everyMs) - dtMs
+      if (left > 0) w.trailTimers[inst.uid] = left
+      else {
+        w.trailTimers[inst.uid] = trail.everyMs
+        const child = w.boss.mechanics.find(m => m.id === trail.defId)
+        if (child) spawn(w, child, { ...inst.pos })
       }
     }
 

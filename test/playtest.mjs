@@ -212,6 +212,17 @@ function play(boss, role, smart, seed, side = 'green') {
         }
       }
 
+      // ── carrying a trail ──
+      // Nothing to press and nowhere to be: the whole instruction is "do not
+      // stand still", because the ground you leave behind is the mechanic. A
+      // stationary carrier paves their own feet and dies to a puddle they made.
+      const trailing = w.instances.some(i =>
+        !i.resolved && i.def.rule.type === 'trail' && i.carriedByPlayer)
+      if (trailing) {
+        const ang = w.elapsedMs / 700
+        tx += Math.cos(ang) * 8; ty += Math.sin(ang) * 8
+      }
+
       // ── the split raid ──
       // Stay inside your own golem's Mark radius and outside the other's.
       // Standing in both is the specific mistake this fight punishes, and it is
@@ -327,6 +338,12 @@ function play(boss, role, smart, seed, side = 'green') {
         // 98% accuracy and 98% boss health, because every shot went into crates.
         const urgent = a.def.fuseSec >= 900 ? false : (a.fuse ?? 0) < 9000 || a.shield > 0
         if (!urgent) continue
+        // Hold the second of a pair that must not die together. "Kill it fast"
+        // is the wrong reflex on the Burning Venoms — cleaving both down inside
+        // the window wipes the raid — so the bot has to be able to stop, or it
+        // measures the fight as impossible when it is merely disciplined.
+        const w2 = a.def.noSimultaneousDeath
+        if (w2 && (w.elapsedMs - (w.addDeathMs?.[a.def.id] ?? -1e9)) < w2.withinSec * 1000) continue
         if (d < td) { td = d; target = a }
       }
       input.firing = true

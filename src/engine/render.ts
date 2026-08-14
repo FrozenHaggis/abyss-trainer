@@ -1,5 +1,5 @@
 import type { BossDef, Instance, Role, Side, Vec } from './types'
-import type { BossUnit, World } from './sim'
+import type { AltarState, BossUnit, World } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
 
@@ -31,6 +31,38 @@ const SIDE_RED = '221, 66, 90'
 const BONE = '226, 219, 196'
 
 const sideColour = (s: Side) => (s === 'red' ? SIDE_RED : SIDE_GREEN)
+
+/**
+ * The altars' colours. IDENTITY again, for the same reason the sides are.
+ *
+ * Vashnik's raid does not call the fight by ability names, it calls it by
+ * colour — "boss to red", "orange and purple are up" — so the colour coding is
+ * not decoration, it is the vocabulary. That puts it in the same position as the
+ * side palette above and under the same discipline: an altar colour is only ever
+ * worn by a plinth, a floor wash or a drink link, and NEVER by the filled body
+ * of a telegraph. The red altar is a deeper blood red than the telegraph's
+ * orange-red for exactly that reason — "go to red" and "get out of red" cannot
+ * be allowed to look alike.
+ *
+ * Keyed off `AltarDef.colour`, which is the raid's own word for it, so a boss
+ * file naming a fourth colour simply falls back to the house violet rather than
+ * drawing nothing.
+ */
+const ALTAR_COLOURS: Record<string, string> = {
+  red: '226, 48, 66',
+  orange: '255, 146, 40',
+  purple: '172, 92, 255',
+}
+function altarColour(name: string): string {
+  const key = name.toLowerCase()
+  if (ALTAR_COLOURS[key]) return ALTAR_COLOURS[key]
+  // A boss file that writes the colour inside a longer phrase still gets its
+  // colour. Falling through to violet for all three would put every plinth in
+  // the same hue and take the fight's entire vocabulary off the screen, which is
+  // a worse failure than any wrong shade.
+  for (const k of Object.keys(ALTAR_COLOURS)) if (key.includes(k)) return ALTAR_COLOURS[k]
+  return VIOLET
+}
 
 export interface Camera {
   cx: number
@@ -182,7 +214,8 @@ function pathShape(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance, k
     case 'line': {
       const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
       const hw = (s.width / 2) * k * cam.scale
-      const L = s.length * cam.scale
+      // Per-instance reach when the shape is a beam between two points.
+      const L = (inst.reach ?? s.length) * cam.scale
       ctx.moveTo(p.x - sa * hw, p.y + ca * hw)
       ctx.lineTo(p.x + ca * L - sa * hw, p.y + sa * L + ca * hw)
       ctx.lineTo(p.x + ca * L + sa * hw, p.y + sa * L - ca * hw)
@@ -277,6 +310,98 @@ function drawShield(
   ctx.lineWidth = 1
 }
 
+/**
+ * One altar: a plinth in its own colour, dim when idle and blazing when it is
+ * being drained, with its Infusion stacks beside it.
+ *
+ * Both states are drawn. An idle altar is still a corner of the room the raid
+ * calls out and walks to, so it fades rather than disappearing — what changes is
+ * whether it is lit, which is the question "which two are live?" answered from
+ * anywhere on the floor.
+ *
+ * Whether it is live comes from `World.lastDrained` rather than being worked out
+ * here. The sim's note on that field is the reason: the boss walks off after
+ * Imbibe, so anything that re-derives "the nearest two" a second later paints a
+ * different pair from the one that actually fired.
+ */
+function drawAltar(
+  ctx: CanvasRenderingContext2D, cam: Camera, st: AltarState,
+  live: boolean, elapsedMs: number, pulse: number,
+) {
+  const altar = st.def
+  const stacks = st.infusion
+  const col = altarColour(altar.colour)
+  const p = toPx(cam, altar.pos)
+  const r = 13
+
+  // The drink itself: a ring thrown off the plinth for half a second when this
+  // altar is taken. The Expulsion, the venom and both debuffs all leave here at
+  // once, and a fountain that simply changed brightness never showed the raid
+  // where its next few seconds came from.
+  const sinceDrain = st.drainedAtMs >= 0 ? elapsedMs - st.drainedAtMs : Infinity
+  if (sinceDrain >= 0 && sinceDrain < 520) {
+    const f = 1 - sinceDrain / 520
+    ctx.beginPath(); ctx.arc(p.x, p.y, r + 40 * (1 - f), 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${col}, ${0.9 * f})`
+    ctx.lineWidth = 1 + 5 * f; ctx.stroke()
+    ctx.lineWidth = 1
+  }
+
+  // Blazing: a bloom and a ring of rising motes, so a drained altar is visibly
+  // pouring something out rather than merely being a brighter circle.
+  if (live) {
+    const bloom = ctx.createRadialGradient(p.x, p.y, r * 0.4, p.x, p.y, r * 3.4)
+    bloom.addColorStop(0, `rgba(${col}, ${0.34 + 0.12 * pulse})`)
+    bloom.addColorStop(1, `rgba(${col}, 0)`)
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 3.4, 0, Math.PI * 2)
+    ctx.fillStyle = bloom; ctx.fill()
+    ctx.save()
+    ctx.translate(p.x, p.y)
+    ctx.rotate((elapsedMs / 1100) % (Math.PI * 2))
+    ctx.strokeStyle = `rgba(${col}, ${0.7 + 0.3 * pulse})`
+    ctx.lineWidth = 3
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(Math.cos(a) * (r + 6), Math.sin(a) * (r + 6))
+      ctx.lineTo(Math.cos(a) * (r + 13), Math.sin(a) * (r + 13))
+      ctx.stroke()
+    }
+    ctx.restore()
+    ctx.lineWidth = 1
+  }
+
+  // The plinth itself: a dark stone with a lit bowl in it.
+  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  ctx.fillStyle = `rgba(10, 6, 18, ${live ? 0.9 : 0.75})`
+  ctx.fill()
+  ctx.strokeStyle = `rgba(${col}, ${live ? 0.95 + 0.05 * pulse : 0.42})`
+  ctx.lineWidth = live ? 3.5 : 2
+  ctx.stroke()
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.52, 0, Math.PI * 2)
+  ctx.fillStyle = `rgba(${col}, ${live ? 0.85 + 0.15 * pulse : 0.3})`
+  ctx.fill()
+  ctx.lineWidth = 1
+
+  // Named OUTWARD, away from the middle of the room, so the plate never lands on
+  // top of the drink links or on the Cavity the raid is fighting around.
+  const len = Math.hypot(altar.pos.x, altar.pos.y) || 1
+  const ox = altar.pos.x / len
+  const oy = altar.pos.y / len
+  const lx = p.x + ox * (r + 18)
+  const ly = p.y + oy * (r + 18)
+  drawLabel(
+    ctx, live ? `${altar.colour.toUpperCase()} · DRAINING` : altar.colour.toUpperCase(),
+    lx, ly, col, 13, live ? 1 : 0.62,
+  )
+  // The Infusion count, once there is one. A zero is the clean state and saying
+  // so three times over is noise; a number appearing at all is the tank being
+  // told they have drained the same altar twice running.
+  if (stacks > 0) {
+    drawLabel(ctx, `INFUSION ${stacks}`, lx, ly + 18, col, 11, 0.7 + 0.3 * pulse)
+  }
+}
+
 export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, width: number, height: number) {
   ctx.save()
   if (w.shake > 0.01) {
@@ -316,6 +441,38 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // Scaled copies of the floor's own outline, so the guides tell you about the
     // room you are in rather than about a circle it is not.
     pathArena(ctx, cam, w.boss, r); ctx.stroke()
+  }
+
+  // ── the three sections ──
+  // Vashnik's room is ONE open floor with an altar in each corner. Nothing walls
+  // the sections off in the real room, so nothing walls them off here: each altar
+  // washes its own part of the floor in its own colour and the washes simply meet
+  // in the middle, over the Cavity. Drawn first, under every hazard, because this
+  // is the room rather than something happening in it — and clipped to the arena
+  // so the colour stops exactly where the floor does.
+  //
+  // A live section is washed harder. "Which two are up" has to be readable from
+  // the floor you are standing on, not only from the plinth you are looking at.
+  // The pair the last Imbibe took. Read off the world, never re-derived here —
+  // the boss walks away from the altars he just drank, so "the nearest two" is
+  // already a different answer by the time this frame draws.
+  const altars = w.altars
+  const drained = w.lastDrained
+  if (altars.length) {
+    ctx.save()
+    pathArena(ctx, cam, w.boss)
+    ctx.clip()
+    const reach = arenaReach(w.boss) * cam.scale * 0.8
+    for (const al of altars) {
+      const ap = toPx(cam, al.def.pos)
+      const col = altarColour(al.def.colour)
+      const wash = ctx.createRadialGradient(ap.x, ap.y, 0, ap.x, ap.y, reach)
+      wash.addColorStop(0, `rgba(${col}, ${drained.includes(al.def.id) ? 0.26 : 0.11})`)
+      wash.addColorStop(1, `rgba(${col}, 0)`)
+      ctx.fillStyle = wash
+      ctx.fillRect(ap.x - reach, ap.y - reach, reach * 2, reach * 2)
+    }
+    ctx.restore()
   }
 
   // ── the 40-yard bubbles ──
@@ -406,6 +563,13 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.strokeStyle = `rgba(${RED}, 0.92)`
     ctx.lineWidth = 3; ctx.stroke()
     ctx.lineWidth = 1
+
+    // And it is named. A hole with a name is a landmark — the Malignant Cavity
+    // and the Soulcoil Well are both places the raid stands relative to for the
+    // whole pull, and a raider who reads the name once stops reading the shape
+    // as one more red circle they are meant to walk out of. Sat low in the void
+    // rather than dead centre, where the boss's own sigil often sits.
+    drawLabel(ctx, inst.def.name.toUpperCase(), p.x, p.y + rr * 0.55, RED, 11, 0.85)
   }
 
   // ── lingering hazards (resolved, still dangerous) ──
@@ -659,6 +823,62 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
           drawLabel(ctx, '99% DR', up.x, up.y - 42, RED, 11)
         }
       }
+    }
+  }
+
+  // ── the altars, and the pair the boss is about to drink ──
+  // The whole tank job on this fight, drawn.
+  //
+  // Imbibe drains the altars NEAREST the boss and the boss follows its tank, so
+  // where the tank stands picks which venoms spawn and which two infections go
+  // out on the raid. A tank who can only find that out once the cast has landed
+  // cannot do the job at all, so the links are live: they run to the pair he
+  // would drain right now and they move with him, which is what makes walking
+  // him to a fresh pair a thing you can aim rather than a thing you hope for.
+  //
+  // How many he takes is read off the fight's own `drainNearest` rule rather
+  // than assumed, so the picture and the scoring cannot disagree.
+  //
+  // Drawn before the entities so the links read as ground between them — the
+  // same reason the Sentinels' separation line is drawn where it is.
+  if (altars.length && w.bosses.length) {
+    const lead = w.bosses[0]
+    const drainRule = w.boss.mechanics.find(m => m.rule.type === 'drainNearest')?.rule
+    const takes = drainRule && drainRule.type === 'drainNearest' ? drainRule.count : 2
+    const near = [...altars].sort((a, b) =>
+      Math.hypot(a.def.pos.x - lead.pos.x, a.def.pos.y - lead.pos.y) -
+      Math.hypot(b.def.pos.x - lead.pos.x, b.def.pos.y - lead.pos.y))
+    const bp = toPx(cam, lead.pos)
+
+    for (const st of near.slice(0, takes)) {
+      const al = st.def
+      const col = altarColour(al.colour)
+      const ap = toPx(cam, al.pos)
+      // Already draining AND still nearest: the next Imbibe takes it a second
+      // time, stacking its Infusion and empowering both its add and its debuff.
+      // That is the specific mistake standing still produces, so it gets its own
+      // word rather than being drawn as one more link.
+      const again = drained.includes(al.id)
+      ctx.save()
+      ctx.setLineDash([10, 7])
+      // Marching toward the boss, because he is drinking FROM the altar.
+      ctx.lineDashOffset = -(w.elapsedMs / 42) % 17
+      ctx.lineWidth = again ? 4 : 2.5
+      ctx.strokeStyle = `rgba(${col}, ${again ? 0.55 + 0.35 * pulse : 0.62})`
+      ctx.beginPath(); ctx.moveTo(ap.x, ap.y); ctx.lineTo(bp.x, bp.y); ctx.stroke()
+      ctx.restore()
+      ctx.lineWidth = 1
+      // Called at the midpoint, in the altar's own colour, so the tank reads the
+      // pair without tracing either line back to a plinth.
+      drawLabel(
+        ctx, `${al.colour.toUpperCase()} ${again ? 'AGAIN' : 'NEXT'}`,
+        (ap.x + bp.x) / 2, (ap.y + bp.y) / 2, col, 11,
+        again ? 0.7 + 0.3 * pulse : 0.88,
+      )
+    }
+
+    for (const al of altars) {
+      drawAltar(ctx, cam, al, drained.includes(al.def.id), w.elapsedMs, pulse)
     }
   }
 

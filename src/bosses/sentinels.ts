@@ -13,6 +13,14 @@ import type { BossDef } from '../engine/types'
 // the `good` strings are the file's own "Good:" lines, with inline spell IDs
 // swapped for the ability's name.
 //
+// The `what` strings are NOT the tactic file's lines verbatim. They were, and
+// the panel they render into is read mid-pull with the fight paused on top of
+// the player — analyst prose full of raw spell IDs and source caveats is the
+// wrong register for that. Each one is rewritten to one or two plain sentences
+// saying what the ability does and to whom, and the original line is kept
+// verbatim in a "Tactic file:" comment above its mechanic so the rewrite can
+// always be checked against its source.
+//
 // UNUSUAL FOR THIS TIER: nothing on this fight is tagged Mythic-only. Every entry
 // in abilities.json carries `difficulties: ["Heroic","Mythic"]`, so there is no
 // exclusion list — the whole fight is in scope for a Heroic trainer.
@@ -239,11 +247,13 @@ export const sentinels: BossDef = {
   ],
 
   mechanics: [
+    // Tactic file: "Both bosses gain 99% DR for 10s while close to each other
+    // (1290189, 1290193)."
     {
       id: 'dominance',
       name: "Ula'tek's Dominance",
       spellId: 1290189,
-      what: "Both bosses gain 99% DR for 10s while close to each other (1290189, 1290193).",
+      what: "While the two golems are close together they both gain 99% damage reduction, so almost nothing the raid does hurts them.",
       from: 'breath',
       // The tank job, and for a long time the one this trainer could not teach:
       // "Good: Tanks hold them 40+ yards apart all pull."
@@ -272,11 +282,13 @@ export const sentinels: BossDef = {
     // collects both. That is the split raid's characteristic mistake, and it is
     // why the healers on a badly split raid suffer for a positioning error
     // nobody can see on a damage meter.
+    // Tactic file: "Nature raid DoT, 40yd, 40s, stacks — half the soft enrage,
+    // unavoidable, dispel type n/a on wowhead."
     {
       id: 'markAcid',
       name: 'Mark of Acid',
       spellId: 1284500,
-      what: "Nature raid DoT, 40yd, 40s, stacks — half the soft enrage, unavoidable, dispel type n/a on wowhead.",
+      what: "Anyone within 40 yards of Breath takes stacking Nature damage. The stacks never fall off, so it hurts more all pull.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
@@ -300,11 +312,13 @@ export const sentinels: BossDef = {
       good: 'Nothing to execute — kill the bosses before the stacks kill you.',
       failText: '',
     },
+    // Tactic file: "Shadow raid DoT, 40yd, 40s, stacks — the other half of the
+    // soft enrage and the deadliest ID in the log."
     {
       id: 'markBlood',
       name: 'Mark of Blood',
       spellId: 1284506,
-      what: "Shadow raid DoT, 40yd, 40s, stacks — the other half of the soft enrage and the deadliest ID in the log.",
+      what: "Anyone within 40 yards of Blood takes stacking Shadow damage. Standing in range of both golems means carrying both Marks.",
       from: 'blood',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
@@ -317,11 +331,13 @@ export const sentinels: BossDef = {
       good: 'Nothing to execute — kill the bosses before the stacks kill you.',
       failText: '',
     },
+    // Tactic file: "At 100 energy both channel 30s (1284606 Breath, 1284588
+    // Blood) at 99% DR while the weaker Sentinel heals up to match."
     {
       id: 'stasis',
       name: 'Vitriolic Stasis',
       spellId: 1284606,
-      what: "At 100 energy both channel 30s (1284606 Breath, 1284588 Blood) at 99% DR while the weaker Sentinel heals up to match.",
+      what: "Both golems stop and channel at 99% damage reduction, and the weaker one is healed back up to match the healthier one.",
       from: 'breath',              // Breath's channel; 1284588 is Blood's
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2500,
@@ -334,11 +350,14 @@ export const sentinels: BossDef = {
       good: 'Both enter at near-identical health, so the heal-up is negligible.',
       failText: '',
     },
+    // Tactic file: "Stasis applies a 28s Nature+Shadow debuff to everyone;
+    // colliding with another infected player combines applications, and exactly
+    // four neutralises it."
     {
       id: 'helical',
       name: 'Helical Toxins',
       spellId: 1284590,
-      what: "Stasis applies a 28s Nature+Shadow debuff to everyone; colliding with another infected player combines applications, and exactly four neutralises it.",
+      what: "Stasis marks everyone with four orbs, some green and some red. Running into another marked player merges both sets.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       // The real debuff runs 28s; compressed here to a 10s window because the
@@ -361,11 +380,13 @@ export const sentinels: BossDef = {
       good: 'Assigned groups pair to exactly four and neutralise before expiry.',
       failText: 'Finished Helical Toxins off exactly four — Cultivated Burst',
     },
+    // Tactic file: "Contaminates random players ; a contaminated player touching
+    // a clean one detonates 1296962 — damage in 10yd plus knockback."
     {
       id: 'protovenom',
       name: 'Protovenom Eruption',
       spellId: 1296962,
-      what: "Contaminates random players ; a contaminated player touching a clean one detonates 1296962 — damage in 10yd plus knockback.",
+      what: "Random players are contaminated. A contaminated player touching a clean one detonates, damaging and knocking back everyone within 10 yards.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
@@ -387,11 +408,13 @@ export const sentinels: BossDef = {
     },
 
     // ──────────────────── Breath of Ula'tek — GREEN ────────────────────
+    // Tactic file: "Physical tank hit stacking ~15% increased Physical damage
+    // per consecutive hit on the same target."
     {
       id: 'slam',
       name: 'Empowering Slam',
       spellId: 1284458,
-      what: "Physical tank hit stacking ~15% increased Physical damage per consecutive hit on the same target.",
+      what: "A heavy melee hit on whoever is tanking Breath. Each consecutive hit on the same tank lands about 15% harder.",
       from: 'breath',
       roles: ['tank'],
       telegraphMs: 1500,
@@ -407,11 +430,13 @@ export const sentinels: BossDef = {
       good: 'Breath tanks swap on the agreed stack count so the buff resets.',
       failText: 'Held Empowering Slam too long — taunt the swap sooner',
     },
+    // Tactic file: "1284434 scatters droplets; each erupts into Noxious Blast
+    // after 16s."
     {
       id: 'droplets',
       name: 'Toxic Droplets',
       spellId: 1284434,
-      what: "1284434 scatters droplets; each erupts into Noxious Blast after 16s.",
+      what: "Breath scatters droplets across your half of the room. Each one still there after 16 seconds erupts into Noxious Blast on the whole raid.",
       from: 'breath',
       side: 'green',
       roles: ['tank', 'dps', 'healer'],
@@ -433,11 +458,13 @@ export const sentinels: BossDef = {
       good: 'Assigned clearers sweep every droplet inside 16s, so Noxious Blast never fires.',
       failText: 'A droplet went unswept — Noxious Blast erupted on the raid',
     },
+    // Tactic file: "Droplet eruption after 16s — 300yd raid-wide Nature damage,
+    // top killer in the log."
     {
       id: 'noxious',
       name: 'Noxious Blast',
       spellId: 1284452,
-      what: "Droplet eruption after 16s — 300yd raid-wide Nature damage, top killer in the log.",
+      what: "The eruption of a droplet nobody cleared. Heavy Nature damage lands on the entire raid, wherever anyone is standing.",
       from: 'breath',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
@@ -461,11 +488,13 @@ export const sentinels: BossDef = {
       good: 'Assigned clearers sweep every droplet inside 16s, so Noxious Blast never fires.',
       failText: '',
     },
+    // Tactic file: "Breath ejects a slime that returns to the golem after 4s,
+    // damaging anyone on the return path."
     {
       id: 'livingvenom',
       name: 'Living Venom',
       spellId: 1284207,
-      what: "Breath ejects a slime that returns to the golem after 4s, damaging anyone on the return path.",
+      what: "Breath spits out a slime that races back into the golem four seconds later, hurting anyone caught on the line it travels.",
       from: 'breath',
       side: 'green',
       roles: ['tank', 'dps', 'healer'],
@@ -489,11 +518,13 @@ export const sentinels: BossDef = {
       good: 'Everyone reads the return line and steps out of it.',
       failText: 'Clipped by the Living Venom return path',
     },
+    // Tactic file: "1284251 summons a slime pulsing raid-wide Contaminate
+    // (1284257 cast → 1284258 damage) until killed."
     {
       id: 'coagulation',
       name: 'Venom Coagulation',
       spellId: 1284251,
-      what: "1284251 summons a slime pulsing raid-wide Contaminate (1284257 cast → 1284258 damage) until killed.",
+      what: "Breath summons a slime that pulses damage on the whole raid until it dies. It cannot be interrupted, only killed.",
       from: 'breath',
       side: 'green',
       roles: ['tank', 'dps', 'healer'],
@@ -510,11 +541,13 @@ export const sentinels: BossDef = {
     },
 
     // ───────────────────── Blood of Ula'tek — RED ─────────────────────
+    // Tactic file: "1284483 applies Blighted Blood , an 18s Shadow DoT, dispel
+    // type Magic. Left to expire it drops a pool."
     {
       id: 'blighted',
       name: 'Blighted Blood',
       spellId: 1284471,
-      what: "1284483 applies Blighted Blood , an 18s Shadow DoT, dispel type Magic. Left to expire it drops a pool.",
+      what: "A Magic Shadow DoT lands on someone in your group. If it expires instead of being removed it leaves a pool where they stand.",
       from: 'blood',
       side: 'red',
       roles: ['healer'],
@@ -528,11 +561,14 @@ export const sentinels: BossDef = {
       good: 'Assigned dispellers clear it fast; the infected player drifts to a dump spot while waiting.',
       failText: 'Blighted Blood expired undispelled',
     },
+    // Tactic file: "1288232 marks a player with 1288260; after ~8s it erupts as
+    // 1288282 — Shadow damage in 7.5yd, split among everyone inside (300 base /
+    // 600 Mythic)."
     {
       id: 'miasma',
       name: 'Unstable Miasma',
       spellId: 1288282,
-      what: "1288232 marks a player with 1288260; after ~8s it erupts as 1288282 — Shadow damage in 7.5yd, split among everyone inside (300 base / 600 Mythic).",
+      what: "A player in your group is marked, and about eight seconds later it erupts. The Shadow damage is split between everyone within 7.5 yards.",
       lethal: true,
       from: 'blood',
       side: 'red',
@@ -556,11 +592,13 @@ export const sentinels: BossDef = {
       good: 'The soak group stacks tight before the timer so the split is survivable.',
       failText: 'Missed the Unstable Miasma soak — the split was too thin',
     },
+    // Tactic file: "A pool dropped where a Miasma soaker was standing, damaging
+    // anyone who stands in it."
     {
       id: 'bloodvenom',
       name: 'Blood Venom',
       spellId: 1284208,
-      what: "A pool dropped where a Miasma soaker was standing, damaging anyone who stands in it.",
+      what: "Every player who soaked Unstable Miasma drops a pool where they stood. The pools damage anyone in them and last the rest of the pull.",
       from: 'blood',
       side: 'red',
       roles: ['tank', 'dps', 'healer'],

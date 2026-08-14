@@ -64,7 +64,11 @@ export const nekzali: BossDef = {
   adds: [
     {
       id: 'amani', name: 'Restless Amani', npcId: 261509, spellId: 1287533,
-      job: 'intercept', count: 2, hp: 12, shieldHp: 3, fuseSec: 26,
+      // Killed, not blocked. They march at the well and arriving is the failure,
+      // but the answer is to shoot them down well short of the water — standing in
+      // the way does nothing. The trainer told raiders to body-block them, which is
+      // the one thing that will not stop a Restless Amani.
+      job: 'kill', count: 2, hp: 12, shieldHp: 3, fuseSec: 26,
       // The rim, not a comfortable middle distance — they get the whole room to
       // cross, and the raid gets the whole crossing to kill them in.
       spawnRadius: 44, marchSpeed: 1.8,
@@ -182,11 +186,14 @@ export const nekzali: BossDef = {
   ],
 
   mechanics: [
+    // Tactic file: "Residual Toll ticks Shadow damage on random players while the well
+    // siphons; standing in the well ticks 1290390, and on Mythic the spirits inside tick
+    // Swirling Spirit ."
     {
       id: 'well',
       name: 'Soulcoil Well',
       spellId: 1290390,
-      what: "Residual Toll ticks Shadow damage on random players while the well siphons; standing in the well ticks 1290390, and on Mythic the spirits inside tick Swirling Spirit .",
+      what: "The pool of black water in the middle of the room. Touching it kills you outright, and it is there from the pull to the kill.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
       shape: { kind: 'circle', radius: 13 },
@@ -205,11 +212,14 @@ export const nekzali: BossDef = {
       good: 'Zero contact events all pull; healers treat Residual Toll as the damage floor.',
       failText: 'Stepped into the Soulcoil Well',
     },
+    // Tactic file: "Nek'zali stirs the well herself, invoking four Soulcoil Rites back to
+    // back — the scripted healing burst and the marker that separates scripted Rites from
+    // leaked ones."
     {
       id: 'ignition',
       name: 'Soulcoil Ignition',
       spellId: 1293664,
-      what: "Nek'zali stirs the well herself, invoking four Soulcoil Rites back to back — the scripted healing burst and the marker that separates scripted Rites from leaked ones.",
+      what: "She stirs the well herself and fires four Soulcoil Rites back to back — the fight's scheduled burst of raid damage.",
       roles: ['healer'],
       telegraphMs: 2500,
       origin: 'boss',
@@ -231,11 +241,15 @@ export const nekzali: BossDef = {
       good: 'Only the scripted Rites fire, a cooldown lands on each Ignition, and Ritual Burn is still in low double digits at the kill.',
       failText: '',
     },
+    // Tactic file: "Raid-wide Shadow burst plus a never-expiring stacking DoT each time a
+    // soul enters the well, each stacking Ritual Burn , +15% mechanic damage taken for 60s.
+    // Soulcoil Ignition fires four Rites back to back while Anguished Echoes rain down as
+    // knockback circles."
     {
       id: 'rite',
       name: 'Soulcoil Rite',
       spellId: 1288772,
-      what: "Raid-wide Shadow burst plus a never-expiring stacking DoT each time a soul enters the well, each stacking Ritual Burn , +15% mechanic damage taken for 60s. Soulcoil Ignition fires four Rites back to back while Anguished Echoes rain down as knockback circles.",
+      what: "Every soul that reaches the well hits the whole raid and leaves a stack of Ritual Burn that never falls off.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -254,11 +268,13 @@ export const nekzali: BossDef = {
       good: 'Only the scripted Rites fire, a cooldown lands on each Ignition, and Ritual Burn is still in low double digits at the kill.',
       failText: '',
     },
+    // Tactic file: "Pure aura, +15% mechanic damage taken per stack for 1 min — no damage
+    // events of its own, stack count is the add-leak scoreboard."
     {
       id: 'burn',
       name: 'Ritual Burn',
       spellId: 1297624,
-      what: "Pure aura, +15% mechanic damage taken per stack for 1 min — no damage events of its own, stack count is the add-leak scoreboard.",
+      what: "A permanent stack on the whole raid. It deals no damage itself, but every stack makes all later damage land harder.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -271,11 +287,14 @@ export const nekzali: BossDef = {
       good: 'Only the scripted Rites fire, a cooldown lands on each Ignition, and Ritual Burn is still in low double digits at the kill.',
       failText: '',
     },
+    // Tactic file: "Ensnares several players, drags then flings them, and leaves a 15s
+    // Shadow DoT that spawns a Latent Cultist where it ends — an explosion plus a
+    // persistent puddle ticking Shadow damage and snaring 40%."
     {
       id: 'rend',
       name: 'Essence Rend',
       spellId: 1287434,
-      what: "Ensnares several players, drags then flings them, and leaves a 15s Shadow DoT that spawns a Latent Cultist where it ends — an explosion plus a persistent puddle ticking Shadow damage and snaring 40%.",
+      what: "Snares several players, drags and flings them, then leaves a Latent Cultist puddle wherever the debuff finally ends.",
       // Never lands on a tank. The tank still sees rent players walking it to the
       // wall — that is the shape of the mechanic and worth watching — but it is
       // not a job they will ever be handed.
@@ -290,14 +309,16 @@ export const nekzali: BossDef = {
       // outside of the room.
       rule: { type: 'carryOut', minDistance: 30 },
       spawns: { defId: 'cultist' },
-      good: 'Rent players reach the dump zone before the dispel lands, so puddles sit off the Amani intercept lane.',
+      good: 'Rent players reach the dump zone before the dispel lands, so puddles sit off the Amani kill lane.',
       failText: 'Dropped Essence Rend on the raid — Cultist in the lane',
     },
+    // Tactic file: "Spawn explosion plus a persistent puddle dealing Shadow damage per
+    // second and snaring 40% — any hit on any player is a failure."
     {
       id: 'cultist',
       name: 'Latent Cultist',
       spellId: 1288554,
-      what: "Spawn explosion plus a persistent puddle dealing Shadow damage per second and snaring 40% — any hit on any player is a failure.",
+      what: "The puddle Essence Rend leaves behind. It ticks Shadow damage and snares anyone standing in it, and it never goes away.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                  // spawned already active where the Rend ended
       shape: { kind: 'circle', radius: 8 },
@@ -309,14 +330,16 @@ export const nekzali: BossDef = {
       // up after itself would delete the only reason dump-zone discipline
       // matters. By Stage Two the floor is a maze the raid built.
       permanent: true,
-      good: 'Rent players reach the dump zone before the dispel lands, so puddles sit off the Amani intercept lane.',
+      good: 'Rent players reach the dump zone before the dispel lands, so puddles sit off the Amani kill lane.',
       failText: 'Stood in a Latent Cultist puddle — 40% snare',
     },
+    // Tactic file: "Interrupt Cast plus a Pacify and Silence aura on players; it also
+    // commands the Latent Cultists to reposition, dancing every puddle around the well."
     {
       id: 'invoke',
       name: 'Invoke',
       spellId: 1299722,
-      what: "Interrupt Cast plus a Pacify and Silence aura on players; it also commands the Latent Cultists to reposition, dancing every puddle around the well.",
+      what: "Silences the raid, and sets every Latent Cultist puddle sliding around the well so the floor you memorised moves.",
       roles: ['healer'],
       telegraphMs: 3000,
       origin: 'boss',
@@ -332,11 +355,15 @@ export const nekzali: BossDef = {
       good: 'The raid re-reads the floor after every Invoke.',
       failText: '',
     },
+    // Tactic file: "Spectral echoes launched at the current tank burst for Shadow damage ,
+    // hitting harder the less distance they travel. Boss melee applies Hollowing Strikes ,
+    // a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also
+    // call it Sever/Hollowed)."
     {
       id: 'barrage',
       name: 'Possession Barrage',
       spellId: 1284103,
-      what: "Spectral echoes launched at the current tank burst for Shadow damage , hitting harder the less distance they travel. Boss melee applies Hollowing Strikes , a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also call it Sever/Hollowed).",
+      what: "Spectral echoes launch at whoever is tanking her and burst on the whole raid. They hit harder the less distance they travel.",
       // The tank's mechanic and nobody else's. A dps or healer cannot influence
       // where the tank was standing when the echoes launched, so telling them
       // about it is noise in the one place a trainer must not add noise.
@@ -361,11 +388,15 @@ export const nekzali: BossDef = {
       good: 'Tank out of the stack with a defensive up, raid spread wide, tanks swapping on an agreed stack count so the barrage tank is never the one at high stacks.',
       failText: 'Too close to the Barrage launch',
     },
+    // Tactic file: "Spectral echoes launched at the current tank burst for Shadow damage ,
+    // hitting harder the less distance they travel. Boss melee applies Hollowing Strikes ,
+    // a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also
+    // call it Sever/Hollowed)."
     {
       id: 'hollowing',
       name: 'Hollowing Strikes',
       spellId: 1284109,
-      what: "Spectral echoes launched at the current tank burst for Shadow damage , hitting harder the less distance they travel. Boss melee applies Hollowing Strikes , a 15s stacking DoT cutting healing and absorbs received by 5% per stack (guides also call it Sever/Hollowed).",
+      what: "Her melee lands a stacking debuff on the tank holding her, cutting the healing and absorbs they receive by 5% a stack.",
       roles: ['tank'],
       telegraphMs: 1500,
       origin: 'boss',
@@ -382,11 +413,14 @@ export const nekzali: BossDef = {
       good: 'Tank out of the stack with a defensive up, raid spread wide, tanks swapping on an agreed stack count so the barrage tank is never the one at high stacks.',
       failText: 'Held Hollowing Strikes too long — taunt the swap sooner',
     },
+    // Tactic file: "An Echo drops a 10yd Fire soak circle that splits among everyone inside;
+    // anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in
+    // a 4yd blast that incinerates Vessels of Awakening and Amani corpses."
     {
       id: 'pyre',
       name: 'Hungering Pyre',
       spellId: 1289855,
-      what: "An Echo drops a 10yd Fire soak circle that splits among everyone inside; anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in a 4yd blast that incinerates Vessels of Awakening and Amani corpses.",
+      what: "An Echo drops a Fire circle and its damage splits between everyone stood in it. Anyone who is not in it catches Slithering Flame.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 10 },   // "a 10yd Fire soak circle"
@@ -403,11 +437,14 @@ export const nekzali: BossDef = {
       good: 'Full assigned head count in every circle; a landed flame is walked onto the corpse pile to deny repossession.',
       failText: 'Missed the Hungering Pyre soak',
     },
+    // Tactic file: "An Echo drops a 10yd Fire soak circle that splits among everyone inside;
+    // anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in
+    // a 4yd blast that incinerates Vessels of Awakening and Amani corpses."
     {
       id: 'flame',
       name: 'Slithering Flame',
       spellId: 1294933,
-      what: "An Echo drops a 10yd Fire soak circle that splits among everyone inside; anyone who misses it gets Slithering Flame , an 8s Fire DoT detonating as Cremation in a 4yd blast that incinerates Vessels of Awakening and Amani corpses.",
+      what: "A Fire debuff on one player. After eight seconds it detonates as Cremation, and the blast burns any Amani corpses in range.",
       lethal: true,
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 8000,               // "an 8s Fire DoT detonating as Cremation"
@@ -418,16 +455,23 @@ export const nekzali: BossDef = {
       // because every corpse still lying there when the intermission ends gets
       // back up. The distance is measured from the well, which is where the
       // corpses are not.
+      // It is a tool, not a liability: Cremation on the corpse pile is what stops
+      // the Amani standing back up. The briefing used to say 'walk it clear of the
+      // group', which is a different instruction from the one the fight wants.
+      carryTarget: 'the Amani corpses',
       rule: { type: 'carryOut', minDistance: 24 },
       spawns: { defId: 'cremation' },
       good: 'Full assigned head count in every circle; a landed flame is walked onto the corpse pile to deny repossession.',
       failText: 'Let Slithering Flame detonate on the raid',
     },
+    // Tactic file: "4yd Fire blast when Slithering Flame expires, burning Vessels of
+    // Awakening and Amani corpses in range — the flame carrier is expected in this data,
+    // everyone else is a failure."
     {
       id: 'cremation',
       name: 'Cremation',
       spellId: 1289875,
-      what: "4yd Fire blast when Slithering Flame expires, burning Vessels of Awakening and Amani corpses in range — the flame carrier is expected in this data, everyone else is a failure.",
+      what: "The small Fire blast where Slithering Flame expires. It burns Amani corpses for good, and hurts anyone stood beside the carrier.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1600,
       shape: { kind: 'circle', radius: 4 },   // "a 4yd blast"
@@ -444,11 +488,13 @@ export const nekzali: BossDef = {
       good: 'Full assigned head count in every circle; a landed flame is walked onto the corpse pile to deny repossession.',
       failText: 'Caught by a Cremation blast',
     },
+    // Tactic file: "Real Shadow damage at 300yd while the well siphons souls, leaving
+    // Hollowed after 16s — the encounter's baseline damage floor, informational."
     {
       id: 'toll',
       name: 'Residual Toll',
       spellId: 1298696,
-      what: "Real Shadow damage at 300yd while the well siphons souls, leaving Hollowed after 16s — the encounter's baseline damage floor, informational.",
+      what: "Steady Shadow damage on random players for as long as the well is siphoning souls. It is the fight's baseline damage floor.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -460,11 +506,13 @@ export const nekzali: BossDef = {
       good: 'Zero contact events all pull; healers treat Residual Toll as the damage floor.',
       failText: '',
     },
+    // Tactic file: "Stage Two soft enrage — ticking Shadow damage on the whole raid every
+    // second until she dies; unavoidable, informational plus deaths."
     {
       id: 'uncoiling',
       name: 'Uncoiling',
       spellId: 1292315,
-      what: "Stage Two soft enrage — ticking Shadow damage on the whole raid every second until she dies; unavoidable, informational plus deaths.",
+      what: "The Stage Two soft enrage. Shadow damage ticks on the whole raid every second and does not stop until she is dead.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',

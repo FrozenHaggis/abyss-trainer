@@ -227,11 +227,14 @@ export const vashnik: BossDef = {
   ],
 
   mechanics: [
+    // Tactic file: "The pool at the centre of the hall. Every living venom
+    // crawls at it, and one arriving casts Malignant Burst; the Virulent Fumes
+    // haze standing over it is what burns anyone who walks in."
     {
       id: 'cavity',
       name: 'Malignant Cavity',
       spellId: 1291467,
-      what: "The pool at the centre of the hall. Every living venom crawls at it, and one arriving casts Malignant Burst; the Virulent Fumes haze standing over it is what burns anyone who walks in.",
+      what: "The pool in the middle of the hall. Contact is lethal, and every venom on the floor is crawling towards it.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
       shape: { kind: 'circle', radius: 14 },
@@ -253,11 +256,15 @@ export const vashnik: BossDef = {
       good: 'Nobody parks in either.',
       failText: 'Stepped into the Malignant Cavity',
     },
+    // Tactic file: "4s cast draining the two fountains nearest the boss — each
+    // fires an unavoidable Expulsion, grants the matching Infusion (raising
+    // Expulsion damage and venom health), spawns that fountain's venom, and adds
+    // a Toxic Vapor stack. Prepare Blood / Fire / Shadow telegraph the pair."
     {
       id: 'imbibe',
       name: 'Imbibe',
       spellId: 1284663,
-      what: "4s cast draining the two fountains nearest the boss — each fires an unavoidable Expulsion, grants the matching Infusion (raising Expulsion damage and venom health), spawns that fountain's venom, and adds a Toxic Vapor stack. Prepare Blood / Fire / Shadow telegraph the pair.",
+      what: "Vashnik drinks from the two fountains nearest him. Each one blasts the raid, spawns its venom, and adds a Toxic Vapor stack that never falls off.",
       roles: ['tank'],
       telegraphMs: 4000,                 // "4s cast draining two of three fountains"
       origin: 'boss',
@@ -277,11 +284,13 @@ export const vashnik: BossDef = {
       good: 'The tank parks the boss on a mark so the planned pair drains every cycle.',
       failText: 'Drained the same altar twice running — its Infusion stacked',
     },
+    // Tactic file: "Unavoidable raid-wide Shadow damage when Imbibe drains the
+    // Bleeding Snake Fountain; also spawns the Clotting Venoms."
     {
       id: 'hemo',
       name: 'Hemo Expulsion',
       spellId: 1298582,
-      what: "Unavoidable raid-wide Shadow damage when Imbibe drains the Bleeding Snake Fountain; also spawns the Clotting Venoms.",
+      what: "Unavoidable raid-wide Shadow damage the instant the red fountain is drained. The Clotting Venoms come out with it.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -292,11 +301,13 @@ export const vashnik: BossDef = {
       good: 'The tank parks the boss on a mark so the planned pair drains every cycle.',
       failText: '',
     },
+    // Tactic file: "Unavoidable raid-wide Fire damage when Imbibe drains the
+    // Burning Snake Fountain; also spawns the Burning Venoms."
     {
       id: 'conflagrating',
       name: 'Conflagrating Expulsion',
       spellId: 1298587,
-      what: "Unavoidable raid-wide Fire damage when Imbibe drains the Burning Snake Fountain; also spawns the Burning Venoms.",
+      what: "Unavoidable raid-wide Fire damage the instant the orange fountain is drained. The Burning Venoms come out with it.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -305,11 +316,13 @@ export const vashnik: BossDef = {
       good: 'The tank parks the boss on a mark so the planned pair drains every cycle.',
       failText: '',
     },
+    // Tactic file: "Unavoidable 400yd Shadow damage when Imbibe drains the
+    // Shadow Snake Fountain; also spawns the Shrouded Venoms."
     {
       id: 'gloom',
       name: 'Gloom Expulsion',
       spellId: 1298583,
-      what: "Unavoidable 400yd Shadow damage when Imbibe drains the Shadow Snake Fountain; also spawns the Shrouded Venoms.",
+      what: "Unavoidable raid-wide Shadow damage the instant the purple fountain is drained. The Shrouded Venoms come out with it.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -318,11 +331,13 @@ export const vashnik: BossDef = {
       good: 'The tank parks the boss on a mark so the planned pair drains every cycle.',
       failText: '',
     },
+    // Tactic file: "A venom reaching the Cavity casts 1280189 — 300yd Nature
+    // burst plus a DoT every 3s for 30s that stacks with every subsequent leak."
     {
       id: 'burst',
       name: 'Malignant Burst',
       spellId: 1280189,
-      what: "A venom reaching the Cavity casts 1280189 — 300yd Nature burst plus a DoT every 3s for 30s that stacks with every subsequent leak.",
+      what: "What a venom does when it reaches the pool: a burst on the whole raid, plus a Nature DoT that stacks with every later leak.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
@@ -338,11 +353,13 @@ export const vashnik: BossDef = {
       good: 'Every venom dies en route — one Malignant Burst cast is one venom leaked.',
       failText: '',
     },
+    // Tactic file: "10yd Physical drain around a Siphoning Infection carrier —
+    // three or four un-debuffed players stack into it to clear it."
     {
       id: 'siphon',
       name: 'Siphon Blood',
       spellId: 1295229,
-      what: "10yd Physical drain around a Siphoning Infection carrier — three or four un-debuffed players stack into it to clear it.",
+      what: "A drain that opens around whoever has Siphoning Infection. It saps everyone inside the circle, and only clears once enough bodies share it.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 3000,
       shape: { kind: 'circle', radius: 10 },    // "drains anyone within 10yd"
@@ -357,6 +374,11 @@ export const vashnik: BossDef = {
       // and names the very people doing the mechanic properly. `collective` with
       // an empty failText is the fix: the raid still eats an unsoaked drain, the
       // debrief never puts anybody's name against it.
+      // The derived soak line does not fit this one. Siphon Blood is not damage
+      // split between the bodies that turn up — it is the drain that clears the
+      // carrier's Siphoning Infection, and only players WITHOUT an infection may
+      // go in. Derivation cannot know either fact from the rule type.
+      brief: 'If you are clean, stack into the circle — three or four bodies clear the carrier. If you are the one carrying it, hold still and let them reach you. Nobody is named for this one.',
       rule: { type: 'beInside' },
       soakers: 4,
       // Not `lethal`: abilities.json categorises 1295229 as Avoidable rather
@@ -367,11 +389,15 @@ export const vashnik: BossDef = {
       good: 'Carriers move on the telegraph, not on the debuff; healers pre-shield the absorb rather than out-healing it.',
       failText: '',
     },
+    // Tactic file: "Fire variant — periodic Fire damage, then the carrier
+    // detonates Caustic Explosion when it ends, falling off with distance;
+    // wowhead lists a Magic dispel type but no raid dispels it, so it is a
+    // placed bomb rather than a cleanse target."
     {
       id: 'exploding',
       name: 'Exploding Infection',
       spellId: 1295173,
-      what: "Fire variant — periodic Fire damage, then the carrier detonates Caustic Explosion when it ends, falling off with distance; wowhead lists a Magic dispel type but no raid dispels it, so it is a placed bomb rather than a cleanse target.",
+      what: "The orange fountain bomb. It burns one player while it lasts, then detonates Caustic Explosion on everyone still near them.",
       roles: ['tank', 'dps', 'healer'],
       // Duration is not stated in the tactic file; 8s is a playable window for
       // the walk out. NOT a dispel — see the header note.
@@ -390,11 +416,14 @@ export const vashnik: BossDef = {
       good: 'Carriers move on the telegraph, not on the debuff; healers pre-shield the absorb rather than out-healing it.',
       failText: 'Detonated Exploding Infection on the raid',
     },
+    // Tactic file: "Fire detonation when Exploding Infection ends, falling off
+    // with distance — only 4 players were hit in the log sample, so a
+    // non-carrier hit means they were too close."
     {
       id: 'caustic',
       name: 'Caustic Explosion',
       spellId: 1295209,
-      what: "Fire detonation when Exploding Infection ends, falling off with distance — only 4 players were hit in the log sample, so a non-carrier hit means they were too close.",
+      what: "The blast an Exploding Infection leaves where it ended. Fire damage to anyone close to the spot, weaker the further out you are.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1400,
       shape: { kind: 'circle', radius: 8 },
@@ -408,11 +437,14 @@ export const vashnik: BossDef = {
       good: 'Carriers move on the telegraph, not on the debuff; healers pre-shield the absorb rather than out-healing it.',
       failText: 'Stood in a Caustic Explosion',
     },
+    // Tactic file: "Shadow variant — Shadow damage every 1.5s plus a 100-150%
+    // healing absorb, dropping 6yd Stygian Burst eruptions underfoot until it
+    // falls off; wowhead lists no dispel type, so healers cannot cleanse it."
     {
       id: 'stygian',
       name: 'Stygian Infection',
       spellId: 1294994,
-      what: "Shadow variant — Shadow damage every 1.5s plus a 100-150% healing absorb, dropping 6yd Stygian Burst eruptions underfoot until it falls off; wowhead lists no dispel type, so healers cannot cleanse it.",
+      what: "The purple fountain rot. It damages one player, blocks healing on them, and drops a Stygian Burst under their feet until it falls off.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 12000,
       origin: 'targeted',
@@ -425,11 +457,13 @@ export const vashnik: BossDef = {
       good: 'Carriers move on the telegraph, not on the debuff; healers pre-shield the absorb rather than out-healing it.',
       failText: 'Laid a Stygian trail through the raid',
     },
+    // Tactic file: "6yd Shadow eruption dropped beneath a Stygian Infection
+    // carrier — standing in one is the failure."
     {
       id: 'stygianburst',
       name: 'Stygian Burst',
       spellId: 1302489,
-      what: "6yd Shadow eruption dropped beneath a Stygian Infection carrier — standing in one is the failure.",
+      what: "A small Shadow eruption left underfoot by a Stygian Infection carrier. It burns anyone standing in it, the carrier included.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1200,
       shape: { kind: 'circle', radius: 6 },     // "6yd Shadow eruption"
@@ -442,11 +476,14 @@ export const vashnik: BossDef = {
       good: 'Carriers move on the telegraph, not on the debuff; healers pre-shield the absorb rather than out-healing it.',
       failText: 'Stood in a Stygian Burst pool',
     },
+    // Tactic file: "Fire eruption plus a stacking Fire DoT when a Burning Venom
+    // dies — a large slice of the raid hit on one cast means it was killed
+    // inside the stack."
     {
       id: 'surge',
       name: 'Caustic Surge',
       spellId: 1285979,
-      what: "Fire eruption plus a stacking Fire DoT when a Burning Venom dies — a large slice of the raid hit on one cast means it was killed inside the stack.",
+      what: "A Burning Venom erupts where it dies, hitting everyone near the corpse with Fire and a DoT that stacks.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 2000,
       shape: { kind: 'circle', radius: 9 },
@@ -462,11 +499,13 @@ export const vashnik: BossDef = {
       good: 'Burning Venom erupts with Caustic Surge, so kill it away from the raid.',
       failText: 'Caught by a Caustic Surge',
     },
+    // Tactic file: "3yd Shadow missiles fired at nearby players when a Shrouded
+    // Venom dies — clear out before it drops."
     {
       id: 'ejection',
       name: 'Umbral Ejection',
       spellId: 1286737,
-      what: "3yd Shadow missiles fired at nearby players when a Shrouded Venom dies — clear out before it drops.",
+      what: "A dying Shrouded Venom throws Shadow missiles out, dropping a patch of shadow at every player at once.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1600,
       shape: { kind: 'circle', radius: 5 },
@@ -481,11 +520,14 @@ export const vashnik: BossDef = {
       good: 'Shrouded Venom carries a full-health absorb and fires Umbral Ejection within 3yd on death.',
       failText: 'Stood in an Umbral Ejection pool',
     },
+    // Tactic file: "3-5 players get frothed, ticking Nature+Shadow in a 4.5yd
+    // radius for 6s, then erupting into four cardinal Plague Waves for roughly
+    // ten times the damage."
     {
       id: 'froth',
       name: 'Plague Froth',
       spellId: 1281925,
-      what: "3-5 players get frothed, ticking Nature+Shadow in a 4.5yd radius for 6s, then erupting into four cardinal Plague Waves for roughly ten times the damage.",
+      what: "Three to five players are frothed. Each ticks damage in a small bubble around them, then bursts into four Plague Waves.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 6000,                 // "ticking ... for 6s"
       shape: { kind: 'circle', radius: 4.5 },   // "a 4.5yd radius"
@@ -501,11 +543,14 @@ export const vashnik: BossDef = {
       good: 'Carriers break to assigned spots past 4.5yd of everyone, oriented so all four waves sweep empty floor.',
       failText: 'Held Plague Froth inside the raid',
     },
+    // Tactic file: "3-5 players get frothed, ticking Nature+Shadow in a 4.5yd
+    // radius for 6s, then erupting into four cardinal Plague Waves for roughly
+    // ten times the damage."
     {
       id: 'wave',
       name: 'Plague Wave',
       spellId: 1295798,
-      what: "3-5 players get frothed, ticking Nature+Shadow in a 4.5yd radius for 6s, then erupting into four cardinal Plague Waves for roughly ten times the damage.",
+      what: "The lines that erupt out of a Plague Froth when it expires, sweeping the floor for about ten times the Froth damage.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1200,                 // erupts the instant the Froth expires
       // Four cardinal waves in the real fight; the engine spawns one line per
@@ -517,11 +562,14 @@ export const vashnik: BossDef = {
       good: 'Carriers break to assigned spots past 4.5yd of everyone, oriented so all four waves sweep empty floor.',
       failText: 'Clipped by a Plague Wave',
     },
+    // Tactic file: "1280935 on the active tank applies 1280934 for 32s — Nature
+    // every 2s plus +100% Physical damage taken (200% on Mythic). Stacks, no
+    // dispel type."
     {
       id: 'fangs',
       name: 'Dripping Fangs',
       spellId: 1280934,
-      what: "1280935 on the active tank applies 1280934 for 32s — Nature every 2s plus +100% Physical damage taken (200% on Mythic). Stacks, no dispel type.",
+      what: "A bite on the current tank: Nature damage over time, and it doubles the Physical damage they take. It stacks and it cannot be removed.",
       roles: ['tank'],
       telegraphMs: 1800,
       origin: 'boss',
@@ -533,11 +581,14 @@ export const vashnik: BossDef = {
       good: 'Tanks swap on every application; the gap between casts is the repositioning window for the next Imbibe.',
       failText: 'Held Dripping Fangs through a second application',
     },
+    // Tactic file: "Nature ground DoT reapplied every 1.2s while you stand in
+    // the trail a living venom leaves — every application is a player standing
+    // in it."
     {
       id: 'venom',
       name: 'Deadly Venom',
       spellId: 1297338,
-      what: "Nature ground DoT reapplied every 1.2s while you stand in the trail a living venom leaves — every application is a player standing in it.",
+      what: "The slime trail a crawling venom drags behind it. It reapplies a Nature DoT for as long as you are standing in it.",
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                    // spawned already active
       shape: { kind: 'circle', radius: 5 },
@@ -548,11 +599,13 @@ export const vashnik: BossDef = {
       good: 'Nobody parks in either.',
       failText: 'Parked in a venom trail',
     },
+    // Tactic file: "Healing-absorb debuff, Magic dispel type on wowhead and
+    // genuinely dispelled 126 times across 332 applications in the log corpus."
     {
       id: 'clotblood',
       name: 'Clotting Blood',
       spellId: 1302517,
-      what: "Healing-absorb debuff, Magic dispel type on wowhead and genuinely dispelled 126 times across 332 applications in the log corpus.",
+      what: "A Magic debuff that blocks healing on one player — every heal they take is swallowed by the absorb until it is gone.",
       roles: ['healer'],
       telegraphMs: 4000,
       shape: { kind: 'circle', radius: 3 },
@@ -566,11 +619,14 @@ export const vashnik: BossDef = {
       good: 'Every venom dies en route. Clotting Venom is CC-immune and splits.',
       failText: 'Left Clotting Blood up — absorb never cleansed',
     },
+    // Tactic file: "5s Shadow hit plus a movement snare, Magic dispel type on
+    // wowhead and genuinely dispelled 58 times across 300 applications in the
+    // log corpus."
     {
       id: 'congealing',
       name: 'Congealing Bolt',
       spellId: 1305833,
-      what: "5s Shadow hit plus a movement snare, Magic dispel type on wowhead and genuinely dispelled 58 times across 300 applications in the log corpus.",
+      what: "A Magic bolt that lands Shadow damage on one player and snares them, leaving them too slow to walk out of whatever comes next.",
       roles: ['healer'],
       telegraphMs: 5000,                 // "5s Shadow hit plus a movement snare"
       shape: { kind: 'circle', radius: 3 },
@@ -583,11 +639,13 @@ export const vashnik: BossDef = {
       good: 'Every venom dies en route. Shrouded Venom carries a full-health absorb and fires Umbral Ejection within 3yd on death.',
       failText: 'Left the Congealing Bolt snare up through a wave',
     },
+    // Tactic file: "300yd Nature tick every 2s, one stack per Imbibe — the soft
+    // enrage; unavoidable and never a player failure."
     {
       id: 'vapor',
       name: 'Toxic Vapor',
       spellId: 1284561,
-      what: "300yd Nature tick every 2s, one stack per Imbibe — the soft enrage; unavoidable and never a player failure.",
+      what: "Nature damage ticking on the whole raid. Every drink adds a stack that never falls off, so it hurts more the longer the pull runs.",
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',

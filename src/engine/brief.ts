@@ -30,14 +30,42 @@ export interface RoleBrief {
 export function briefForAdd(def: AddDef, role: Role): RoleBrief {
   const canKick = abilitiesFor(role).includes('interrupt')
   switch (def.job) {
-    case 'kill':
+    case 'kill': {
+      // An add that walks somewhere is racing a distance, not a timer, and
+      // saying "before its timer runs out" to somebody watching one cross the
+      // room describes a clock they cannot see. What they can see is how far it
+      // has left to go.
+      const marching = def.marchSpeed !== undefined
+      const deadline = marching ? 'before it reaches the middle' : 'before its timer runs out'
+
+      // Two that must not die together. "Kill it fast" is the WRONG reflex, so
+      // the briefing has to say so out loud — this is the same failure as the
+      // Restless Amani being told to block, inverted.
+      if (def.noSimultaneousDeath) {
+        return {
+          verb: 'STAGGER THE KILL',
+          line: `There are two, and killing them within ${def.noSimultaneousDeath.withinSec} seconds of each other wipes the raid. Bring one down, hold the second deliberately, and kill them away from the group.`,
+          yours: true,
+        }
+      }
+
+      // One that becomes several. Where it dies matters more than how fast.
+      if (def.splits) {
+        return {
+          verb: 'KILL IT EARLY',
+          line: `It splits into ${def.splits.count} on death and both halves carry on walking, so kill it early and far out. Finishing it near the middle just puts the pieces there instead.`,
+          yours: true,
+        }
+      }
+
       return {
         verb: def.shieldHp ? 'BREAK THE SHIELD' : 'KILL IT',
         line: def.shieldHp
-          ? 'It carries an absorb. Your damage does nothing at all until that shield breaks, so keep firing through it — then kill the add before its timer runs out.'
-          : 'Shoot it down before its timer runs out. Leaving it alive is what hurts the raid here, not standing in the wrong place.',
+          ? `It carries an absorb and your damage does nothing at all until that shield breaks. Keep firing through it, then kill the add ${deadline}.`
+          : `Shoot it down ${deadline}. Leaving it alive is what hurts the raid here, not standing in the wrong place.`,
         yours: true,
       }
+    }
     case 'kick':
       return canKick
         ? { verb: 'KICK IT', line: 'It casts on a cycle. Interrupt every cast — watch the ring closing around it and press your kick before it completes.', yours: true }
@@ -61,12 +89,29 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
   const kit = abilitiesFor(role)
   const mine = def.roles.includes(role) && !def.collective
 
+  // An authored line wins over the derived one, but only the line — the verb
+  // still comes from the rule so the spoken vocabulary stays the same across
+  // every fight. See MechanicDef.brief for when this is justified.
+  const override = (b: RoleBrief): RoleBrief =>
+    def.brief ? { ...b, line: def.brief } : b
+
   // Something you cannot be blamed for still needs an answer, because "is this
   // my problem?" is the first thing a raider asks.
   const notYours = (line: string): RoleBrief => ({ verb: 'STAY CLEAR', line, yours: false })
 
   switch (def.rule.type) {
     case 'avoid':
+      // "Before it lands" describes a telegraph resolving. A permanent pool has
+      // already landed and is never going anywhere — several of these spawn on
+      // top of you and then stay for the rest of the pull, so promising the
+      // floor will clear itself is the opposite of the lesson.
+      if (def.permanent) {
+        return {
+          verb: 'MOVE OUT',
+          line: 'Get off it and stay off it. This ground does not expire — it is part of the floor for the rest of the pull, and the room only gets smaller from here.',
+          yours: mine,
+        }
+      }
       return {
         verb: 'MOVE OUT',
         line: def.lethal
@@ -82,14 +127,31 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         yours: mine,
       }
 
-    case 'beInside':
-      return {
+    case 'beInside': {
+      // An annulus is a RANGE BAND, not a soak. "GET IN" sends a tank sprinting
+      // toward the thing they are supposed to be running away from: Possession
+      // Barrage is scored on being outside an inner ring, and its outer edge is
+      // wider than the room, so the only reachable failure is standing close.
+      if (def.shape?.kind === 'annulus') {
+        return {
+          verb: 'RUN OUT',
+          line: `Get more than ${def.shape.inner} yards away before it fires. It hits harder the less distance it has to travel, and there is no such thing as too far.`,
+          yours: mine,
+        }
+      }
+      return override({
         verb: 'GET IN',
         line: def.collective
           ? 'Get into it. The damage is split between everyone struck, so bodies in the shape is what makes it survivable — nobody is blamed individually for this one.'
           : 'Get into the marked shape before it resolves. Being outside it is the failure here, not being inside.',
-        yours: mine,
-      }
+        // `collective` means "never name an individual in the debrief", NOT
+        // "not your job". Conflating the two headed the panel "Not your job"
+        // directly above an instruction to get into it — on the one mechanic in
+        // the fight that is cleared by bodies turning up. The line already
+        // carries the no-blame clause; the header should not contradict it.
+        yours: def.roles.includes(role),
+      })
+    }
 
     case 'collect':
       return {
@@ -99,9 +161,22 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       }
 
     case 'carryOut':
+      // A carry with a destination is a tool, not a liability.
+      if (def.carryTarget) {
+        return {
+          verb: 'RUN IT OUT',
+          line: `You are carrying it. Walk it onto ${def.carryTarget} and let it expire there — that is what it is for, not simply getting it away from people.`,
+          yours: mine,
+        }
+      }
+      // Measured from the MIDDLE OF THE ROOM, not from the raid. The engine
+      // checks distance from the arena centre, and on the fights that have a
+      // lethal pool in the middle "away from the group" and "away from the
+      // centre" can point in opposite directions — so the old wording could
+      // send a carrier straight at the thing that kills on contact.
       return {
         verb: 'RUN IT OUT',
-        line: `You are carrying it. Walk at least ${def.rule.minDistance} yards clear of the group before it expires, drop it there, and come back.`,
+        line: `You are carrying it. Get at least ${def.rule.minDistance} yards out from the middle of the room before it expires, drop it there, and come back.`,
         yours: mine,
       }
 
@@ -125,9 +200,13 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         : notYours('A tank cone. Stay out of the front of the boss and let the tank aim it.')
 
     case 'tankSwap':
-      return role === 'tank'
-        ? { verb: 'TAUNT', line: 'Watch the stacks. Taunt it off the other tank before their stacks turn lethal, and expect it back.', yours: mine }
-        : notYours('A tank swap. Nothing for you here beyond healing the pair through it.')
+      if (role !== 'tank') return notYours('A tank swap. Nothing for you here beyond healing the pair through it.')
+      // "Watch the stacks" is wrong advice when the answer is one. A tank told
+      // to watch a count climb will hold through a second application, which on
+      // a swap-on-every-cast mechanic is precisely the failure.
+      return def.rule.maxStacks <= 1
+        ? { verb: 'TAUNT', line: 'Taunt on every application. There is no stack count to sit on here — one is already too many, so the pair trade it back and forth all pull.', yours: mine }
+        : { verb: 'TAUNT', line: `Watch the stacks. Take it off the other tank at ${def.rule.maxStacks} before what it does to their healing gets away from them, and expect it straight back.`, yours: mine }
 
     case 'drainNearest':
       // The only mechanic in the raid where a tank's footwork picks what
@@ -187,9 +266,32 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         yours: mine,
       }
 
-    case 'raidDamage':
+    case 'raidDamage': {
+      // A proximity aura is the one raidDamage that IS positional. Both Marks
+      // carry a radius, stack forever, and stack from EACH golem you are inside
+      // — so "nothing to dodge and nothing you can do wrong" was the exact
+      // opposite of the fight's central lesson, printed on the panel that
+      // teaches it.
+      const prox = def.proximityStack
+      if (prox) {
+        return {
+          verb: 'MIND THE RANGE',
+          line: `You collect a stack every ${Math.round(prox.everySec)} seconds from every source you are within ${prox.radius} yards of, and they never fall off. Stay inside your own and outside the other — carrying both costs exactly double for the rest of the pull.`,
+          yours: true,
+        }
+      }
+      // A counter with no damage of its own. Saying "heal through it" invites a
+      // healer to spend a cooldown on something that does nothing by itself.
+      if (def.rule.dps === 0) {
+        return {
+          verb: 'WATCH THE STACKS',
+          line: 'This does no damage on its own — it multiplies everything else the fight does to you, and it never falls off. The count only climbs when something the raid was supposed to stop gets through.',
+          yours: false,
+        }
+      }
       return role === 'healer'
         ? { verb: 'HEAL THROUGH', line: 'Unavoidable raid damage. There is nothing to dodge — cover it with cooldowns.', yours: false }
         : notYours('Unavoidable raid damage. Nothing to dodge and nothing you can do wrong here.')
+    }
   }
 }

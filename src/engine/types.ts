@@ -373,6 +373,31 @@ export interface MechanicDef {
    *                  them for the group's miss.
    */
   lethal?: boolean
+  /**
+   * Where a carried debuff is meant to END UP, in words.
+   *
+   * Some carries are liabilities to be dumped anywhere empty; some are tools
+   * with a destination. Slithering Flame is the second kind — it has to expire
+   * on the Amani corpses, because Cremation is what stops them getting back up.
+   * The briefing said "walk 24 yards clear of the group and drop it" while the
+   * live prompt said BURN A CORPSE and the Good line said walk it onto the pile:
+   * three instructions, one of them wrong, all on screen at once.
+   */
+  carryTarget?: string
+  /**
+   * Replaces the generated instruction line for this one mechanic.
+   *
+   * The briefing is derived from the rule type on purpose — 98 mechanics times
+   * three roles is 294 hand-written lines to keep in step with the engine, and
+   * they would drift. But a rule type describes the SHAPE of a demand, not
+   * every demand that shares that shape: Siphon Blood is a `beInside` whose
+   * damage is not split among the soakers at all, and where only un-debuffed
+   * players may go in. Derivation cannot know that.
+   *
+   * Use sparingly, and only where the derived line would be actively wrong. The
+   * verb still comes from the rule, so the shared vocabulary survives.
+   */
+  brief?: string
   /** Leaves a persistent hazard behind when it resolves. */
   spawns?: { defId: string; delayMs?: number }
   /** Persistent hazards only: how long the pool lingers. */

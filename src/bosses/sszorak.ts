@@ -36,7 +36,6 @@ export const sszorak: BossDef = {
   // Loop taken from the file's overview: "venom and cone pressure, a Raging
   // Crosswinds spread, then a Howling Maelstrom."
   loop: [
-    'maelstrom',
     'corroding', 'claws', 'ravage', 'corroding', 'tempest', 'mutilate',
     'corroding', 'surge', 'claws', 'corroding', 'crosswinds', 'ravage',
     'corroding', 'tempest', 'claws', 'corroding', 'mutilate', 'crosswinds',
@@ -170,31 +169,6 @@ export const sszorak: BossDef = {
       knockbackYards: 16,
       good: 'Carriers spread clear and stand so the knock throws them across the platform.',
       failText: 'Blown into the abyss by Crosswinds',
-    },
-    {
-      id: 'maelstrom',
-      name: 'Howling Maelstrom',
-      spellId: 1285732,
-      roles: ['tank', 'dps', 'healer'],
-      telegraphMs: 4000,
-      // "A succession of gales sweeps the arena, each pushing its own direction."
-      //
-      // This was a 20-60yd annulus you were scored for standing in, but 1285732
-      // is flagged in the ability data as a "phase marker ... no cast events on
-      // PTR" — a dummy. Categorising a marker as avoidable damage is the exact
-      // thing the house rules forbid, because a marker can never be dodged.
-      //
-      // What the gales actually do is push you, and the fight's real killer is
-      // Falling: 31 killing blows in 6 Mythic pulls, more than every boss
-      // ability combined. So the failure is being blown off the platform, not
-      // standing in a ring.
-      shape: { kind: 'circle', radius: 26 },
-      origin: 'boss',
-      rule: { type: 'survive' },
-      knockbackYards: 22,
-      damage: 0.2,
-      good: 'Raid moves with the wind, stays off the edge, and dumps every cooldown into the window.',
-      failText: 'Blown toward the edge by the Maelstrom',
     },
     {
       id: 'digin',

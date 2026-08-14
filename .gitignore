@@ -4,3 +4,6 @@ dist
 
 # Personal music copy — kept local so a published build never redistributes it.
 public/music/*.mp3
+
+# scratch bundles from ad-hoc engine probes
+.scratch/

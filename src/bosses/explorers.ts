@@ -69,9 +69,9 @@ export const explorers: BossDef = {
     },
   ],
   entities: [
-    { id: 'iku', name: "Scrollsage Iku", npcId: 261843, start: { x: 0, y: -21 }, tankedApart: true },
-    { id: 'nama', name: "First Mate Nama", npcId: 261835, start: { x: -18, y: 11 }, tankedApart: true },
-    { id: 'gebbo', name: "Trader Gebbo", npcId: 261848, start: { x: 18, y: 11 } },
+    { id: 'iku', name: "Scrollsage Iku", npcId: 261843, start: { x: 0, y: -26 }, tankedApart: true },
+    { id: 'nama', name: "First Mate Nama", npcId: 261835, start: { x: -22.5, y: 13 }, tankedApart: true },
+    { id: 'gebbo', name: "Trader Gebbo", npcId: 261848, start: { x: 22.5, y: 13 } },
     // Outside the health pool: 0 damage taken across 10,001 player damage events
     // in a Mythic PTR log, while casting Malevolent Presence 1,911 times.
     { id: 'morzahi', name: "Mor'zahi", npcId: 261584, start: { x: 0, y: 34 }, untargetable: true },

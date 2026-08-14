@@ -223,6 +223,16 @@ export interface MechanicDef {
   good: string
   /** Short human failure clause. Never a combat-log query. */
   failText: string
+  /**
+   * Never produces a per-player failure, whatever the rule says.
+   *
+   * Some mechanics are measured collectively by their own tactic file and must
+   * not name anyone. Sszorak's Mutilate is the clearest: "Bad: Not a per-player
+   * failure — track soak count per cast". The player is still told to get into
+   * it, the raid still eats the unsplit hit, and the debrief never puts their
+   * name against it — which is exactly how the analyser reports it.
+   */
+  collective?: boolean
   /** Damage to the player on failure, as a fraction of max health. */
   damage?: number
   /**

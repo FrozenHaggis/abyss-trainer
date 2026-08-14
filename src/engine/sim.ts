@@ -538,7 +538,9 @@ function resolveInstance(w: World, inst: Instance) {
   const { def } = inst
   inst.resolved = true
   w.resolvedCount++
-  const scored = def.roles.includes(w.player.role)
+  // `collective` mechanics are measured per cast, not per player, so they can
+  // never name anyone — see MechanicDef.collective.
+  const scored = def.roles.includes(w.player.role) && !def.collective
   const inside = isInside(inst, w.player.pos)
 
   switch (def.rule.type) {
@@ -1008,7 +1010,11 @@ function allyThink(w: World) {
       const sdx = a.want.x - station.x
       const sdy = a.want.y - station.y
       const sd = Math.hypot(sdx, sdy)
-      const leash = 11
+      // Tight on purpose. A boss walks to its tank, so every yard a tank
+      // wanders is a yard the pair closes — at 11 the Lost Explorers' two
+      // tanked council members drifted 22 yards together and sat inside
+      // United Defense for the whole pull, barking PULL THEM APART forever.
+      const leash = 6
       if (sd > leash) {
         a.want.x = station.x + (sdx / sd) * leash
         a.want.y = station.y + (sdy / sd) * leash

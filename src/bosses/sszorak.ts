@@ -65,8 +65,15 @@ export const sszorak: BossDef = {
       shape: { kind: 'cone', radius: 26, arcDeg: 60 },
       origin: 'boss',
       // "damage is split evenly among everyone struck ... a shared soak, not a
-      // tank-only cone" — so being OUT of it is the failure.
+      // tank-only cone" — so the player is told to get INTO it.
+      //
+      // But the tactic file's Bad line is explicit that it is measured per cast
+      // rather than per player: "Not a per-player failure — track soak count
+      // per cast". So missing it costs the raid and is never put against your
+      // name. This is the same mechanic the analyser once blamed the raid for
+      // soaking correctly, and it is not going to happen twice.
       rule: { type: 'beInside' },
+      collective: true,
       // No source states a required soak count — Sszorak.md says outright
       // "confirm it with the raid leader" — so 4 is a placeholder.
       soakers: 4,

@@ -7,3 +7,8 @@ public/music/*.mp3
 
 # scratch bundles from ad-hoc engine probes
 .scratch/
+
+# ad-hoc engine probe bundles (agents and manual checks)
+.probe/
+.verify/
+.scratch/

@@ -179,7 +179,11 @@ for (const [key, dir] of present) {
     const byId = new Map(realSpells(dir).map(s => [s.spellId, s]))
     const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
     const body = src.slice(Math.max(0, src.indexOf('mechanics: [')))
-    for (const b of body.split(/\n {4}\{\n {6}id:/).slice(1)) {
+    // CRLF-tolerant: LF-only split found nothing on a Windows checkout and this
+    // test passed without checking anything. See invariants.test.js.
+    const blocks = body.split(/\r?\n {4}\{\r?\n {6}id:/).slice(1)
+    assert.ok(blocks.length > 0, `${key}: parsed no mechanic blocks — this check would be vacuous`)
+    for (const b of blocks) {
       const sid = /spellId:\s*(\d+)/.exec(b)
       const rule = /rule:\s*\{\s*type:\s*'([^']+)'/.exec(b)
       if (!sid || !rule) continue
@@ -251,7 +255,11 @@ test('every avoid mechanic is actually escapable', () => {
   const REACTION = 0.35        // seconds of human reaction budget
   for (const [key] of present) {
     const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
-    for (const block of src.split(/\n    \{\n      id: /).slice(1)) {
+    // CRLF-tolerant, and asserted non-empty: LF-only this found nothing on a
+    // Windows checkout, so "every avoid mechanic is escapable" checked nothing.
+    const blocks = src.split(/\r?\n {4}\{\r?\n {6}id: /).slice(1)
+    assert.ok(blocks.length > 0, `${key}: parsed no mechanic blocks — this check would be vacuous`)
+    for (const block of blocks) {
       const id = block.match(/^'([^']+)'/)?.[1] ?? '?'
       const origin = block.match(/origin:\s*'([^']+)'/)?.[1]
       const rule = block.match(/rule:\s*\{\s*type:\s*'([^']+)'/)?.[1]

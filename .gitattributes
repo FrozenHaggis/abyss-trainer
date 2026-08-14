@@ -1,0 +1,9 @@
+# Keep test parsing deterministic across platforms: these files are split on
+# newline-anchored regexes, and a CRLF checkout silently made them match nothing.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.md text eol=lf

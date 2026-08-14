@@ -40,7 +40,12 @@ function spellsOf(key) {
 function mechanicsOf(key) {
   const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
   const body = src.slice(Math.max(0, src.indexOf('mechanics: [')))
-  return body.split(/\n {4}\{\n/).slice(1).map(blk => {
+  // CRLF-tolerant on purpose. This was LF-only, and a Windows working copy
+  // checks out CRLF — so the split matched nothing, every sweep below iterated
+  // zero mechanics, and this whole file passed VACUOUSLY on the author's machine
+  // while CI (which checks out LF) caught a real defect. A parser that silently
+  // finds nothing is worse than no parser, hence readAllMechanics' guard.
+  return body.split(/\r?\n {4}\{\r?\n/).slice(1).map(blk => {
     const g = (re, d = null) => (blk.match(re)?.[1] ?? d)
     const roles = (g(/roles: \[([^\]]*)\]/) ?? '')
       .split(',').map(r => r.trim().replace(/'/g, '')).filter(Boolean)
@@ -61,6 +66,20 @@ function mechanicsOf(key) {
   }).filter(m => m.id && m.rule)
 }
 
+/**
+ * Every boss's mechanics, with a hard guarantee that parsing actually worked.
+ *
+ * Without this a broken regex turns every sweep in this file into a no-op that
+ * reports success. That happened.
+ */
+function readAllMechanics() {
+  const out = BOSSES.map(key => ({ key, mechanics: mechanicsOf(key) }))
+  const empty = out.filter(b => b.mechanics.length === 0).map(b => b.key)
+  assert.equal(empty.length, 0,
+    `parsed zero mechanics from: ${empty.join(', ')} — the sweep would pass vacuously`)
+  return out
+}
+
 const arenaOf = key =>
   Number(readFileSync(join('src/bosses', `${key}.ts`), 'utf8').match(/arenaRadius: (\d+)/)[1])
 
@@ -71,11 +90,16 @@ const arenaOf = key =>
  * Living Venom and Volatile Purge, both flagged for re-mapping on the first
  * live log. Not a defect; a documented data gap.
  */
-function realIdIsUnresolved(spells, name) {
+function realIdIsUnresolved(spells, name, note) {
+  // Stated as a sibling entry with no id — Living Venom does this.
   for (const s of spells.values()) {
     if (s.name === name && s.spellId === 0) return true
   }
-  return false
+  // Or stated in prose on the note itself. Volatile Purge: "CAVEAT: this ID
+  // carries a Dummy effect, so the eruption damage likely lands on a child ID
+  // (siblings ...) — re-map on the first log." The candidates are named but not
+  // confirmed, so the marker is still the only honest handle.
+  return /re-map on the first log|SPELL ID NEEDED|likely lands on a child ID/i.test(note ?? '')
 }
 
 // ── 1. Unavoidable damage must never be scored against a player ──────────────
@@ -83,9 +107,9 @@ function realIdIsUnresolved(spells, name) {
 // all 300-yard raid-wide and all blamed the player for standing somewhere.
 test('sweep: no 300-yard ability is scored per-player on any boss', () => {
   const SAFE = ['raidDamage', 'press', 'tankSwap', 'keepApart', 'burnWindow', 'syncKill']
-  for (const key of BOSSES) {
+  for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
-    for (const m of mechanicsOf(key)) {
+    for (const m of mechanics) {
       const note = spells.get(m.spellId)?.note ?? ''
       if (!/\b300\s*(yd|yard)/i.test(note)) continue
       assert.ok(SAFE.includes(m.rule) || m.collective,
@@ -98,14 +122,14 @@ test('sweep: no 300-yard ability is scored per-player on any boss', () => {
 // Howling Maelstrom was a dummy phase marker given a lethal annulus.
 test('sweep: no marker or dummy ID can be failed on any boss', () => {
   const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive']
-  for (const key of BOSSES) {
+  for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
-    for (const m of mechanicsOf(key)) {
+    for (const m of mechanics) {
       const sp = spells.get(m.spellId)
       const note = sp?.note ?? ''
       if (!/CAST MARKER|phase marker|Dummy effect|server-side script/i.test(note)) continue
       if (!FAILABLE.includes(m.rule) || m.collective) continue
-      assert.ok(realIdIsUnresolved(spells, sp?.name),
+      assert.ok(realIdIsUnresolved(spells, sp?.name, note),
         `${key}/${m.id}: note calls ${m.spellId} a marker/dummy but rule='${m.rule}', ` +
         'and a real player-facing ID exists — key it to that instead')
     }
@@ -127,7 +151,7 @@ test('sweep: mechanics the tactic files call collective never name a player', ()
     if (!existsSync(BASE + MD[key])) continue     // tactic files are outside the repo
     const tactic = readFileSync(BASE + MD[key], 'utf8')
     const spells = spellsOf(key)
-    for (const m of mechanicsOf(key)) {
+    for (const m of mechanicsOf(key)) {   // guarded by readAllMechanics elsewhere
       if (!['avoid', 'beInside', 'collect', 'carryOut'].includes(m.rule) || m.collective) continue
       const name = spells.get(m.spellId)?.name
       if (!name) continue
@@ -147,8 +171,8 @@ test('sweep: mechanics the tactic files call collective never name a player', ()
 // ── 4. Never scored for a button the role does not have ──────────────────────
 // A tank died to a Venomfang dispel they cannot cast.
 test('sweep: no mechanic is scored against a role that lacks the button', () => {
-  for (const key of BOSSES) {
-    for (const m of mechanicsOf(key)) {
+  for (const { key, mechanics } of readAllMechanics()) {
+    for (const m of mechanics) {
       if (m.pressAbility) {
         for (const r of m.roles) {
           assert.ok(KIT[r].includes(m.pressAbility),
@@ -173,9 +197,9 @@ test('sweep: no mechanic is scored against a role that lacks the button', () => 
 // Arena radii were measured from logs and several shrank; Twin Fangs went from
 // 44 to 32, which can silently turn a wide AoE into the whole floor.
 test('sweep: no avoid circle covers its entire arena', () => {
-  for (const key of BOSSES) {
+  for (const { key, mechanics } of readAllMechanics()) {
     const arena = arenaOf(key)
-    for (const m of mechanicsOf(key)) {
+    for (const m of mechanics) {
       if (m.rule !== 'avoid' || m.shape !== 'circle') continue
       assert.ok(m.radius < arena,
         `${key}/${m.id}: ${m.radius}yd circle on a ${arena}yd floor — nowhere to go`)
@@ -185,9 +209,9 @@ test('sweep: no avoid circle covers its entire arena', () => {
 
 // ── 6. A soak you cannot reach is not a mechanic ─────────────────────────────
 test('sweep: every soak and pickup is reachable inside its telegraph', () => {
-  for (const key of BOSSES) {
+  for (const { key, mechanics } of readAllMechanics()) {
     const arena = arenaOf(key)
-    for (const m of mechanicsOf(key)) {
+    for (const m of mechanics) {
       if (!['beInside', 'collect'].includes(m.rule) || m.collective) continue
       const reach = PLAYER_SPEED * Math.max(0, m.telegraphMs / 1000 - REACTION)
       assert.ok(reach >= arena * 0.55,
@@ -224,9 +248,9 @@ test('sweep: keepApart entities stay apart even after both tanks drift', () => {
 
 // ── 8. Lethality is read from the data, never chosen ─────────────────────────
 test('sweep: lethal matches category Deadly on every boss', () => {
-  for (const key of BOSSES) {
+  for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
-    for (const m of mechanicsOf(key)) {
+    for (const m of mechanics) {
       const cat = spells.get(m.spellId)?.category
       const should = cat === 'Deadly' && m.rule !== 'raidDamage'
       assert.equal(m.lethal, should,
@@ -237,8 +261,8 @@ test('sweep: lethal matches category Deadly on every boss', () => {
 
 // ── 9. Unavoidable raid damage carries no failure text ───────────────────────
 test('sweep: raidDamage never has failure text on any boss', () => {
-  for (const key of BOSSES) {
-    for (const m of mechanicsOf(key)) {
+  for (const { key, mechanics } of readAllMechanics()) {
+    for (const m of mechanics) {
       if (m.rule !== 'raidDamage') continue
       assert.equal(m.failText, '', `${key}/${m.id}: raidDamage with failText "${m.failText}"`)
     }

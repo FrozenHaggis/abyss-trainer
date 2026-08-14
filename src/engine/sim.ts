@@ -29,6 +29,14 @@ const BOSS_HIT_RADIUS = 4.5
  * gap is what Vitriolic Stasis punishes.
  */
 const OFFSIDE_DPS = 0.009
+/**
+ * How far behind your own golem the other group is allowed to fall.
+ *
+ * The gap Vitriolic Stasis heals away. Big enough that the delta readout means
+ * something and the intermission has a cost to teach, small enough that the pair
+ * finish together.
+ */
+const OFFSIDE_LAG = 0.06
 /** Adds are smaller targets than a boss, so they take real aim. */
 const ADD_HIT_RADIUS = 2.8
 /**
@@ -133,6 +141,17 @@ export interface BossUnit {
   /** 0..1. Twin Fangs "do NOT share a health pool", and neither does the Altar. */
   hp: number
   alive: boolean
+  /**
+   * Where its tank holds it NOW, which after a trade is not where it started.
+   *
+   * When the tanks swap golems they drag them to their own end of the room, so a
+   * golem's home moves with whoever holds it. Reading the static `def.start`
+   * after a trade put each golem on the opposite side from its tank: the golem
+   * walked toward the tank while the tank walked toward the old station, they
+   * met in the middle, and the pair sat there at 99% damage reduction for ninety
+   * seconds with neither tank able to pull them out.
+   */
+  station: Vec
 }
 
 /**
@@ -456,6 +475,7 @@ function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
       targetId: wants ? pickTank(d) : -1,
       hp: 1,
       alive: true,
+      station: { ...d.start },
     }
   })
 }
@@ -1886,8 +1906,8 @@ function allyThink(w: World) {
       // tank and the boss chase each other now that a tanked entity follows its
       // tank — a slow crawl that eventually walked the pair together, which is
       // the one thing this fight forbids.
-      a.want.x = held.def.start.x
-      a.want.y = held.def.start.y
+      a.want.x = held.station.x
+      a.want.y = held.station.y
     } else if (held) {
       a.want.x = held.pos.x + Math.cos(held.angle) * 5
       a.want.y = held.pos.y + Math.sin(held.angle) * 5
@@ -2876,8 +2896,36 @@ function exitPhase(w: World, ph: PhaseDef) {
       const t = held[0].targetId
       held[0].targetId = held[1].targetId
       held[1].targetId = t
+      // The stations trade too, so each golem's home is now its NEW tank's end
+      // of the room. "The tanks swap bosses and drag them over to their side" —
+      // the tanks do not cross, the golems do, and each group follows its own
+      // golem to the far end. Swapping the holders but leaving the stations put
+      // every golem on the opposite side from the tank holding it: the golem
+      // walked toward its tank, the tank walked toward the old station, and the
+      // pair met in the middle and stayed linked for the rest of the pull.
+      const s = held[0].station
+      held[0].station = held[1].station
+      held[1].station = s
+      // A tank's side follows the golem they now hold.
+      //
+      // Without this a tank holds one golem while their group parks at the
+      // other, so the side-parking pass drags them back toward their group and
+      // the golem they are holding comes with them. Both tanks did that at once
+      // and the pair settled 28 yards apart, linked, with neither tank able to
+      // pull out — they were each obeying two instructions that pointed in
+      // opposite directions.
+      for (const b of held) {
+        if (b.targetId <= 0 || !b.def.side) continue
+        const holder = w.allies.find(a => a.id === b.targetId)
+        if (holder) holder.side = b.def.side
+      }
+      // And the player keeps their own group's golem regardless — their side is
+      // a choice they made before the pull, not something a swap takes off them.
+      seatPlayerTank(w)
     }
-    for (const b of w.bosses) b.pos = { ...b.def.start }
+    // Deliberately NOT teleported. They are dragged, and the dragging is the
+    // mechanic — a grace window covers the seconds it takes so nobody is scored
+    // for a separation the fight itself just closed.
   }
   if (ph.resurrectCorpsesAs) {
     const def = w.boss.adds?.find(a => a.id === ph.resurrectCorpsesAs)
@@ -3680,12 +3728,35 @@ export function step(w: World, input: Input, dtMs: number) {
   // than pinned at zero — the tactic file calls that delta "the most actionable
   // number on the fight", and it only means anything if it can move.
   if (w.boss.sided) {
+    const ours = w.bosses.find(b => b.def.side === w.player.side)
     for (const b of w.bosses) {
       if (b.def.untargetable || !b.alive) continue
       if (b.def.side === w.player.side) continue
+      // Paced to you, not independent of you.
+      //
+      // A flat rate meant the other group solo-killed their golem whether or not
+      // you contributed anything: an idle green player watched Blood drain to
+      // nothing while Breath sat untouched at full, and one golem died outright
+      // before the intermission that is supposed to level them. The other group
+      // is doing what you are doing, so they keep pace and stay a little behind
+      // — which leaves a real health delta for Vitriolic Stasis to punish
+      // without ever letting either golem finish first.
+      const floor = Math.max(0, (ours?.hp ?? 0)) + OFFSIDE_LAG
+      if (b.hp <= floor) continue
       const drain = OFFSIDE_DPS * (1 - w.entityReduction) * (w.bossesLinked ? 0.01 : 1)
-      b.hp -= drain * dt
-      if (b.hp <= 0) { b.hp = 0; b.alive = false }
+      b.hp = Math.max(floor, b.hp - drain * dt)
+    }
+  }
+  // Neither golem dies alone. The pair are killed together — a golem reaching
+  // zero on its own leaves half the raid with nothing to fight and half a fight
+  // that cannot end, and the encounter's own answer to uneven damage is to heal
+  // the weaker back up rather than to let it fall over.
+  if (w.boss.sided) {
+    const live = w.bosses.filter(b => !b.def.untargetable)
+    const allDown = live.every(b => b.hp <= 0.005)
+    for (const b of live) {
+      if (b.hp <= 0.005 && !allDown) b.hp = 0.005
+      else if (allDown) { b.hp = 0; b.alive = false }
     }
   }
 

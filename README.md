@@ -91,11 +91,21 @@ import it in `registry.ts`. A test fails if a boss file exists but is unwired.
 
 ## Balance
 
-`npm run playtest` runs a headless bot through every boss in every role. The bar:
-a careless player dies, a competent one kills it, DPS fastest and healer slowest.
-Check balance changes against it rather than by eye — it has caught an annulus
+`npm run playtest` runs a headless bot through every boss in every role, on three
+fixed seeds each. The bar: a careless player dies, a competent one kills it, DPS
+fastest and healer slowest. A boss counts as cleared only if it clears on a
+majority of seeds.
+
+The seeds matter. With bare `Math.random()` the clear count swung 21-24 between
+identical runs — wider than most of the changes being measured, so a real
+regression could hide in the noise and a lucky run could pass a broken build.
+`seedRng()` fixes the sequence for the harness; the game itself still seeds from
+the clock.
+
+Check balance changes against this rather than by eye. It has caught an annulus
 being fled outward off the platform, pools detonating on the carrier who dropped
-them, and a tank dying to a dispel they cannot cast.
+them, a tank dying to a dispel they cannot cast, shots expiring before they could
+reach the boss, and adds accumulating faster than any player could clear them.
 
 ## Known gaps
 

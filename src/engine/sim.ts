@@ -23,6 +23,36 @@ const BOSS_HIT_RADIUS = 4.5
 /** Adds are smaller targets than a boss, so they take real aim. */
 const ADD_HIT_RADIUS = 2.8
 
+
+// ── randomness ───────────────────────────────────────────────────────────────
+// Seedable, so a headless balance run is reproducible.
+//
+// The playtest is the only tool that tells us whether a tuning change helped,
+// and with bare rnd() it swung 21-24 clears between identical runs. That
+// is wider than most of the changes being measured, so a real regression could
+// hide inside the noise and a lucky run could pass a broken build. Seeding it
+// turns the clear count into a signal instead of a mood.
+//
+// The browser stays random: createWorld seeds from the clock unless a caller has
+// already chosen a seed.
+let rngState = 0
+let seeded = false
+
+/** Fix the sequence. Called by the playtest; never called by the game. */
+export function seedRng(seed: number): void {
+  rngState = seed >>> 0
+  seeded = true
+}
+
+/** mulberry32 — small, fast, and good enough for picking spawn points. */
+function rnd(): number {
+  rngState = (rngState + 0x6D2B79F5) >>> 0
+  let t = rngState
+  t = Math.imul(t ^ (t >>> 15), t | 1)
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+
 export interface Input {
   up: boolean; down: boolean; left: boolean; right: boolean
   pressed: Ability[] // abilities pressed since the last tick
@@ -285,6 +315,8 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string): Worl
 }
 
 export function createWorld(boss: BossDef, role: Role): World {
+  // Real pulls vary; a seeded caller (the playtest) keeps its sequence.
+  if (!seeded) rngState = (Date.now() & 0xffffffff) >>> 0
   const allies = makeAllies(role)
   // Boss opens on the co-tank, so a player tank's first job is to taunt it off.
   return {
@@ -445,17 +477,17 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       // Mechanics that pick a raider pick YOU most of the time. This is a
       // trainer: watching an ally carry a debuff teaches nothing, and a DPS
       // whose only job is dodging circles is not learning the fight.
-      const onPlayer = Math.random() < 0.72
+      const onPlayer = rnd() < 0.72
       if (onPlayer) pos = { ...w.player.pos }
       else {
         const live = w.allies.filter(a => a.alive)
-        const a = live[Math.floor(Math.random() * Math.max(1, live.length))]
+        const a = live[Math.floor(rnd() * Math.max(1, live.length))]
         pos = a ? { ...a.pos } : { ...w.player.pos }
       }
       break
     }
     case 'edge': {
-      const a = Math.random() * Math.PI * 2
+      const a = rnd() * Math.PI * 2
       const r = w.boss.arenaRadius
       pos = { x: Math.cos(a) * r, y: Math.sin(a) * r }
       break
@@ -472,12 +504,12 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       // Anchoring on a raider and jittering keeps it dodgeable (you always have
       // somewhere to go) while guaranteeing it is somewhere that matters.
       const live = w.allies.filter(a => a.alive)
-      const anchor = Math.random() < 0.4 || !live.length
+      const anchor = rnd() < 0.4 || !live.length
         ? w.player.pos
-        : live[Math.floor(Math.random() * live.length)].pos
+        : live[Math.floor(rnd() * live.length)].pos
       const jitter = (w.boss.arenaRadius * 0.16) + 6
-      const a = Math.random() * Math.PI * 2
-      const r = Math.random() * jitter
+      const a = rnd() * Math.PI * 2
+      const r = rnd() * jitter
       pos = { x: anchor.x + Math.cos(a) * r, y: anchor.y + Math.sin(a) * r }
       // Never outside the floor.
       const len = lenOf(pos)
@@ -493,7 +525,7 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
   if (angle === undefined && def.origin === 'boss') {
     ang = Math.atan2(w.player.pos.y - pos.y, w.player.pos.x - pos.x)
   } else if (angle === undefined) {
-    ang = Math.random() * Math.PI * 2
+    ang = rnd() * Math.PI * 2
   }
 
   const inst: Instance = {
@@ -507,7 +539,7 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       (def.origin === 'targeted' && Math.hypot(pos.x - w.player.pos.x, pos.y - w.player.pos.y) < 0.01),
   }
   if (def.driftSpeed) {
-    const a = Math.random() * Math.PI * 2
+    const a = rnd() * Math.PI * 2
     inst.drift = { x: Math.cos(a) * def.driftSpeed, y: Math.sin(a) * def.driftSpeed }
   }
   w.instances.push(inst)

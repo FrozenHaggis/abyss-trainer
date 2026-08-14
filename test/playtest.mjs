@@ -1,4 +1,4 @@
-import { createWorld, step, buildResult, TICK_MS } from '../.playtest/sim.mjs'
+import { createWorld, step, buildResult, seedRng, TICK_MS } from '../.playtest/sim.mjs'
 import { BOSSES } from '../.playtest/registry.mjs'
 
 // Headless playtest across every boss and every role.
@@ -12,7 +12,13 @@ import { BOSSES } from '../.playtest/registry.mjs'
 // It previously ran Sszorak alone while the README claimed eight bosses. Now it
 // runs the registry, so a boss that cannot be cleared cannot hide.
 
-function play(boss, role, smart) {
+// Fixed seeds, so the clear count is reproducible and a regression cannot hide
+// inside run-to-run noise. Several seeds rather than one, so a single unlucky
+// spawn sequence does not masquerade as a balance problem.
+const SEEDS = [1337, 2024, 90210]
+
+function play(boss, role, smart, seed) {
+  seedRng(seed)
   const w = createWorld(boss, role)
   const input = {
     up: false, down: false, left: false, right: false, pressed: [],
@@ -119,10 +125,15 @@ for (const [label, smart] of [['careless', false], ['competent', true]]) {
   console.log(`\n── ${label} player ──`)
   for (const boss of BOSSES) {
     for (const role of ['tank', 'healer', 'dps']) {
-      const res = play(boss, role, smart)
-      const fails = res.failures.reduce((n, f) => n + f.count, 0)
+      // Run every seed and report the median-ish outcome: cleared if it cleared
+      // on most seeds, which is the question we actually care about.
+      const runs = SEEDS.map(sd => play(boss, role, smart, sd))
+      const wins = runs.filter(r => r.cleared).length
+      const res = runs[0]
+      const fails = Math.round(runs.reduce((n, r) => n + r.failures.reduce((m, f) => m + f.count, 0), 0) / runs.length)
       const acc = res.shotsFired ? Math.round((res.shotsHit / res.shotsFired) * 100) : 0
-      if (smart) { expected++; if (res.cleared) clears++ }
+      const cleared = wins > SEEDS.length / 2
+      if (smart) { expected++; if (cleared) clears++ }
       console.log(
         `  ${pad(boss.key, 12)} ${pad(role, 7)} ` +
         `${String(res.survivedSec).padStart(3)}s  ` +
@@ -130,7 +141,7 @@ for (const [label, smart] of [['careless', false], ['competent', true]]) {
         `acc ${String(acc).padStart(3)}%  ` +
         `mech ${String(res.mechanicsResolved).padStart(3)}  ` +
         `fails ${String(fails).padStart(3)}  ` +
-        `${res.cleared ? 'KILL' : (res.deathCause || 'enrage')}`)
+        `${cleared ? 'KILL' : (res.deathCause || 'enrage')} ${wins}/${SEEDS.length}`)
     }
   }
 }

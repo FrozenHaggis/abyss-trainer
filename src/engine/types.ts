@@ -618,14 +618,21 @@ export interface MechanicDef {
    */
   clockDrop?: boolean
   /**
-   * Consuming this hazard throws the WHOLE raid this far from it.
+   * Consuming this hazard throws the WHOLE raid, this fraction of the room's
+   * DIAMETER.
    *
    * The cyst. It does not matter where you were standing — the burst reaches
    * everybody — which is what makes it usable as the answer to a gale rather
-   * than as one more puddle. Anyone it throws is thrown toward the middle,
-   * because the cyst itself is out at the rim.
+   * than as one more puddle.
+   *
+   * A fraction of the room rather than a distance in yards, and it has to be:
+   * the throw is meant to carry you most of the way across the floor, so it is a
+   * statement about the room and not about a number that happens to suit a
+   * 56-yard one. Written as yards it was set to just under the gap between the
+   * glob and the boss, which meant the knock always ENDED on him — a teleport
+   * wearing a knockback's clothes, and it read as one.
    */
-  raidKnockYards?: number
+  raidKnockRoom?: number
   /**
    * Touching this slows you, and the slow is dispellable.
    *
@@ -1062,6 +1069,22 @@ export interface PlayerState {
   gashMs: number
   /** ms of Tempest slow left. The healer's dispel is what clears it. */
   slowMs: number
+  /**
+   * An impulse carrying the player somewhere they did not walk.
+   *
+   * Every other knockback in this engine is an instant change of position, which
+   * is fine for a shove of fifteen or twenty yards. A Viscous Cyst throws you
+   * most of the way across the room, and at that distance an instant reposition
+   * does not read as being thrown — it reads as a teleport, which is exactly
+   * what it was called. So this one travels: a velocity in yards/sec and the
+   * time left to run, applied in the movement block ahead of your own input.
+   *
+   * `safe` clamps the flight to the floor instead of letting it carry you off.
+   * The cyst burst is the ANSWER to the gale that is pushing you at the rim; a
+   * version of it that could finish the job would make the stage unsurvivable by
+   * design.
+   */
+  knock: { vx: number; vy: number; ms: number; safe: boolean } | null
 }
 
 /** A live instruction shown to the player mid-fight. */

@@ -348,10 +348,13 @@ export const sszorak: BossDef = {
       // point of it; before then, walking into one throws the whole raid across
       // the room for nothing and costs the gales a glob.
       permanent: true,
-      // Far enough to put you back at his feet rather than merely off the rim.
-      // During the Maelstrom the burst throws you AT him, and landing halfway
-      // there would spend the braced seconds walking instead of hitting him.
-      raidKnockYards: 40,
+      // 60% of the room's DIAMETER, thrown toward him — not "however far he
+      // happens to be". Written as a distance capped at the gap to the boss, the
+      // burst always ended exactly on him however hard it hit, which is a
+      // teleport rather than a knockback and read as one. From a glob at the rim
+      // this carries you past him and out the other side, which is what being
+      // blown back by an exploding cyst should look like.
+      raidKnockRoom: 0.6,
       good: 'Cysts are left alone until the gales need them.',
       failText: 'Burst a Viscous Cyst — the whole raid was thrown for nothing',
     },

@@ -163,12 +163,24 @@ export const twinfangs: BossDef = {
   // Fifth puts the first spawns down at about 30 seconds and gives a full pull
   // three or four Emergences, which is the cadence the rest of this loop was
   // already built on.
+  //
+  // `globule` is NOT in this list and must not be put back. It used to sit
+  // behind each `deluge` as its own slot, which meant the pickups were fired by
+  // the rotation rather than left by the splashes — a ring of globules round the
+  // arena centre, arriving on their own timer, with nothing on the floor to
+  // explain where they came from. Caustic Deluge now channels five pairs of
+  // splashes and each splash drops its own globule, so the ten arrive as
+  // consequences instead of as a scheduled event.
+  //
+  // `splash` is not in it either, for the same reason and more strongly: it is a
+  // beat of a channel, and a single pair of circles with no channel behind them
+  // is not a mechanic anyone can read.
   loop: [
-    'envenomed', 'deluge', 'globule',
+    'envenomed', 'deluge',
     'envenomed', 'emergence', 'ichor',
     'envenomed', 'stonebreaker', 'depths',
     'envenomed', 'feast', 'storm',
-    'envenomed', 'deluge', 'globule',
+    'envenomed', 'deluge',
     'envenomed', 'emergence', 'storm',
     'envenomed', 'stonebreaker', 'depths',
     'envenomed', 'feast', 'ichor',
@@ -219,31 +231,96 @@ export const twinfangs: BossDef = {
       failText: '',
     },
     {
+      // THE PARENT. One def was three mechanics wearing one hat: the channel on
+      // the tank, the splashes it throws, and the globules those leave. Fused,
+      // the fight could only ever put THREE circles down (a `count` fan) or
+      // three globules (a `collect`), never the ten-circle, ten-globule wave the
+      // encounter actually is, and the two halves could not be timed apart.
+      //
+      // Split three ways, the chain reads the way it plays: deluge channels →
+      // splash lands a pair a second → each splash leaves a globule. Nothing in
+      // the engine is new; it is `channel` feeding a `count` fan feeding
+      // `spawns`, all three of which already existed.
       id: 'deluge',
       name: 'Caustic Deluge',
-      spellId: 1289994,
-      what: "1s cast into a 5s tank channel, ejecting three 4-yard splashes that apply venom and leave globules.",
+      spellId: 1289192,
+      // HOW MANY CIRCLES: ten, in five pairs, one pair a second.
+      //
+      // The spec contradicts itself here and the contradiction is recorded
+      // rather than quietly resolved, because the arithmetic is the mechanic.
+      // It says the channel runs 5 seconds and that "every 0.5 seconds it will
+      // spawn 2 green circles" — which is twenty — and in the same breath that
+      // there are "a total of 10 Globules", with one globule per circle. Twenty
+      // and ten cannot both be right. The raid leader ruled TEN, so the beat is
+      // one second rather than half a second: five beats of two.
+      //
+      // abilities.json is a third witness and loses to both. 1289994's note
+      // says "the three acid splashes ejected during the channel" — that is the
+      // Mythic log talking, and the raid leader's ten is what this trainer
+      // teaches. The `what:` below says ten because the floor says ten.
+      what: "1s cast into a 5s channel on Vexhul's tank. Every second of it throws a pair of 4-yard acid splashes onto the platform — ten in all, each leaving a Caustic Globule where it lands.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
-      // "1s cast into a 5s tank channel, ejecting three 4-yard splashes" — the
-      // splash is the avoidable half, so the telegraph is the eject, not the cast.
+      telegraphMs: 1000,             // "1s cast", and then the channel begins
+      origin: 'boss',
+      // The cast itself does nothing to anybody: it is a bar you read, and
+      // everything it costs the raid it costs through the ten circles. dps: 0
+      // rather than a token number for the same reason Soulcoil Ignition is
+      // zero — charging for the parent AND the children makes the healing check
+      // read twice as bad as the fight is.
+      rule: { type: 'raidDamage', dps: 0 },
+      channel: { defId: 'splash', count: 5, everyMs: 1000 },
+      good: 'Tank holds the channel still; the raid reads each pair as it lands and walks between them.',
+      failText: '',
+    },
+    {
+      // THE CIRCLES. Two per beat, fanned around a rolled point on the floor —
+      // `count: 2` off `floorAnchor`, not off Vexhul, who is coiled in the acid
+      // three yards off the top edge and would drop every pair onto the tanks'
+      // ledge.
+      //
+      // NEVER in the loop, and there is no honest way to put it there. This is a
+      // beat of a channel: fired from the rotation it is one lone pair of
+      // circles with nothing behind them and no wave of globules to follow, and
+      // the ten-circle read the whole mechanic is built on never happens.
+      id: 'splash',
+      name: 'Caustic Deluge',
+      spellId: 1289994,
+      what: "Each beat of the channel throws two 4-yard splashes onto the floor. Standing in one costs a stack of Eternal Venom, and every one of them leaves a Caustic Globule behind.",
+      from: 'vexhul',
+      roles: ['tank', 'dps', 'healer'],
+      // 1.5s of it inert and 1s of it live. Long enough that three pairs are on
+      // the floor at once in the middle of the channel, which is the picture the
+      // mechanic is: circles arriving faster than they leave, so the raid walks
+      // a route rather than sidestepping one thing at a time. Shorter and the
+      // pairs never overlap and the channel is five separate dodges; longer and
+      // all ten are up together and there is nowhere left to stand.
       telegraphMs: 2500,
-      shape: { kind: 'circle', radius: 5 },
+      shape: { kind: 'circle', radius: 4 },   // "4-yard radius each"
       origin: 'random',
+      count: 2,
+      // Inert for the first 1.5 seconds, then live. Render-only: `avoid` is
+      // judged once at resolve, so this changes no score — it is what makes ten
+      // circles on a 1158-square-yard wedge readable instead of a carpet. Do
+      // not put it in the tooltip; see MechanicDef.armsAfterMs.
+      armsAfterMs: 1500,
       rule: { type: 'avoid' },
       damage: 0.34,
-      // "every splash applies Eternal Venom and leaves a Caustic Globule" — the
-      // globule soak chain starts here, which is why deluge always precedes it
-      // in the loop.
+      // "soaking them gives a stack of Eternal Venom" — and so does being
+      // caught by one, which is the same stack bought for nothing.
+      applies: { hit: 1 },
+      // "once they have activated, they spawn Caustic Globules at the location".
+      // One globule per splash, exactly where the splash was: five pairs in and
+      // ten pickups out, which is the whole reason the pair placement matters.
       spawns: { defId: 'globule' },
-      good: 'Tank aims away; everyone stays 4+ yards off the splash landings.',
+      good: 'Everyone stays 4+ yards off each pair as it lands, and nobody eats a circle to save walking.',
       failText: 'Stood in a Caustic Deluge splash',
     },
     {
       id: 'globule',
       name: 'Caustic Globule',
       spellId: 1290338,
-      what: "Each splash leaves a globule that ruptures after 10s onto the whole raid, unless one player walks in first and eats it alone .",
+      what: "Every splash leaves a globule. Ten of them, and each ruptures after 10s onto the whole raid unless one player walks over it first and takes the stack alone.",
       lethal: true,
       from: 'vexhul',
       // Tanks are welded to their serpent; the file names "low-stack players" as
@@ -262,7 +339,24 @@ export const twinfangs: BossDef = {
       // the mechanic. Eating one is correct play and can never be a failure;
       // the tactic file's own reporting line is "un-soaked ruptures only,
       // never soakers".
-      rule: { type: 'collect', count: 3 },
+      // TEN, one per splash, and never fired from the loop any more.
+      //
+      // A bare `fire('globule')` takes the `collect` branch, which scatters
+      // pickups on a ring drawn round the ARENA CENTRE with no circles behind
+      // them — globules that appeared out of nothing, mostly on top of the raid's
+      // own formation, and swept on the tick they landed by whoever happened to
+      // be standing there. The ten now arrive where the ten splashes were, which
+      // is what makes reading the pairs worth anything.
+      //
+      // The count survives because a drill still fires this on its own, and
+      // because it is the honest number: one Caustic Deluge puts ten of these on
+      // the floor and the raid has ten seconds to clear all ten.
+      rule: { type: 'collect', count: 10 },
+      // The soak rota's two prices, from one def. Running over one costs the
+      // sweeper a single stack; letting one rupture costs EVERY body a stack,
+      // which is why ten unswept globules is an instant five rotations' worth of
+      // venom on a raid that can only shed one per Ravenous Feast.
+      applies: { soak: 1, raid: 1 },
       good: 'Named low-stack players intercept every globule; soaking is correct play, not a failure.',
       failText: 'Missed the globule soak — it ruptured on the whole raid',
     },

@@ -851,6 +851,35 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (inst.def.rule.type === 'windPair') continue
     const col = ruleColour(inst, w)
     const t = progress(inst)
+
+    // On the floor, but not yet live.
+    //
+    // Caustic Deluge throws ten 4-yard circles onto a wedge that is barely a
+    // thousand square yards, five pairs of them a second apart. Drawn at full
+    // strength from the frame they land, that is a carpet: every pair reads as
+    // ground already killing you, the raid has nowhere it can see to go, and the
+    // mechanic teaches panic instead of a route. The circles arm 1.5 seconds
+    // after they appear, and drawing that window as a pale outline with no fill
+    // and no timing ring is what lets a raider look at the pair, pick a side and
+    // walk once — the shape is there, the danger is not, yet.
+    //
+    // THE ONLY READER of `armsAfterMs` in the codebase, and it has to stay that
+    // way. It scores nothing: `avoid` is judged once, at resolve, so a circle
+    // that armed late and one that armed on contact are worth exactly the same
+    // and there is nothing for the briefing or a tooltip to say about it. Told
+    // "1.5 seconds", a raider counts; shown pale-then-lit, they look at the
+    // floor, which is where the answer is. Pinned by a test in trace.test.js.
+    if (inst.def.armsAfterMs && inst.def.telegraphMs - inst.timer < inst.def.armsAfterMs) {
+      pathShape(ctx, cam, inst)
+      ctx.strokeStyle = `rgba(${col}, 0.32)`
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([5, 6])
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+      continue
+    }
+
     pathShape(ctx, cam, inst)
     ctx.fillStyle = `rgba(${col}, ${0.10 + t * 0.28})`
     ctx.fill()

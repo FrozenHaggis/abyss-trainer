@@ -364,6 +364,27 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
           yours: true,
         }
       }
+      // A channel is a run of casts, not a cast.
+      //
+      // Caustic Deluge is the case that forced this: dps: 0 on the parent, so it
+      // fell into the branch below and the panel said "this does no damage on
+      // its own — it multiplies everything else", which is the Soulcoil stack
+      // text and describes a completely different thing. What the cast bar
+      // actually means is that five separate deliveries are coming, and the one
+      // you are looking at is the first of them.
+      //
+      // Note what this does NOT say: nothing about how long a circle sits inert
+      // before it starts to bite. That is a floor telegraph, it is drawn and
+      // never written down, and this file must not learn the field's name — the
+      // rule is pinned by a test that greps this file for it.
+      if (def.channel) {
+        const beat = def.channel.everyMs / 1000
+        return {
+          verb: 'IT COMES IN BEATS',
+          line: `The cast bar is not the hit. It opens a channel that lands ${def.channel.count} separate times, one every ${beat === Math.round(beat) ? beat : beat.toFixed(1)}s — so plan for the whole run of them rather than for the moment the bar fills, and do not settle anywhere until the last one is down.`,
+          yours: def.roles.includes(role),
+        }
+      }
       // A counter with no damage of its own. Saying "heal through it" invites a
       // healer to spend a cooldown on something that does nothing by itself.
       if (def.rule.dps === 0) {

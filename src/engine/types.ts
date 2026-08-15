@@ -761,6 +761,23 @@ export interface MechanicDef {
    * needs a period or it charges once and then becomes free floor.
    */
   applies?: { hit?: number; raid?: number; soak?: number; everyMs?: number }
+  /**
+   * How long this shape sits on the floor inert before it reads as dangerous.
+   *
+   * Caustic Deluge's splashes land as pale rings and only bite 1.5 seconds
+   * later. That delay is the whole reason ten circles across a small wedge is a
+   * room you can walk through rather than a carpet: the raid reads where the
+   * pair went while it is still harmless, and moves once.
+   *
+   * RENDER-ONLY, and deliberately so. `avoid` is judged exactly once, at
+   * resolve, so an armed-vs-unarmed circle scores identically and there is
+   * nothing here for the engine to branch on — the telegraph IS the window.
+   * That makes this a drawing instruction and not a rule, which is why it must
+   * never reach `brief.ts`, a tooltip, `what:`, `good:` or `failText:`. Told
+   * "it arms after a second and a half", a raider starts counting; shown a ring
+   * that goes from pale to lit, they look at the floor. Pinned by a test.
+   */
+  armsAfterMs?: number
 }
 
 /**

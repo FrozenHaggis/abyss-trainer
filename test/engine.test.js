@@ -310,6 +310,142 @@ test('a player who does nothing dies of the counter, and the death names it', as
     'the counter recorded a failure against the player — it is unavoidable damage')
 })
 
+// ── Caustic Deluge ───────────────────────────────────────────────────────────
+//
+// The arithmetic of the mechanic, run rather than read.
+//
+// It was one def doing three jobs: a channel, the splashes it throws and the
+// globules those leave. Fused like that the fight could put three circles on the
+// floor or three pickups on it, never the ten-circle, ten-globule wave the
+// encounter is — and the raid leader's spec contradicts itself about the number,
+// saying both "every 0.5 seconds it will spawn 2 green circles" across a
+// five-second channel (twenty) and "a total of 10 Globules". Ten was the ruling,
+// so the beat is a second rather than half of one.
+//
+// Ten is therefore a number three separate fields have to agree on — the
+// channel's five, the fan's two, and one globule per splash — and no single file
+// can be read to check it. This is the only place the product is visible.
+test('one Caustic Deluge lands ten circles in five pairs and ten globules', async () => {
+  const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const parent = boss.mechanics.find(m => m.id === 'deluge')
+  assert.ok(parent?.channel, 'Caustic Deluge no longer channels — it is a single cast again')
+
+  // Neither child belongs in the rotation. A bare `fire('globule')` takes the
+  // `collect` branch and scatters pickups on a ring round the arena centre with
+  // no circles behind them, which is the behaviour this whole split replaces; a
+  // bare `fire('splash')` is a lone pair with no channel to read them off.
+  for (const id of ['globule', 'splash']) {
+    assert.ok(!boss.loop.includes(id),
+      `'${id}' is back in the loop. It is a consequence of Caustic Deluge, not an event ` +
+      'the rotation schedules, and fired on its own it arrives from nowhere')
+  }
+
+  seedRng(11)
+  const w = createWorld(boss, 'dps', 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const input = NO_INPUT()
+  step(w, input, TICK_MS)
+  fire(w, 'deluge')
+
+  // Every instance that ever existed, and when. Resolved instances hang about
+  // for the impact flash, so nothing can be born and swept between two samples.
+  const seen = new Map()
+  for (let i = 0; i < 60 * 20; i++) {
+    step(w, input, TICK_MS)
+    for (const inst of w.instances) {
+      if (!seen.has(inst.uid)) seen.set(inst.uid, { id: inst.def.id, at: w.elapsedMs, pos: { ...inst.pos } })
+    }
+  }
+  const of = (id) => [...seen.values()].filter(x => x.id === id).sort((a, b) => a.at - b.at)
+  const splashes = of('splash')
+  const globules = of('globule')
+
+  assert.equal(splashes.length, 10,
+    `${splashes.length} splashes, not ten. Five beats of two is the raid leader's ruling on ` +
+    'their own spec — anything else and the globule count follows it')
+  assert.equal(globules.length, 10,
+    `${globules.length} globules from ten splashes. Every circle leaves one, so these two ` +
+    'numbers are the same number and a difference means a splash resolved without spawning')
+
+  // Two at a time, a second apart. Grouped by arrival rather than by index, so
+  // this measures the beat rather than restating the config.
+  const beats = []
+  for (const s of splashes) {
+    const last = beats[beats.length - 1]
+    if (last && s.at - last[0].at < 300) last.push(s)
+    else beats.push([s])
+  }
+  assert.equal(beats.length, 5, `the channel landed in ${beats.length} beats, not five`)
+  for (const b of beats) assert.equal(b.length, 2, `a beat put ${b.length} circles down, not two`)
+  for (let i = 1; i < beats.length; i++) {
+    const gap = beats[i][0].at - beats[i - 1][0].at
+    assert.ok(Math.abs(gap - parent.channel.everyMs) < 60,
+      `beats ${i} and ${i + 1} are ${gap}ms apart against a declared ${parent.channel.everyMs}ms`)
+  }
+
+  // Each globule is where its splash was. The pickups being consequences of the
+  // circles — rather than a ring drawn round the middle of the room — is the
+  // entire reason reading the pairs as they land is worth anything.
+  for (const g of globules) {
+    assert.ok(splashes.some(s => Math.hypot(s.pos.x - g.pos.x, s.pos.y - g.pos.y) < 0.01),
+      `a globule surfaced at (${g.pos.x.toFixed(1)}, ${g.pos.y.toFixed(1)}), where no splash landed`)
+  }
+})
+
+// And the raid can actually clear them.
+//
+// Ten pickups on a 1158-square-yard wedge inside a ten-second fuse was an open
+// question nobody had run — the plan lists it as one of three things "nobody
+// established" — and the answer at first was no: three of the ten ruptured on
+// every pull, on every seed. Two engine defects, both of which only a count this
+// high could surface. An ally's arrival deadzone was measured in EASED yards, so
+// a sweeper stopped between two and seven yards short of the globule it was sent
+// to; and the destination clamp insets a tenth of the arena while a hazard is
+// scattered with an inset of two, so anything landing in the gap was somewhere
+// the raid was forbidden to stand.
+//
+// A globule the raid cannot reach is not a mechanic, it is a tax, so this is the
+// bound that keeps it one.
+test('the raid sweeps every globule a Caustic Deluge leaves', async () => {
+  const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const input = NO_INPUT()
+
+  for (const seed of [1, 2, 3, 7, 21]) {
+    seedRng(seed)
+    const w = createWorld(boss, 'tank', 'green')
+    // A TANK player, so nothing is held back and every globule is the raid's —
+    // the strongest form of the claim, and the one a player rolling tank meets.
+    w.boss = {
+      ...boss,
+      loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+      energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+    }
+    step(w, input, TICK_MS)
+    fire(w, 'deluge')
+
+    const globules = new Map()
+    for (let i = 0; i < 60 * 22; i++) {
+      step(w, input, TICK_MS)
+      for (const inst of w.instances) {
+        if (inst.def.id === 'globule') globules.set(inst.uid, inst)
+      }
+    }
+    assert.equal(globules.size, 10, `seed ${seed}: ${globules.size} globules, not ten`)
+    const missed = [...globules.values()].filter(g => !g.answered)
+    assert.equal(missed.length, 0,
+      `seed ${seed}: ${missed.length} globule(s) ruptured on the raid — ` +
+      missed.map(g => `(${g.pos.x.toFixed(1)}, ${g.pos.y.toFixed(1)})`).join(' ') +
+      '. Nineteen raiders and ten seconds is not a close call; a miss means somebody was ' +
+      'sent somewhere they were not allowed to stand, or stopped short of where they were sent')
+  }
+})
+
 // ── the pickup rota ──────────────────────────────────────────────────────────
 
 /**
@@ -321,16 +457,30 @@ test('a player who does nothing dies of the counter, and the death names it', as
  * this, every raider who walks anywhere walked there because of a pickup, and
  * the only thing left that can take the raid bar down is a pickup nobody reached.
  */
-async function pickupBench(bossKey, role, side, seed) {
+async function pickupBench(bossKey, role, side, seed, count) {
   const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
   const boss = BOSSES.find(b => b.key === bossKey)
-  const def = boss.mechanics.find(m => m.rule.type === 'collect')
-  assert.ok(def, `${bossKey} no longer has a collect mechanic — this check would be vacuous`)
+  const authored = boss.mechanics.find(m => m.rule.type === 'collect')
+  assert.ok(authored, `${bossKey} no longer has a collect mechanic — this check would be vacuous`)
+  // How many pickups to put down, when the question being asked does not depend
+  // on the fight's own number.
+  //
+  // Caustic Deluge leaves TEN globules and the boss file says so, which is right
+  // — but a test that has to find ten patches of floor seven yards clear of
+  // nineteen bodies and of each other cannot be run on a 1158-square-yard wedge,
+  // and a test measuring the sweep ORDER never needed ten in the first place. So
+  // the ordering check names its own number and everything else keeps reading
+  // the fight's. Nothing about the rota changes with the count: the same
+  // assignment runs whether there are three pickups or ten.
+  const def = count === undefined
+    ? authored
+    : { ...authored, rule: { ...authored.rule, count } }
 
   seedRng(seed)
   const w = createWorld(boss, role, side)
   w.boss = {
     ...boss,
+    mechanics: boss.mechanics.map(m => (m === authored ? def : m)),
     loop: [], ambient: [], adds: [], atFullEnergy: undefined,
     energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
   }
@@ -439,7 +589,9 @@ test('a dps is saved exactly one globule, always the same one, and no raider tak
 // first is not flavour, it is the mechanic.
 test('the raiders with the fewest stacks are the ones sent onto the globules', async () => {
   const { edgeDistance, inArena } = await engine()
-  const { w, input, step, TICK_MS, live } = await pickupBench('twinfangs', 'tank', 'green', 5)
+  // Three, not the fight's ten — see pickupBench. The claim is about the ORDER
+  // the raid picks in, and the order is the same at any count.
+  const { w, input, step, TICK_MS, live } = await pickupBench('twinfangs', 'tank', 'green', 5, 3)
   const arena = w.boss.arenaRadius
   // The two yards of idle sway `allyThink` finishes with, and the inset it then
   // tidies every destination back inside. A spot further from the edge than the

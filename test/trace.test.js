@@ -983,6 +983,64 @@ test('only one function anywhere can take a stack off the counter', () => {
   }
 })
 
+// ── the arming delay stays on the floor ──────────────────────────────────────
+//
+// Caustic Deluge's splashes land inert and bite 1.5 seconds later. That is a
+// DRAWING instruction and nothing else: `avoid` is judged once, at resolve, so
+// an armed circle and an unarmed one score identically and there is nothing for
+// the engine to branch on. The raid leader's requirement is exact — the delay
+// may be read in render.ts and nowhere else, and it must never appear in a
+// briefing, a tooltip, `what:`, `good:` or `failText:`.
+//
+// The reason is a teaching one rather than a tidiness one. Told "it arms after a
+// second and a half", a raider starts counting; shown a ring that goes from pale
+// to lit, they look at the floor, which is where the answer is and where it will
+// still be on a fight whose numbers nobody published. It survives exactly one
+// well-meaning edit, so it is pinned here.
+test('the arming delay is drawn and never spoken', () => {
+  const FIELD = 'armsAfterMs'
+  const render = readFileSync('src/engine/render.ts', 'utf8')
+  assert.ok(render.includes(FIELD),
+    `render.ts no longer reads ${FIELD} — the circles draw as live hazards from the frame ` +
+    'they land, which is the carpet the delay exists to prevent. If the field is gone, ' +
+    'delete this test with it rather than letting it pass vacuously')
+
+  const brief = readFileSync('src/engine/brief.ts', 'utf8')
+  assert.ok(!brief.includes(FIELD),
+    `brief.ts mentions ${FIELD}. The arming window is a floor telegraph, not a rule — ` +
+    'a raider told the number counts instead of looking')
+
+  // Everywhere else in the app. types.ts declares it and render.ts reads it; the
+  // boss files carry it as data. Any other file is somebody wiring a drawing
+  // hint into behaviour or into text.
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)])
+  const allowed = new Set([join('src', 'engine', 'types.ts'), join('src', 'engine', 'render.ts')])
+  const sources = walk('src').filter(f => /\.tsx?$/.test(f))
+  assert.ok(sources.length > 5, 'found almost no source files — this check would be vacuous')
+  for (const f of sources) {
+    if (allowed.has(f) || f.startsWith(join('src', 'bosses'))) continue
+    assert.ok(!readFileSync(f, 'utf8').includes(FIELD),
+      `${f} reads ${FIELD}. It is render-only: types.ts declares it, render.ts draws it, ` +
+      'the boss files set it, and nothing else may know it exists')
+  }
+
+  // And the defs that declare it must not describe it either. A tooltip is the
+  // same leak as a briefing, one file further out.
+  for (const [key] of present) {
+    for (const m of mechanicDefs(key)) {
+      if (!new RegExp(`\\b${FIELD}:`).test(m.blk)) continue
+      for (const field of ['what', 'good', 'failText', 'brief']) {
+        const text = strField(m.blk, field)
+        if (!text) continue
+        assert.ok(!/\barm(s|ed|ing)?\b|\bactivat/i.test(text),
+          `${key}/${m.id}: its ${field} line talks about the circle arming — ` +
+          `"${text}". The delay is shown on the floor, never written down`)
+      }
+    }
+  }
+})
+
 // The count is engine state, and the interface only ever reads it. A HUD or a
 // debrief that "tidied up" a stack would be doing the one thing the fight says
 // nothing but Ravenous Feast may do, from a file nobody would think to look in.

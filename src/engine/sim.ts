@@ -3525,7 +3525,23 @@ function allyThink(w: World) {
 
     // 7. Never walk off the platform. Asked of the floor, which on an octagon is
     //    a shorter walk on the diagonals than it is on the axes.
-    const bounded = clampToArena(w.boss, a.want, arena * 0.1)
+    //
+    //    The pickup a raider was SENT to is the one exception, and it has to be.
+    //    This inset is a tenth of the arena — 3.2 yards on the Twin Fangs — while
+    //    a hazard is scattered onto the floor with an inset of two or three, so
+    //    anything landing in the yard between them sits somewhere the ally AI is
+    //    forbidden to stand. On a `collect` that is not a near miss, it is a
+    //    globule nobody in the raid is allowed to sweep: it ruptures every single
+    //    time, on every seed, and nothing anybody does can change it. Measured
+    //    over a Caustic Deluge, one of the ten landed inside that band on three
+    //    pulls in seven.
+    //
+    //    So a sweeper's bound relaxes to wherever their own globule is, and no
+    //    further. Everyone else, and every other destination this raider might
+    //    have been given since, keeps the full inset — this widens the floor for
+    //    one body walking to one place, not for the raid.
+    const reach = sweep ? Math.min(arena * 0.1, edgeDistance(w.boss, sweep.pos)) : arena * 0.1
+    const bounded = clampToArena(w.boss, a.want, reach)
     a.want.x = bounded.x
     a.want.y = bounded.y
   }
@@ -3583,13 +3599,31 @@ function allyMove(w: World, dt: number) {
     // Deterministic rather than random so playtests stay reproducible.
     const lag = 0.06 + (a.id % 5) * 0.035
     const ease = Math.min(1, dt / Math.max(0.016, lag))
-    const dx = (a.want.x - a.pos.x) * ease
-    const dy = (a.want.y - a.pos.y) * ease
+    const dx = a.want.x - a.pos.x
+    const dy = a.want.y - a.pos.y
     const d = Math.hypot(dx, dy)
     // Deadzone: close enough is close enough, but small enough that the idle
     // sway still reads as a living raider rather than a statue.
+    //
+    // Measured in YARDS ON THE FLOOR, which it was not. The deadzone used to be
+    // tested against the EASED delta — `(want - pos) * ease`, where `ease` is
+    // between 0.083 and 0.278 depending on `id % 5` — so "0.6" actually meant
+    // "between 2.2 and 7.2 yards, and a different one for every fifth raider".
+    // Allies converged to somewhere in that band and then stopped dead, which is
+    // invisible on a formation ring and fatal on anything you have to physically
+    // arrive at: a globule is 2.6 yards across, so a sweeper sent to one from
+    // more than a couple of yards away parked next to it forever and it ruptured
+    // on the raid. Caustic Deluge is what exposed it — ten pickups instead of
+    // three means most of them are answered by somebody walking rather than by
+    // somebody already standing there, and three of the ten were missed every
+    // single pull, on every seed, deterministically.
+    //
+    // The easing is unchanged and still does its job: `stepLen` is the eased
+    // fraction, so a raider still accelerates into a move rather than snapping,
+    // and `id % 5` still staggers the raid so it does not move as one object.
+    // The only thing that changed is where they are allowed to stop.
     if (d > 0.6) {
-      const stepLen = Math.min(d, ALLY_SPEED * dt)
+      const stepLen = Math.min(d * ease, ALLY_SPEED * dt)
       a.pos.x += (dx / d) * stepLen
       a.pos.y += (dy / d) * stepLen
     }

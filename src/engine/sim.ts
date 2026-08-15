@@ -88,6 +88,21 @@ const WIND_REACH = 26
  * and tight enough that standing vaguely nearby is not the answer.
  */
 const WIND_LANE = 6
+/**
+ * Close enough to collide, whichever side of them you are on.
+ *
+ * The line-up test below is directional and has to be: two raiders blown the
+ * same way do not meet, and standing on the wrong side of your partner means the
+ * wind pulls you apart rather than together. But at arm's length the direction
+ * stops meaning anything — two bodies a couple of yards apart, thrown at each
+ * other, collide — and the ability data agrees, since Turbulent Gusts
+ * "dissipates if two carriers collide".
+ *
+ * Without this, "run to your partner" was a knife edge: stop a foot short and
+ * you live, coast a foot past and you die, on a line nobody can see. That is not
+ * a mechanic anybody can play, and it is the instruction the fight gives.
+ */
+const WIND_TOUCH = 7
 /** How hard the Maelstrom's gales push, in yards/sec. Below run speed on purpose. */
 const GALE_SPEED = 8.5
 /**
@@ -146,13 +161,19 @@ function clockPoint(boss: BossDef, c: Compass): Vec {
  */
 function windCancels(mine: Compass, from: Vec, theirs: Compass | null, at: Vec): boolean {
   if (!theirs || theirs !== OPPOSITE[mine]) return false
-  const dir = COMPASS[mine]
   const dx = at.x - from.x
   const dy = at.y - from.y
+  // Touching. At this range which side of them you are on is not a real
+  // question — see WIND_TOUCH.
+  if (Math.hypot(dx, dy) <= WIND_TOUCH) return true
+  const dir = COMPASS[mine]
   const along = dx * dir.x + dy * dir.y
   const across = Math.abs(dx * -dir.y + dy * dir.x)
   return along > 0 && along <= WIND_REACH && across <= WIND_LANE
 }
+
+/** The collision range, for the renderer's partner ring. */
+export const WIND_TOUCH_YARDS = WIND_TOUCH
 
 // ── randomness ───────────────────────────────────────────────────────────────
 // Seedable, so a headless balance run is reproducible.
@@ -2805,14 +2826,22 @@ function allyThink(w: World) {
           a.want.x = hold.x - dir.x * 8
           a.want.y = hold.y - dir.y * 8
         } else if (a.windMate === 0) {
-          // Holding YOUR opposite. They come to your axis and stop just outside
-          // the range that would cancel it, because closing the last few yards
-          // themselves would answer the mechanic for you — the same bargain the
-          // orb partner makes on the Coiled Altar.
-          const held = clampToArena(w.boss, {
-            x: w.player.pos.x + COMPASS[OPPOSITE[a.wind]].x * (WIND_REACH + 4),
-            y: w.player.pos.y + COMPASS[OPPOSITE[a.wind]].y * (WIND_REACH + 4),
-          }, arena * 0.12)
+          // Holding YOUR opposite — and holding STILL, in the middle of the room.
+          //
+          // This was measured from the player: "thirty yards along your own
+          // bearing from wherever you happen to be standing". Which meant it
+          // moved every time the player did. They walked at their partner, the
+          // partner walked away by exactly as much, and the two of them drifted
+          // to the rim together with the mechanic never resolving — a carrot on
+          // a stick, on a platform that kills you for reaching the end of it.
+          //
+          // A fixed mark instead, and the middle of the room is the right one:
+          // it gives the player somewhere to BE rather than something to chase,
+          // and it is the one part of the floor where lining up does not also
+          // mean standing next to the edge. The player still has to work out
+          // which SIDE of them to stand on, which is the actual mechanic — get
+          // it wrong and the two of you are blown apart rather than together.
+          const held = clampToArena(w.boss, { x: 0, y: 0 }, arena * 0.12)
           a.want.x = held.x
           a.want.y = held.y
         } else {

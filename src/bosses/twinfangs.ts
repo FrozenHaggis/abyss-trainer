@@ -26,10 +26,13 @@ import type { BossDef } from '../engine/types'
 //
 // The file's overview sets the design: "The real boss is a resource problem:
 // Eternal Venom arrives from seven sources continuously ... and is shed only one
-// per player per Ravenous Feast." The engine has no stack economy, so Eternal
-// Venom is modelled as the ambient raid-damage floor it actually behaves like,
-// and the two soaks — Caustic Globule and Ravenous Feast — carry the "run IN"
-// half of the movement so the loop is not just five flavours of "run out".
+// per player per Ravenous Feast." So it is modelled as one: `venom` declares
+// `counter`, every source that feeds it declares `applies`, and every body in
+// the raid — yours and the nineteen AI ones — carries its own count. Reaching
+// the cap kills. The two soaks, Caustic Globule and Ravenous Feast, carry the
+// "run IN" half of the movement so the loop is not just five flavours of "run
+// out", and they are now the two ends of the economy as well: one buys a stack,
+// the other is the only thing in the fight that sells one back.
 
 export const twinfangs: BossDef = {
   key: 'twinfangs',
@@ -192,17 +195,26 @@ export const twinfangs: BossDef = {
       id: 'venom',
       name: 'Eternal Venom',
       spellId: 1290480,
-      what: "Permanent stacking Nature poison , no duration, persists through death, fed by splashes, globule ruptures, Venomous Emergence, Corrosive Spit, waves and every Vile Flood tick. At 9 stacks 1292348 executes the carrier.",
+      what: "Permanent stacking Nature poison , no duration, persists through death, fed by splashes, globule ruptures, Venomous Emergence, Corrosive Spit, waves and every Vile Flood tick. At 10 stacks 1292348 executes the carrier.",
       from: 'vexhul',
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
       // 1290480 is the periodic tick — "scaling with stack count, 24% of all raid
       // damage taken and a direct proxy for how badly the venom economy is
-      // losing". The stack counter itself (1290336) and its 9-stack execution
-      // (1292348) are not modellable here, and trying would invent per-player
-      // failures out of a raid-wide resource. raidDamage never scores anyone.
+      // losing". That stays as the raid-damage floor, and `counter` carries the
+      // half it cannot: the stack count itself (1290336) and its execution
+      // (1292348). raidDamage still never scores anyone, and neither does the
+      // counter — nobody is blamed for carrying stacks, they simply die of them.
+      //
+      // TEN, not the nine in data/abilities. The raid leader ruled on this
+      // directly and the number is theirs. The `what:` line above was rewritten
+      // to match rather than left as the source has it, because a panel reading
+      // "at 9 stacks it executes" above a counter that kills at 10 is a lie
+      // printed on the teaching surface — and it is the one number on this
+      // fight a raider is going to count.
       rule: { type: 'raidDamage', dps: 3.4 },
+      counter: { lethalAt: 10 },
       good: 'Adds die fast, high-stack players take the earliest Feast bite, low-stack players soak globules.',
       failText: '',
     },
@@ -289,6 +301,12 @@ export const twinfangs: BossDef = {
       // stack every raid member takes. Everything else this cast does to the
       // raid, it does through the three bodies it leaves in the pocket.
       rule: { type: 'raidDamage', dps: 2.5 },
+      // "applying one Eternal Venom stack to all players". The one thing on this
+      // fight nobody can dodge, play around or soak for anybody else — which is
+      // why it is the floor the whole economy is measured against: three or four
+      // of these a pull is three or four stacks everyone is carrying before a
+      // single mistake has been made.
+      applies: { raid: 1 },
       summons: { addId: 'spawn', count: 3 },
       good: 'All three die fast. Every spawn still breathing is another Corrosive Spit every eight seconds.',
       failText: '',
@@ -319,6 +337,13 @@ export const twinfangs: BossDef = {
       origin: 'boss',
       rule: { type: 'aimAway' },
       damage: 0.32,
+      // Clipped by somebody else's line costs a stack as well as the damage. The
+      // MARKED player is not charged: `aimAway` only pays this in its bystander
+      // branch, matching the standing rule that being chosen is never billed.
+      // An unavoidable +1 every eight seconds per living spawn, on a ten-stack
+      // death, would be a wipe nobody could play out of — and it would punish
+      // the marked player for the one thing they cannot decline.
+      applies: { hit: 1 },
       good: 'The marked player points the line away; everyone else clears it.',
       failText: 'A Corrosive Spit line crossed the raid',
     },

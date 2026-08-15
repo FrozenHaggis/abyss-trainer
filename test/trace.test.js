@@ -922,3 +922,79 @@ test('avoid frontals do not track the player', () => {
   assert.ok(body.includes("rule.type === 'faceAway'"),
     'boss frontals track unconditionally — an avoid cone glued to the player cannot be dodged')
 })
+
+// ── the stack economy ────────────────────────────────────────────────────────
+//
+// One removal is the fight's central claim, and the easiest thing in it to
+// erode. The Twin Fangs tactic file: Eternal Venom "arrives from seven sources
+// continuously ... and is shed only one per player per Ravenous Feast". The
+// moment anything else quietly takes a stack off — a phase transition tidying
+// up, a revive, a helpful clamp — the fight stops being a resource problem and
+// becomes seven flavours of dodging, which is the encounter it was already
+// being taught as.
+//
+// So this pins the direction of travel: venom goes UP everywhere and comes DOWN
+// in exactly one function, which exactly one rule may call.
+test('only one function anywhere can take a stack off the counter', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const lines = sim.split(/\r?\n/)
+
+  // Where `shedVenom` begins and ends. Bounded by the next top-level closing
+  // brace rather than by a character count, because a window measured in
+  // characters is a window that expires the first time somebody adds a comment.
+  const start = lines.findIndex(l => /function shedVenom\b/.test(l))
+  assert.ok(start >= 0, 'sim.ts has no shedVenom — the counter has no single home for removals')
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i] === '}') { end = i; break }
+  }
+
+  // Every line in the engine that writes a body's venom count at all.
+  const writes = lines
+    .map((text, i) => ({ text, n: i }))
+    .filter(l => /\.venom\s*(\+=|-=|\+\+|--|=[^=])/.test(l.text))
+  assert.ok(writes.length > 0, 'nothing in sim.ts writes a venom count — this check would be vacuous')
+
+  for (const w of writes) {
+    if (/\.venom\s*\+=/.test(w.text)) continue          // upward, and anything may do that
+    if (w.n > start && w.n < end) continue              // the one legitimate home
+    // The drill revive is the single exception, and it is not a shed: a drill
+    // rep is a fresh pull of one mechanic, so the count starts over with you.
+    // Left standing it would kill you on rep ten with a death the drill itself
+    // caused, and then do it again, faster, forever.
+    assert.match(w.text.trim(), /^w\.player\.venom = 0$/,
+      `sim.ts:${w.n + 1} lowers a venom count outside shedVenom: ${w.text.trim()}`)
+    assert.ok(lines.slice(Math.max(0, w.n - 12), w.n).some(l => l.includes('w.drillId && !w.player.alive')),
+      `sim.ts:${w.n + 1} zeroes venom somewhere other than the drill revive`)
+  }
+
+  // And who may call it. Ravenous Feast is the fight's one shedder; the rule it
+  // lands as is `shedStack`. Until that rule exists there must be no callers at
+  // all — an uncalled removal is safe, a removal wired to something else is the
+  // whole defect.
+  const callers = [...sim.matchAll(/shedVenom\(/g)]
+    .map(m => m.index)
+    .filter(i => !/function shedVenom\($/.test(sim.slice(Math.max(0, i - 24), i + 10)))
+  const shed = sim.indexOf("case 'shedStack':")
+  for (const at of callers) {
+    assert.ok(shed > 0 && at > shed && at < sim.indexOf('break', shed),
+      'shedVenom is called from outside the shedStack rule — Ravenous Feast is the only ' +
+      'thing on this fight that takes a stack back off anybody')
+  }
+})
+
+// The count is engine state, and the interface only ever reads it. A HUD or a
+// debrief that "tidied up" a stack would be doing the one thing the fight says
+// nothing but Ravenous Feast may do, from a file nobody would think to look in.
+test('nothing outside the engine writes a venom count', () => {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)])
+  const sources = walk('src').filter(f => /\.tsx?$/.test(f) && f !== join('src', 'engine', 'sim.ts'))
+  assert.ok(sources.length > 5, 'found almost no source files — this check would be vacuous')
+  for (const f of sources) {
+    for (const [i, line] of readFileSync(f, 'utf8').split(/\r?\n/).entries()) {
+      assert.ok(!/\.venom\s*(\+=|-=|\+\+|--|=[^=])/.test(line),
+        `${f}:${i + 1} writes a venom count from outside the simulation: ${line.trim()}`)
+    }
+  }
+})

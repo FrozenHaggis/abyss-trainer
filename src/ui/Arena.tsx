@@ -217,6 +217,18 @@ interface HudSample {
   minApart: number
   /** Permanent proximity stacks the player is carrying, one row per aura. */
   marks: { id: string; name: string; side?: Side; stacks: number }[]
+  /**
+   * The fight's stack counter: what you are carrying, and the worst any one
+   * raider is carrying.
+   *
+   * Both, because they fail in opposite directions and the answer is different
+   * for each. Yours climbing is your footwork. The raid's climbing while yours
+   * does not is the soak rota drowning — and since a raider who reaches the cap
+   * dies, that number is also the clearest warning available that bodies are
+   * about to start dropping out of the globule rota.
+   */
+  venom: number
+  venomRaid: number
   /** Helical Toxins: the player's orbs, and what a partner has to bring. */
   marked: boolean
   green: number
@@ -263,8 +275,14 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
     prompt: null, next: [], drillReps: 0, drillClean: 0,
     units: [], separation: null, minApart: 0, marks: [],
     marked: false, green: 0, pairTarget: ORB_COUNT, phase: null,
-    altars: [], enrage: [], inbound: null,
+    altars: [], enrage: [], inbound: null, venom: 0, venomRaid: 0,
   })
+  // The fight's stack counter, read off the boss file the same way the
+  // separation and the orb target are. Zero on the seven fights without one,
+  // and the whole readout then draws nothing.
+  const counterDef = boss.mechanics.find(m => m.counter)
+  const venomCap = counterDef?.counter?.lethalAt ?? 0
+  const venomName = counterDef?.name ?? ''
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   // A phase announcement, held for a few seconds and then dropped.
   const [banner, setBanner] = useState<PhaseDef | null>(null)
@@ -453,6 +471,11 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           })),
           marked: world.player.marked,
           green: world.player.green,
+          venom: world.player.venom,
+          // The worst any one raider is carrying, not the average. An average
+          // hides the body that is one globule from dying, which is the only
+          // thing about the raid's count anybody can act on.
+          venomRaid: world.allies.reduce((n, a) => (a.alive ? Math.max(n, a.venom) : n), 0),
           pairTarget,
           // The PhaseDef itself, so its identity is stable while the phase runs
           // and the banner below fires once per stage rather than ten times a
@@ -831,6 +854,26 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             <span className="bar-num">{hud.raidAlive} up</span>
           </div>
         </div>
+
+        {/* The stack counter, from zero, for the same reason the Marks are:
+            a count you only see once it is dangerous is a count you can no
+            longer do anything about. On the one fight that keeps one this is
+            the fight, so it sits beside your own health bar rather than in the
+            top-bar chrome with the boss's book-keeping.
+
+            The raid's worst is next to it because the two are answered
+            differently. Yours climbing is where you have been standing; theirs
+            climbing is the soak rota losing, and a raider who reaches the cap
+            dies and stops soaking — which makes the next one worse. */}
+        {venomCap > 0 && (
+          <div className={`venom-count${hud.venom >= venomCap - 3 ? ' hot' : ''}`}>
+            <span className="venom-num">{hud.venom}<em>/{venomCap}</em></span>
+            <span className="venom-name">{venomName}</span>
+            <span className="venom-raid" title="Worst any single raider is carrying">
+              raid {hud.venomRaid}
+            </span>
+          </div>
+        )}
 
         {/* Both Marks, always both, even at zero. They never fall off, so the
             only thing you can do about them is not collect the second one —

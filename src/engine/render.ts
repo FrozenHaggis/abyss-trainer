@@ -1,7 +1,7 @@
 import type { BossDef, Instance, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
-import { inArena } from './sim'
+import { VENOM_FLASH_MS, inArena } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
 
@@ -1307,6 +1307,34 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // on you rather than left in a debuff list nobody reads mid-flurry.
   if (w.player.gash > 0) {
     drawLabel(ctx, `GASH — STAY OUT`, pp.x, pp.y + 30, RED, 12, 0.75 + 0.25 * pulse)
+  }
+
+  // The stack counter, on the body carrying it.
+  //
+  // On the one fight in this tier that is a resource problem, this number is the
+  // fight. It is also on the HUD, and it is on the floor as well for the reason
+  // the Gash is: a count you have to look away from the arena to read is a count
+  // you read after it has already killed you.
+  //
+  // Violet rather than red while there is room left on it. Violet is the marker
+  // colour in this palette — a state you are carrying — and painting 1/10 the
+  // same colour as "get out of this" would spend the loudest thing on screen on
+  // a stack that costs nothing yet. It turns red inside the last three, where it
+  // genuinely is the thing about to kill you.
+  const counter = w.boss.mechanics.find(m => m.counter)
+  if (counter?.counter && w.player.venom > 0) {
+    const cap = counter.counter.lethalAt
+    const near = w.player.venom >= cap - 3
+    drawLabel(
+      ctx, `VENOM ${w.player.venom}/${cap}`, pp.x, pp.y + 30,
+      near ? RED : VIOLET, 12, near ? 0.75 + 0.25 * pulse : 0.85)
+  }
+  // And the moment of arrival, rising off your head and fading. The count says
+  // where you are; this says that something just charged you, which is the half
+  // that connects the number to the thing you stood in.
+  if (w.venomFlash) {
+    const t = Math.max(0, Math.min(1, w.venomFlash.ms / VENOM_FLASH_MS))
+    drawLabel(ctx, `+${w.venomFlash.n}`, pp.x, pp.y - 34 - (1 - t) * 18, RED, 15, t)
   }
 
   // Standing in range of both golems. This is the split raid's characteristic

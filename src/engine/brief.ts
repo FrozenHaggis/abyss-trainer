@@ -322,6 +322,23 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       }
 
     case 'raidDamage': {
+      // The fight's stack counter. Everything else in this branch is a number a
+      // healer covers; this one is a resource every raider spends the pull
+      // managing, and it kills the body carrying it at a stated count.
+      //
+      // `yours` is true for all three roles regardless of the def's own `roles`,
+      // and that is not an oversight. `roles` decides who gets BLAMED, and
+      // nobody is ever blamed for a counter — but every body in the raid carries
+      // one and every body dies at the cap, so a dps reading "not your job" above
+      // the thing that is about to kill them would be the panel lying.
+      const cap = def.counter
+      if (cap) {
+        return {
+          verb: 'WATCH YOUR STACKS',
+          line: `Permanent, and it never falls off on its own — ${cap.lethalAt} stacks kills you. Everything this fight does hands them out: standing in something, soaking a pickup, a globule nobody swept, the cast that summons the adds. Only one ability in the whole fight takes one back, and only one at a time, so treat every avoidable stack as one you cannot get rid of.`,
+          yours: true,
+        }
+      }
       // A proximity aura is the one raidDamage that IS positional. Both Marks
       // carry a radius, stack forever, and stack from EACH golem you are inside
       // — so "nothing to dodge and nothing you can do wrong" was the exact

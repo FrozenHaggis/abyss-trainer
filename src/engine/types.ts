@@ -718,6 +718,49 @@ export interface MechanicDef {
    * trains both halves rather than whichever one they happened to be assigned.
    */
   alternatesWith?: { defId: string }
+  /**
+   * This mechanic IS the fight's stack counter, and `lethalAt` of it kills.
+   *
+   * Eternal Venom. The Twin Fangs tactic file opens by calling the encounter "a
+   * resource problem: Eternal Venom arrives from seven sources continuously ...
+   * and is shed only one per player per Ravenous Feast", and a trainer that
+   * models that as a raid-damage floor is teaching a different fight — one where
+   * every source is interchangeable with every other and none of them is worth
+   * dodging in particular.
+   *
+   * Declared in DATA rather than hard-coded in the engine so that everything
+   * which needs the number finds the same one: the HUD, the briefing, the
+   * debrief and the death all read `mechanics.find(m => m.counter)`. There is
+   * exactly one counter per fight by construction — a second would give the HUD
+   * two bars and the player no idea which one kills them.
+   *
+   * Only the PLAYER reaching `lethalAt` ends the pull. An ally who gets there
+   * dies where they stand and the run carries on: their body is a real loss —
+   * the raid bar drops and they leave the soak rota — but a pull that ended
+   * because the AI misplayed its globules would be a wipe with nothing the
+   * player could have done, which is the defect class this project keeps
+   * having to re-fix.
+   */
+  counter?: { lethalAt: number }
+  /**
+   * How many stacks of the fight's `counter` this mechanic hands out, and to whom.
+   *
+   * Three different bodies, because Caustic Globule pays three different ones
+   * out of a single def and no scalar could express it:
+   *   • `hit`   — the body that stood in it. Never the body it was AIMED at:
+   *               being chosen is not billed anywhere in this engine.
+   *   • `raid`  — everybody, player and allies alike. Venomous Emergence, and a
+   *               globule nobody swept.
+   *   • `soak`  — the one body that ran over the pickup on purpose. Correct play
+   *               that still costs a stack, which is the whole tension of the
+   *               soak rota.
+   *
+   * `everyMs` is how long before the SAME body can be billed again by the same
+   * instance. Omit it and one instance bills each body exactly once, which is
+   * right for anything that resolves; a lingering beam you can walk back into
+   * needs a period or it charges once and then becomes free floor.
+   */
+  applies?: { hit?: number; raid?: number; soak?: number; everyMs?: number }
 }
 
 /**
@@ -982,6 +1025,33 @@ export interface Instance {
    */
   reach?: number
   drift?: Vec
+  /**
+   * The ADD that cast this, by `Add.uid`, when an add cast it.
+   *
+   * `fromId` cannot answer this. It is set from the owning ENTITY — the def's
+   * `from` — so a Corrosive Spit fired out of the pocket by a Spawn of Vexhul
+   * points at Vexhul, nineteen yards away on the other side of the room, and
+   * nothing on the instance knew which of the three spawns actually cast it.
+   *
+   * Which mattered the moment one of them died mid-cast: dead adds are dropped
+   * wholesale from `w.adds` and nothing swept the instances, so a five-second
+   * beam outlived its caster and fired into the player from a corpse. Killing
+   * the spawns fast is the entire lever on this fight's venom income, so a beam
+   * that survives its caster quietly punishes the exact play being taught.
+   *
+   * Deliberately generic rather than a Corrosive Spit special case: every add in
+   * the raid with a `casts` link has the same defect the day it is written.
+   */
+  castByAddUid?: number
+  /**
+   * Body id -> the ms at which this instance last charged them a counter stack.
+   *
+   * -1 is the player, anything else an `Ally.id`, matching `aimedAt`. Kept on the
+   * INSTANCE rather than on the body because the question is "has this beam
+   * already billed me", and a flag on the body would let one hazard's charge
+   * pay for standing in another's.
+   */
+  touchMs?: Record<number, number>
 }
 
 /** A simulated raid member. Nineteen of them, so group mechanics are real. */
@@ -1038,6 +1108,18 @@ export interface Ally {
   /** Mutilated Gash stacks. A second one on a live stack kills them. */
   gash: number
   gashMs: number
+  /**
+   * Stacks of the fight's `counter` this raider is carrying.
+   *
+   * Beside `gash` because it is the same kind of thing — a per-body count the
+   * fight applies and the body eventually dies of — and for the same reason it
+   * has to exist at all: "the rest of the non-tank AI players soak the rest" is
+   * fiction unless the raid can actually be charged for it. Nineteen bodies that
+   * eat globules for free make the player's own soak a formality.
+   *
+   * An ally at the lethal count dies where they stand and the pull carries on.
+   */
+  venom: number
 }
 
 export interface PlayerState {
@@ -1067,6 +1149,14 @@ export interface PlayerState {
   /** Mutilated Gash stacks, and how long the current one has left. */
   gash: number
   gashMs: number
+  /**
+   * Stacks of the fight's `counter` you are carrying. Reaching `lethalAt` ends
+   * the pull, and the debrief names the counter rather than chip damage.
+   *
+   * Never falls off on its own, and only one mechanic in the raid takes any of
+   * it back off you — which is what makes it a currency rather than a debuff.
+   */
+  venom: number
   /** ms of Tempest slow left. The healer's dispel is what clears it. */
   slowMs: number
   /**
@@ -1133,4 +1223,16 @@ export interface RunResult {
    * healed up to match and the difference is progress thrown away.
    */
   entityDelta?: number
+  /**
+   * The highest the player's `counter` reached, and the worst any single ally
+   * carried. Only present on a fight that has a counter at all.
+   *
+   * Two numbers rather than one because they fail in opposite directions and
+   * the fix is different for each. Your own peak is your footwork. The raid's
+   * peak is the soak rota: if that climbs while yours does not, the pull was
+   * lost to globules nobody swept, and telling the player to dodge better would
+   * be pointing them at the wrong half of the fight.
+   */
+  venomPeak?: number
+  venomRaidPeak?: number
 }

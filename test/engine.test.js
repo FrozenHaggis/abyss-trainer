@@ -140,3 +140,172 @@ test('a tanking player holds an entity on tick one', async () => {
       w.bosses.map(b => `${b.def.id}:${b.targetId}`).join(' '))
   }
 })
+
+// ── the stack economy ────────────────────────────────────────────────────────
+
+const NO_INPUT = () => ({
+  up: false, down: false, left: false, right: false, pressed: [], aim: null, firing: false,
+})
+
+/**
+ * A Twin Fangs drill with exactly one Spawn of Vexhul alive and exactly one
+ * Corrosive Spit in the air, aimed at an ally, with the player standing in it.
+ *
+ * The player is a TANK on purpose. A fixate never picks one, so the player is
+ * always the BYSTANDER — which is the half of the cast that is charged a stack,
+ * and therefore the half that has to stop being charged when the caster dies.
+ * Rolled as a dps the player would be the marked target every time, and a marked
+ * target is never billed for their own line, so the whole thing would pass
+ * whatever the engine did.
+ *
+ * The drill is used rather than a pull because it isolates the claim: no loop,
+ * no ambient venom, no energy bar, and the casting add is the only thing on the
+ * field. Anything the player's count does here, this cast did.
+ */
+async function loneSpit(seed) {
+  const { createDrill, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const spit = boss.mechanics.find(m => m.id === 'spit')
+  assert.ok(spit?.applies?.hit, 'Corrosive Spit no longer applies a stack — this check would be vacuous')
+
+  seedRng(seed)
+  const w = createDrill(boss, 'tank', 'spit')
+  const input = NO_INPUT()
+
+  let inst = null
+  for (let i = 0; i < 60 * 90 && !inst; i++) {
+    step(w, input, TICK_MS)
+    inst = w.instances.find(x => x.def.id === 'spit' && !x.resolved) ?? null
+  }
+  assert.ok(inst, 'no Corrosive Spit was ever cast in 90 seconds of its own drill')
+
+  // The link the whole fix is built on. Without it the instance points at
+  // Vexhul, nineteen yards away and very much alive, and nothing can say which
+  // body actually cast this.
+  const caster = w.adds.find(a => a.uid === inst.castByAddUid)
+  assert.ok(caster, 'the spit instance carries no link back to the add that cast it')
+
+  // Every other spawn goes, so the count can only move because of THIS beam.
+  for (const a of w.adds) if (a !== caster) a.alive = false
+
+  assert.ok(inst.aimedAt > 0, 'the line marked the player — a fixate must never pick a tank')
+  const marked = w.allies.find(a => a.id === inst.aimedAt)
+  assert.ok(marked, 'the line is aimed at a raider who does not exist')
+
+  // Stand on the marked raider. The line runs from the pocket through them, so
+  // this is the one position guaranteed to be inside it however it swings.
+  const standIn = () => { w.player.pos = { ...marked.pos } }
+  return { w, inst, caster, step, TICK_MS, input, standIn }
+}
+
+// A dead caster's beam must die with it.
+//
+// `fireFixated` spawned the instance and walked away: `spawn` fills in `fromId`
+// from the def's owning ENTITY, so a Corrosive Spit pointed at Vexhul rather
+// than at the spawn that cast it, and dead adds were dropped wholesale out of
+// `w.adds` with no pass over `w.instances`. A five-second beam therefore outlived
+// its caster and fired into the player out of a corpse.
+//
+// Which punished the exact play the fight is teaching. Killing the spawns fast
+// is the single biggest lever on this fight's venom income, so a beam that
+// survives its caster makes good add control cost you a stack anyway.
+test('killing an add mid-cast takes its telegraph off the floor with it', async () => {
+  const { w, inst, caster, step, TICK_MS, input, standIn } = await loneSpit(11)
+
+  // Let it wind up first, so this is genuinely a cast in flight rather than one
+  // that had not started.
+  for (let i = 0; i < 30; i++) { standIn(); step(w, input, TICK_MS) }
+  assert.ok(!inst.resolved && inst.timer > 500,
+    'the beam had all but resolved before the add was killed — nothing is being measured')
+
+  const venomBefore = w.player.venom
+  const healthBefore = w.player.health
+  const failsBefore = w.failures.get('spit')?.count ?? 0
+
+  caster.alive = false      // shot down, exactly as killAdd and the fuse both do it
+  standIn()
+  step(w, input, TICK_MS)
+
+  assert.ok(!w.instances.some(i => i.uid === inst.uid),
+    'the beam is still on the floor after its caster died. A line still drawn is a line ' +
+    'the player is still running from, and teaching them to dodge a dead add is worse ' +
+    'than not drawing it')
+
+  // And it never goes off. Stepped well past the full five-second telegraph.
+  for (let i = 0; i < 60 * 6; i++) { standIn(); step(w, input, TICK_MS) }
+  assert.equal(w.player.venom, venomBefore,
+    'a dead add still charged a stack of Eternal Venom')
+  assert.ok(w.player.health >= healthBefore,
+    'a dead add still dealt damage')
+  assert.equal(w.failures.get('spit')?.count ?? 0, failsBefore,
+    'a dead add still put a failure against the player')
+})
+
+// The guard on the test above. If the beam simply never resolved, or never
+// charged anything, that one would pass for the wrong reason — so the same cast,
+// with its caster left standing, has to land and has to cost a stack.
+test('the same beam, with its caster alive, resolves and charges its stack', async () => {
+  const { w, inst, step, TICK_MS, input, standIn } = await loneSpit(11)
+
+  const venomBefore = w.player.venom
+  for (let i = 0; i < 60 * 7 && !inst.resolved; i++) { standIn(); step(w, input, TICK_MS) }
+
+  assert.ok(inst.resolved, 'a Corrosive Spit with a live caster never resolved')
+  assert.equal(w.player.venom, venomBefore + 1,
+    'standing in another raider’s Corrosive Spit cost no Eternal Venom')
+  assert.equal(w.failures.get('spit')?.count ?? 0, 1,
+    'standing in another raider’s line was not scored against the player')
+})
+
+// A player who does nothing dies of the COUNTER, and the debrief says so.
+//
+// The whole point of modelling Eternal Venom as a counter rather than as a
+// raid-damage floor is that it kills you for losing an economy rather than for
+// being unlucky with chip damage — and the death has to name the thing it was,
+// or the player goes away practising the wrong half of the fight.
+//
+// Deliberately synthetic. The fight has seven venom sources and only two of them
+// are wired at this point in the work, so an unmodified pull cannot yet reach
+// ten stacks inside its own enrage. Everything else is stripped out instead — no
+// loop, no ambient tick, no adds, no bar — so the ONLY thing that can end this
+// pull is the count, which is exactly the claim being made.
+test('a player who does nothing dies of the counter, and the death names it', async () => {
+  const { createWorld, fire, step, seedRng, buildResult, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const venom = boss.mechanics.find(m => m.counter)
+  assert.ok(venom?.counter, 'the Twin Fangs no longer declares a counter')
+  const cap = venom.counter.lethalAt
+
+  seedRng(3)
+  const w = createWorld(boss, 'dps', 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    // No bar and no clock, or the pull ends in an enrage before the count does.
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const input = NO_INPUT()
+  step(w, input, TICK_MS)
+
+  // Venomous Emergence, over and over: "applying one Eternal Venom stack to all
+  // players", nothing to dodge and nothing anybody can do about it.
+  for (let cast = 0; cast < cap + 4 && w.player.alive; cast++) {
+    const before = w.player.venom
+    fire(w, 'emergence')
+    for (let i = 0; i < 60 * 8 && w.player.alive && w.player.venom === before; i++) {
+      step(w, input, TICK_MS)
+    }
+  }
+
+  assert.equal(w.player.alive, false, `${cap} stacks of Eternal Venom did not kill the player`)
+  assert.match(w.deathCause ?? '', new RegExp(venom.name),
+    `died of "${w.deathCause}" rather than of the counter — a death attributed to chip ` +
+    'damage sends the player away practising the wrong half of this fight')
+
+  const r = buildResult(w)
+  assert.equal(r.venomPeak, cap, 'the debrief does not report the count the player died at')
+  // Unavoidable, so nobody is ever named for it. `raidDamage` has no path to a
+  // failure row, and gaining a counter stack must not smuggle one in.
+  assert.equal(r.failures.some(f => f.mechanicId === venom.id), false,
+    'the counter recorded a failure against the player — it is unavoidable damage')
+})

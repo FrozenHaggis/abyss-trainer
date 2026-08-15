@@ -497,6 +497,27 @@ export interface World {
   galeDir: Vec
   /** ms the flurry runs until. The ordinary rotation stands down for it. */
   comboUntilMs: number
+
+  // ── the stack economy ─────────────────────────────────────────────────────
+  /**
+   * The highest the player's counter has reached, and the worst any one ally
+   * has. Watermarks rather than live values, because the live ones are on the
+   * bodies and these are what the debrief has to report after the fact — a
+   * player who died at ten and an ally who died at ten both read zero
+   * afterwards if you only look at the corpse.
+   */
+  venomPeak: number
+  venomRaidPeak: number
+  /**
+   * The floating "+1" over the player's head: how many stacks just landed and
+   * how long the float has left.
+   *
+   * A stack economy the player cannot watch climbing is not a teach. The number
+   * on the HUD says where they are; this says that something just charged them,
+   * at the moment it charged them, which is the half that connects the count to
+   * the thing they stood in.
+   */
+  venomFlash: { n: number; ms: number } | null
 }
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
@@ -547,7 +568,7 @@ function makeAllies(playerRole: Role, playerSide: Side): Ally[] {
       // a stack group with no healer is a group that dies to its own Gash, and
       // a raid that discovered that by luck of array order would read as the
       // trainer being broken rather than as a mechanic.
-      group: i % 2, wind: null, windMate: -1, gash: 0, gashMs: 0,
+      group: i % 2, wind: null, windMate: -1, gash: 0, gashMs: 0, venom: 0,
     })
   })
   assignSides(out, playerRole, playerSide)
@@ -947,7 +968,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
       // You are always group 0. Which group you are in is arbitrary — what
       // matters is that it never changes mid-pull, so "is this one mine?" stays
       // a question about the cone rather than about your own assignment.
-      group: 0, wind: null, gash: 0, gashMs: 0, slowMs: 0, knock: null,
+      group: 0, wind: null, gash: 0, gashMs: 0, venom: 0, slowMs: 0, knock: null,
     },
     instances: [],
     adds: [],
@@ -1030,6 +1051,9 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     galeImmuneMs: 0,
     galeDir: { x: 0, y: 1 },
     comboUntilMs: 0,
+    venomPeak: 0,
+    venomRaidPeak: 0,
+    venomFlash: null,
   }
   // A split fight seats the player on their own side’s entity before the first
   // tick, so their group, their mechanics and their golem are all in one place.
@@ -1415,6 +1439,153 @@ function hurt(w: World, amount: number, cause: string) {
     w.player.health = 0
     w.deathCause = cause
   }
+}
+
+// ── the stack economy ────────────────────────────────────────────────────────
+//
+// One fight in this tier is a resource problem rather than a dodging problem.
+// The Twin Fangs tactic file says so in its first paragraph: Eternal Venom
+// "arrives from seven sources continuously ... and is shed only one per player
+// per Ravenous Feast", and every decision on that fight — who soaks the globule,
+// which spawn dies first, whether a bite is yours — is an argument about the
+// count rather than about the damage.
+//
+// So the count is a first-class thing the engine tracks on every body, driven
+// entirely from data: one `counter` mechanic per fight declares what kills you,
+// and every mechanic that feeds it declares `applies`. Nothing below names a
+// spell, and on the seven fights that declare no counter every one of these is
+// a no-op that costs a `find` over fifteen mechanics.
+
+/**
+ * How long the "+1" hangs over your head after a stack lands.
+ *
+ * Exported because the renderer needs the same number to fade the float, and
+ * two copies of a duration are two durations the moment somebody tunes one.
+ */
+export const VENOM_FLASH_MS = 900
+
+/**
+ * The mechanic that IS this fight's counter, or undefined on the other seven.
+ *
+ * Looked up rather than cached on the World for the same reason `empowerment` is
+ * looked up: MechanicDefs are shared between every world, and a pull's own state
+ * has no business living on them. Only ever reached from a body that is being
+ * charged, so it is a handful of calls a second, not one a frame.
+ */
+function counterDef(w: World): MechanicDef | undefined {
+  return w.boss.mechanics.find(m => m.counter)
+}
+
+/**
+ * May this instance charge this body again yet?
+ *
+ * Default is once per instance per body, and that is the honest default: a
+ * splash that resolves on you resolves once. A hazard that lingers and can be
+ * walked back into declares `applies.everyMs` and gets billed on that period
+ * instead — without which a beam charges the first tick you touch it and is
+ * free floor for the rest of its life, which teaches standing in it.
+ */
+function canTouch(inst: Instance, body: number, everyMs: number, nowMs: number): boolean {
+  const seen = inst.touchMs ?? (inst.touchMs = {})
+  const last = seen[body]
+  if (last !== undefined && nowMs - last < everyMs) return false
+  seen[body] = nowMs
+  return true
+}
+
+/**
+ * The player hit the cap. The pull is over and the debrief names the counter.
+ *
+ * Named rather than left to chip damage on purpose. Dying at ten stacks is not
+ * "the healers could not keep up" — it is a specific economy the player lost
+ * over ninety seconds, and a death screen that blamed the last globule instead
+ * of the count would send them away practising the wrong thing.
+ */
+function venomWipe(w: World, def: MechanicDef, lethalAt: number) {
+  // It is a wipe, not a death: the count is on the whole raid and everyone is
+  // at or near it. The bar is emptied so the debrief's lowest-raid-HP line
+  // agrees with what actually happened, rather than reporting a comfortable 60%
+  // beside a dead player.
+  w.raidHealth = 0
+  w.raidHealthLow = 0
+  killPlayer(w, `${def.name} — ${lethalAt} stacks`)
+}
+
+/**
+ * Hand `n` stacks to one body: the player when `who` is null, an ally otherwise.
+ *
+ * The two bodies are judged DIFFERENTLY and deliberately. You reaching the cap
+ * ends the pull. An ally reaching it dies where they stand and the fight carries
+ * on — the raid loses their health and their share of the soak rota, which is
+ * consequence enough, and a pull that ended because the AI misplayed its
+ * globules would be a wipe with nothing the player could have done about it.
+ */
+function giveVenom(w: World, who: Ally | null, n = 1) {
+  const def = counterDef(w)
+  const cap = def?.counter
+  if (!def || !cap || n <= 0) return
+  if (who) {
+    if (!who.alive) return
+    who.venom += n
+    w.venomRaidPeak = Math.max(w.venomRaidPeak, who.venom)
+    if (who.venom >= cap.lethalAt) {
+      who.alive = false
+      who.health = 0
+      w.alliesLost++
+    }
+    return
+  }
+  if (!w.player.alive) return
+  w.player.venom += n
+  w.venomPeak = Math.max(w.venomPeak, w.player.venom)
+  // The float stacks rather than restarts: two sources landing in the same
+  // second are one "+2", because two "+1"s drawn on top of each other read as
+  // one and the player is then short a stack they never saw arrive.
+  w.venomFlash = { n: (w.venomFlash?.n ?? 0) + n, ms: VENOM_FLASH_MS }
+  if (w.player.venom >= cap.lethalAt) venomWipe(w, def, cap.lethalAt)
+}
+
+/**
+ * Everybody, player and raid alike. Venomous Emergence, and a globule nobody
+ * swept — the two ways this fight charges the room rather than a person.
+ */
+function payRaid(w: World, def: MechanicDef) {
+  const n = def.applies?.raid
+  if (!n) return
+  giveVenom(w, null, n)
+  for (const a of w.allies) giveVenom(w, a, n)
+}
+
+/**
+ * Charge one body for standing in something.
+ *
+ * Gated through the instance, so a lingering hazard cannot bill the same body
+ * twice a frame. Never called for the body a mechanic was AIMED at: being chosen
+ * is not billed anywhere in this engine — a Corrosive Spit target eating an
+ * unavoidable +1 every eight seconds per living spawn is a wipe nobody can play
+ * out of, and it matches the standing rule that a fixate's own carrier takes no
+ * damage from their own line.
+ */
+function payHit(w: World, inst: Instance, who: Ally | null) {
+  const app = inst.def.applies
+  if (!app?.hit) return
+  if (!canTouch(inst, who ? who.id : -1, app.everyMs ?? Infinity, w.elapsedMs)) return
+  giveVenom(w, who, app.hit)
+}
+
+/**
+ * Take stacks back off a body. The only direction of travel that is not upward.
+ *
+ * Exported and, for now, uncalled. Ravenous Feast is the fight's one shedder —
+ * "shed only one per player per Ravenous Feast" — and it lands as its own step;
+ * this is here so that the removal has exactly one home from the moment the
+ * economy exists, and so the test that asserts nothing ELSE ever decrements a
+ * counter has something to point at. One removal is the fight's central claim
+ * and the easiest thing in it to erode by accident.
+ */
+export function shedVenom(w: World, who: Ally | null, n = 1) {
+  if (who) who.venom = Math.max(0, who.venom - n)
+  else w.player.venom = Math.max(0, w.player.venom - n)
 }
 
 /**
@@ -2077,6 +2248,9 @@ function resolveInstance(w: World, inst: Instance) {
         // drained twice running really does hit harder than the first one did.
         if (def.lethal) killPlayer(w, def.name)
         else hurt(w, (def.damage ?? 0.3) * empowerment(w, def), def.name)
+        // And the stack, on the fight that keeps one. On this fight the damage
+        // is the smaller half of what standing in something costs you.
+        payHit(w, inst, null)
       }
       break
 
@@ -2087,6 +2261,7 @@ function resolveInstance(w: World, inst: Instance) {
       if (!inst.answered) {
         if (scored) recordFailure(w, def)
         w.raidHealth -= def.lethal ? 0.16 : 0.09
+        payRaid(w, def)   // it ruptured on everybody, which is what a miss costs
       }
       break
 
@@ -2153,10 +2328,14 @@ function resolveInstance(w: World, inst: Instance) {
         // Coiling Ichor is "never at fault" for the same reason. What they are
         // answerable for is where they pointed it, which is the check above.
       } else if (inside) {
-        // Everyone else: an ordinary frontal, scored exactly like `avoid`.
+        // Everyone else: an ordinary frontal, scored exactly like `avoid`, and
+        // charged the same stack for the same reason. Note where this sits — in
+        // the bystander branch, never the carrier's. Being marked by a Spawn of
+        // Vexhul is not billed; walking through somebody else's line is.
         if (scored) recordFailure(w, def)
         if (def.lethal) killPlayer(w, def.name)
         else hurt(w, (def.damage ?? 0.3) * empowerment(w, def), def.name)
+        payHit(w, inst, null)
       }
       break
     }
@@ -2271,6 +2450,7 @@ function resolveInstance(w: World, inst: Instance) {
       // can never name anybody — an empowered Expulsion is a bigger number for
       // the healer to cover, never a bigger stick to beat them with.
       w.raidHealth -= (def.rule.dps / 100) * empowerment(w, def)
+      payRaid(w, def)   // Venomous Emergence: a stack on everybody, nothing to dodge
       break
 
     case 'combo': {
@@ -3666,6 +3846,11 @@ function fireFixated(w: World, add: Add, defId: string) {
   inst.aimedAt = add.fixate
   // The marked player owns this line whoever else is standing in it.
   inst.carriedByPlayer = add.fixate === -1
+  // And the line belongs to THIS add, so it can die with it. `spawn` sets
+  // `fromId` off the def's owning entity, which for Corrosive Spit is Vexhul —
+  // nineteen yards away, still alive, and no help at all in answering "did the
+  // thing that cast this survive long enough to fire it".
+  inst.castByAddUid = add.uid
 }
 
 /**
@@ -4236,6 +4421,12 @@ export function step(w: World, input: Input, dtMs: number) {
     w.player.health = 1
     w.player.pos = safeSpot(w, { x: 0, y: 12 })
     w.player.marked = false
+    // A drill rep is a fresh pull of one mechanic, so the counter starts over
+    // with you. Left standing, a drill on anything that `applies` a stack would
+    // hand you your twenty reps and kill you on rep ten with a death the drill
+    // itself caused — and then do it again, faster, forever.
+    w.player.venom = 0
+    w.venomFlash = null
     w.deathCause = null
     w.raidHealth = Math.max(w.raidHealth, 0.7)
   }
@@ -4494,6 +4685,12 @@ export function step(w: World, input: Input, dtMs: number) {
   for (const id of Object.keys(w.player.carrying)) {
     w.player.carrying[id] -= dtMs
     if (w.player.carrying[id] <= 0) delete w.player.carrying[id]
+  }
+  // The "+1" over your head fades. The count itself never does — that is the
+  // point of it — but the float is the moment of arrival, not the total.
+  if (w.venomFlash) {
+    w.venomFlash.ms -= dtMs
+    if (w.venomFlash.ms <= 0) w.venomFlash = null
   }
 
   // ── abilities ──
@@ -4936,6 +5133,31 @@ export function step(w: World, input: Input, dtMs: number) {
   }
 
   // ── instances ──
+  //
+  // A dead caster's telegraph dies with it.
+  //
+  // An add that `casts` something spawns an ordinary instance and then, until
+  // this existed, had no further connection to it: dead adds are dropped
+  // wholesale from `w.adds` and nothing swept `w.instances`, so a five-second
+  // Corrosive Spit outlived the Spawn of Vexhul that cast it and fired into the
+  // player out of a corpse. Killing the spawns fast is the single biggest lever
+  // on this fight's venom income — the beam surviving its caster quietly
+  // punished the exact play the fight is teaching.
+  //
+  // The whole telegraph goes, not just its damage. A line still drawn is a line
+  // the player is still running from, and teaching them to dodge a dead add's
+  // beam is worse than not drawing it at all.
+  //
+  // Only UNRESOLVED instances. Something that already landed and left a pool is
+  // on the floor now; its caster dying afterwards does not pick the pool back up.
+  // And keyed on the casting add being gone rather than on any particular
+  // mechanic, because every add in the raid with a `casts` link has this defect
+  // from the day it is written.
+  if (w.instances.some(i => i.castByAddUid !== undefined)) {
+    w.instances = w.instances.filter(i =>
+      i.resolved || i.castByAddUid === undefined
+      || w.adds.some(a => a.alive && a.uid === i.castByAddUid))
+  }
   let pooledThisTick = false
   for (const inst of w.instances) {
     // Hazards that drift, resolved or not. A pool that has landed still moves
@@ -5024,14 +5246,33 @@ export function step(w: World, input: Input, dtMs: number) {
 
     // Pickups vanish the moment anyone touches them — you, or a raider doing
     // their job. Seeing an ally eat one is half the lesson.
+    //
+    // WHICH body touched it, not merely that one did. Eating a globule costs the
+    // eater a stack of the fight's counter, and while the engine only knew that
+    // "somebody" had swept it there was nowhere to put that cost: the raid
+    // cleared the floor for free, and the soak rota — which on this fight is the
+    // fight — had no price attached to it at all. Charged here, at the instant of
+    // contact, rather than at the instance's resolve: the resolve is ten seconds
+    // later and the body that ate it may not be standing by then.
     if (!inst.resolved && !inst.answered && inst.def.rule.type === 'collect') {
       const r = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 2.5
-      if (dist(inst.pos, w.player.pos) <= r) {
+      let eater: Ally | null = null
+      let touched = dist(inst.pos, w.player.pos) <= r
+      if (!touched) {
+        // The NEAREST raider standing on it, so two bodies arriving on the same
+        // frame settle it the same way every time instead of by array order.
+        let bd = r
+        for (const a of w.allies) {
+          if (!a.alive) continue
+          const d = dist(inst.pos, a.pos)
+          if (d <= bd) { bd = d; eater = a }
+        }
+        touched = eater !== null
+      }
+      if (touched) {
         inst.answered = true
         inst.timer = 0
-      } else if (w.allies.some(a => a.alive && dist(inst.pos, a.pos) <= r)) {
-        inst.answered = true
-        inst.timer = 0
+        giveVenom(w, eater, inst.def.applies?.soak ?? 0)
       }
     }
 
@@ -5063,6 +5304,13 @@ export function step(w: World, input: Input, dtMs: number) {
     }
 
     if (inst.resolved && (inst.def.lingerMs || inst.def.permanent) && isInside(inst, w.player.pos)) {
+      // The counter stack, charged per HAZARD rather than per tick — `payHit`
+      // bills a body once per instance, or once per `applies.everyMs` for
+      // something you can walk back into. Deliberately outside the
+      // `pooledThisTick` guard below: that guard exists to stop overlapping
+      // pools MULTIPLYING their damage into a wall, which is a different thing
+      // from standing in two separate hazards and being charged once by each.
+      payHit(w, inst, null)
       if (inst.def.raidKnockRoom) {
         // A cyst you walked into. It bursts, and the burst throws the WHOLE
         // raid — which is the mechanic, not an inconvenience. During the gales
@@ -5314,5 +5562,11 @@ export function buildResult(w: World): RunResult {
     shotsHit: w.shotsHit,
     addsKilled: w.addsKilled,
     addsLeaked: w.addsLeaked,
+    // Only on a fight that keeps a counter. A clean pull genuinely reporting
+    // zero is a finding worth printing; the seven fights with no venom in them
+    // reporting zero would be the debrief inventing one, which is the rule the
+    // side and the furthest stage above already follow.
+    venomPeak: counterDef(w) ? w.venomPeak : undefined,
+    venomRaidPeak: counterDef(w) ? w.venomRaidPeak : undefined,
   }
 }

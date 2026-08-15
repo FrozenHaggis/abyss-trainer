@@ -823,17 +823,42 @@ function raidAnchor(w: World): Vec {
 export function createDrill(boss: BossDef, role: Role, mechanicId: string, side: Side = 'green'): World {
   const w = createWorld(boss, role, side)
   w.drillId = mechanicId
+  /**
+   * Some mechanics have no meaning without the body that casts them.
+   *
+   * Corrosive Spit is fired by a Spawn of Vexhul at the raider it fixated. Put
+   * it in the drill's `loop` like anything else and it comes off a serpent,
+   * aimed at nobody, with no mark and no marked-player job — which is the exact
+   * mechanic this fight was changed to STOP teaching. The drill was quietly
+   * showing the old behaviour while the pull showed the new one.
+   *
+   * So a drill for an add-cast mechanic keeps the add instead of the loop entry:
+   * the caster is the drill.
+   */
+  const caster = boss.adds?.find(a => a.casts?.defId === mechanicId)
   // Only the drilled mechanic fires, every few seconds, forever.
   w.boss = {
     ...boss,
-    loop: [mechanicId],
+    loop: caster ? [] : [mechanicId],
     introEverySec: 1,
     loopIntervalSec: Math.max(3.5, boss.loopIntervalSec * 0.7),
     atFullEnergy: undefined,
     // Ambient attrition and adds are the fight, not the mechanic — they would
     // just kill you slowly while you practise something else.
     ambient: [],
-    adds: [],
+    // The casting add is the one exception: it IS the mechanic. It arrives
+    // straight away and keeps arriving, so a drill still gives you twenty reps
+    // rather than two.
+    adds: caster ? [caster] : [],
+    addEverySec: caster ? Math.max(6, (caster.fuseSec ?? 20) * 0.5) : boss.addEverySec,
+    // ...and the summon link has to go with it, or the wave scheduler drops the
+    // add straight back out again: it refuses to deal out anything some mechanic
+    // summons, which in the pull is exactly right and in a drill leaves the
+    // player staring at an empty room. The summoning cast is not in the drill's
+    // loop, so nothing else notices it is gone.
+    mechanics: caster
+      ? boss.mechanics.map(m => (m.summons?.addId === caster.id ? { ...m, summons: undefined } : m))
+      : boss.mechanics,
     // Stages and the energy bar are both the fight rather than the mechanic. A
     // drill that phased out from under you, or ended in an enrage because the
     // bar filled while you practised, would be a pull with extra steps.
@@ -3469,7 +3494,14 @@ function spawnAdds(w: World, def: AddDef, count = def.count, empower = 1, at?: V
       def,
       // Clamped to the floor rather than to a radius: on the octagon a spawn
       // ring drawn as a circle would put half a wave outside the room.
-      pos: clampToArena(w.boss, pos, 1),
+      //
+      // An add with a `spawnAt` is NOT clamped. The Spawn of Vexhul surface in
+      // the venom pocket, which is a bite taken out of the platform rather than
+      // part of it — clamping would shove all three up onto the floor the raid
+      // is standing on, and the pocket would stop being a place you cannot go.
+      // A stated spawn point is a fact about the fight; the clamp exists to stop
+      // a generic ring falling off an octagon.
+      pos: def.spawnAt ? pos : clampToArena(w.boss, pos, 1),
       hp: Math.max(1, Math.round(def.hp * empower)),
       shield: Math.round((def.shieldHp ?? 0) * empower),
       fuse: def.fuseSec * 1000,

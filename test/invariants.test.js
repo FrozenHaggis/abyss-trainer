@@ -390,7 +390,85 @@ test('twinfangs: Venomous Emergence summons spawns that fixate and spit', () => 
   assert.equal(spit.telegraphMs, 5000, 'Corrosive Spit lost its 5s marker window')
 })
 
-// ── 10. A spread you can survive by ignoring it is not a spread ───────────────
+/**
+ * The arena polygon's corners, or null for a round room.
+ *
+ * Local to this file on purpose: trace.test.js has a general literal reader, and
+ * importing test helpers across suites couples two files that are meant to be
+ * independent sweeps.
+ */
+function arenaPointsOf(code) {
+  const i = code.indexOf('arena: {')
+  if (i < 0) return null
+  const j = code.indexOf('points: [', i)
+  if (j < 0) return null
+  const body = code.slice(j, code.indexOf(']', j))
+  return [...body.matchAll(/x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)/g)]
+    .map(m => ({ x: Number(m[1]), y: Number(m[2]) }))
+}
+
+// ── 15. You start a pull standing on the floor ───────────────────────────────
+//
+// The player is seated at a hard-coded (0, 12) in createWorld, and a drill
+// respawn puts them back there. On a round room that is trivially inside; on the
+// Twin Fangs' wedge, (0,12) landed inside the venom pocket — every pull and
+// every drill rep began off the floor, and it only survived because safeSpot()
+// silently shoved the player somewhere else on the first tick. A start position
+// that depends on being rescued is a bug waiting for the next arena.
+test('sweep: the pull starts on solid floor in every room', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const m = /pos: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}, role/.exec(sim)
+  assert.ok(m, 'could not find the hard-coded player start in createWorld')
+  const start = { x: Number(m[1]), y: Number(m[2]) }
+
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const pts = arenaPointsOf(code)
+    if (!pts) {
+      const r = Number(/arenaRadius:\s*([\d.]+)/.exec(code)[1])
+      assert.ok(Math.hypot(start.x, start.y) < r,
+        `${key}: the player starts outside a ${r}yd room`)
+      continue
+    }
+    // Same crossing-number test the engine uses.
+    let inside = false
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[i], b = pts[j]
+      if ((a.y > start.y) !== (b.y > start.y) &&
+          start.x < ((b.x - a.x) * (start.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) inside = !inside
+    }
+    assert.ok(inside,
+      `${key}: the player starts at (${start.x}, ${start.y}), which is off this floor — ` +
+      'every pull and every drill respawn begins out of bounds and is rescued by safeSpot()')
+  }
+})
+
+// ── 16. A hole in the floor has to be wide enough to walk around ─────────────
+//
+// The venom pocket was authored as a triangle tapering to a point. Near the
+// apex it was 0.6 yards across — narrower than one movement tick — so players
+// crossed it without ever being on it and died on the far side of a gap they
+// could not see. A concave notch is a legitimate piece of room design; one that
+// tapers to nothing is a trap, and the failure it produces looks like a physics
+// bug rather than a mistake the player made.
+test('twinfangs: the venom pocket is wide enough to be read', () => {
+  const code = readFileSync('src/bosses/twinfangs.ts', 'utf8')
+  const pts = arenaPointsOf(code)
+  assert.ok(pts, 'the Twin Fangs arena polygon is gone')
+  // The notch is the run of corners with y at the bottom edge or above it that
+  // sit between the two mouth corners — measure the narrowest span across it.
+  const bottom = Math.max(...pts.map(p => p.y))
+  const inner = pts.filter(p => p.y < bottom && p.y > 0)
+  assert.ok(inner.length >= 2,
+    'the venom pocket is gone, or is no longer cut into the bottom edge')
+  const width = Math.max(...inner.map(p => p.x)) - Math.min(...inner.map(p => p.x))
+  assert.ok(width >= 6,
+    `the venom pocket narrows to ${width}yd at its inner edge. A gap thinner than ` +
+    'a player can see across is crossed without ever being entered — make it a ' +
+    'flat-bottomed bite, not a spike')
+})
+
+// ── 17. A spread you can survive by ignoring it is not a spread ───────────────
 // Raging Crosswinds shipped at a 22-yard push on a 56-yard floor, which meant
 // the answer to the fight's headline mechanic was to stand in the middle and do
 // nothing: an unpaired knock landed you comfortably back on the platform. A
@@ -409,7 +487,7 @@ test('sweep: an unpaired wind knock actually leaves the platform', () => {
   }
 })
 
-// ── 11. One cone must not be able to take both stack groups ──────────────────
+// ── 18. One cone must not be able to take both stack groups ──────────────────
 // The whole Mutilate rota is "hit this crowd, then the other one". A cone wide
 // enough to cover both marks at once makes the second application land on the
 // group that already has a Gash however well the tank plays it, and the rota

@@ -38,7 +38,39 @@ export const twinfangs: BossDef = {
   blurb: 'Nothing to kick, nothing to dispel. Venom never washes off — the soaks are the only relief.',
   // Measured from PTR combat logs, not guessed: Rounded/octagonal, low confidence (corner/axis 1.19). Much the smallest floor in the raid.
   // 1 yard = 100 coordinate units.
+  //
+  // The measurement is a circle fitted to position samples, and it was fitted at
+  // "low confidence" for a reason: this floor is not round. It is a wedge, wide
+  // at the mouth and narrowing to the ledge the serpents are coiled on, with a
+  // pocket of venom bitten out of the middle of its bottom edge.
   arenaRadius: 32,
+  arena: {
+    kind: 'polygon',
+    points: [
+      // The ledge at the top, where both serpents sit with the venom sea behind
+      // them. Narrow: there is barely room for the two tanks up here, which is
+      // why the raid works down the wedge rather than stacking at the front.
+      // Every corner stays inside arenaRadius, which the engine still treats as
+      // the bounding radius everywhere else — the wedge is a shape for the same
+      // 32-yard floor the logs measured, not a bigger room.
+      { x: -14, y: -25 }, { x: 14, y: -25 },
+      // The right leg, flaring out to the mouth.
+      { x: 23, y: 21 },
+      // The venom pocket — a bite out of the bottom edge, not a puddle on it.
+      // The Spawn of Vexhul surface in here and nobody can stand on them, which
+      // is what fixes one end of every Corrosive Spit line in place.
+      //
+      // Blunt, and never narrower than 8 yards. It was a triangle coming to a
+      // point at (0,11), and a hole that tapers to nothing is a hole nobody can
+      // read: at y=12 it was 1.2 yards wide, thinner than a single movement
+      // tick, so players crossed the 4-yard band under the apex and simply died
+      // on the far side of a gap they never saw. A pocket has to be wide enough
+      // to be walked around on purpose, or it is not a pocket, it is a trap.
+      { x: 6, y: 21 }, { x: 4, y: 15 }, { x: -4, y: 15 }, { x: -6, y: 21 },
+      // The left leg.
+      { x: -23, y: 21 },
+    ],
+  },
   // "A permanent channel pulsing the raid every 4s and gaining +15% of its own
   // damage per pulse — a soft enrage with no interrupt, so kill the add."
   // 12 killing blows on Heroic PTR. There is nothing to kick on this boss.
@@ -68,7 +100,11 @@ export const twinfangs: BossDef = {
       // knows where every line will start before any of them is cast.
       id: 'spawn', name: 'Spawn of Vexhul', npcId: 264023, spellId: 1291478,
       job: 'kill', count: 3, hp: 4, fuseSec: 30, auraDps: 0.35,
-      spawnAt: { x: 0, y: 24 },
+      // Deep enough that all three land in the venom rather than one of them on
+      // the lip: the three are fanned 3.5 yards around this point, and from
+      // (0,18) the northern one came to rest on the pocket's inner edge — on the
+      // floor, where the raid could stand on top of it.
+      spawnAt: { x: 0, y: 19 },
       fixates: true,
       // 5s of cast inside an 8s cycle: three seconds of quiet between one line
       // firing and the next marker going out. Tighter than that and a marked
@@ -78,9 +114,24 @@ export const twinfangs: BossDef = {
       failText: 'A Spawn of Vexhul lived out its full timer',
     },
   ],
+  // High on the wedge, tanked apart, with the raid working up at them from the
+  // wide end. NOT jammed against the top wall, and this is a measured position
+  // rather than a drawn one.
+  //
+  // They were first put at (±9,-19), right on the ledge where the screenshot
+  // shows them. A shot is eaten by the first entity it passes within 4.5 yards
+  // of, so from up there each serpent stood squarely between its own raid and
+  // everything south of it: the Bloodcurdled Mass sat at full health for its
+  // entire fuse while the bot shot it with 100% recorded accuracy — every round
+  // stopping in a serpent — and then killed the raid. Twin Fangs went from two
+  // cleared cells out of three to none.
+  //
+  // Measured across the playtest: (±9,-19) 15/27 clears, (±13,-16) 17/27,
+  // (±16,-4) 17/27. This is the highest placement that does not have the bosses
+  // body-blocking the fight they are in.
   entities: [
-    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -19, y: 0 }, tankedApart: true },
-    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 19, y: 0 }, tankedApart: true },
+    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -13, y: -16 }, tankedApart: true },
+    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 13, y: -16 }, tankedApart: true },
   ],
   maxHp: 1,
   loopIntervalSec: 6,
@@ -93,15 +144,26 @@ export const twinfangs: BossDef = {
   // metronome; Stone Breaker lands once a half, matching the file's "roughly
   // once a minute". Each half forces movement inward (globule, feast, the
   // pre-knock huddle) and outward (Coiling Ichor) rather than only outward.
+  // Venomous Emergence sits FIFTH, not twelfth.
+  //
+  // It was in the last slot of each half, which put the first one 75 seconds
+  // into a pull that a clean kill ends at 80 and an enrage ends at 150. The
+  // mechanic was correct and almost nobody ever saw it: one Emergence, five
+  // seconds before the boss died, and none at all for anyone who died early.
+  // A mechanic you meet once at the end of a good pull is not being taught.
+  //
+  // Fifth puts the first spawns down at about 30 seconds and gives a full pull
+  // three or four Emergences, which is the cadence the rest of this loop was
+  // already built on.
   loop: [
     'envenomed', 'deluge', 'globule',
-    'envenomed', 'ichor', 'storm',
+    'envenomed', 'emergence', 'ichor',
     'envenomed', 'stonebreaker', 'depths',
-    'envenomed', 'feast', 'emergence',
+    'envenomed', 'feast', 'storm',
     'envenomed', 'deluge', 'globule',
-    'envenomed', 'storm', 'ichor',
+    'envenomed', 'emergence', 'storm',
     'envenomed', 'stonebreaker', 'depths',
-    'envenomed', 'feast', 'emergence',
+    'envenomed', 'feast', 'ichor',
   ],
 
   mechanics: [

@@ -85,11 +85,13 @@ export const sszorak: BossDef = {
   // This is also the enrage, because the two are the same number in this engine.
   // It makes Sszorak the longest pull in the raid by some distance. That is the
   // price of the fight having a cycle rather than a rotation.
-  pullLengthSec: 320,
-  // 100 / 0.91 is about 110 seconds — two full rotations — and the stage that
-  // ends at a full bar is the combat stage, so the bar IS the countdown to the
-  // Maelstrom rather than a clock nobody can read.
-  energyPerSec: 0.91,
+  pullLengthSec: 360,
+  // Two rotations, and a rotation is longer than it looks. Apex Predator is a
+  // set piece the ordinary loop stands down for: five casts delivered one at a
+  // time is about 18 seconds on its own, and the other four beats are 11 apart,
+  // so a rotation is roughly 63 seconds and the Maelstrom arrives at about 126.
+  // The bar is the countdown to it rather than a clock nobody can read.
+  energyPerSec: 0.79,
   loopIntervalSec: 11,
 
   // Kept for a boss with no phases to fall back on; the stages below own the
@@ -114,7 +116,7 @@ export const sszorak: BossDef = {
     {
       id: 'maelstrom',
       name: 'Howling Maelstrom',
-      banner: 'HOWLING MAELSTROM — ride the gale into the cyst',
+      banner: 'HOWLING MAELSTROM — alone in the wind. Ride it into the cysts.',
       // He plants himself the instant the stage begins, so the burn window opens
       // with it rather than half a minute into it.
       opensWith: 'digin',
@@ -125,8 +127,13 @@ export const sszorak: BossDef = {
       // following anybody. Nothing a tank does changes it.
       entitiesConverge: true,
       suppressAddWaves: true,
-      // The gales, and the stage's own exit: it ends when every cyst on the
-      // floor has burst, because that is what the fight says ends it.
+      // The gales, and the stage's own exit.
+      //
+      // The raid leaves the floor and the sequence is yours: blown into a glob,
+      // thrown back at him, five seconds planted at his feet with the wind still
+      // screaming past and unable to move you, then it reverses and sends you at
+      // the other one. It ends on the second brace, which is what the fight says
+      // ends it — both cysts have knocked you back into him.
       windToCysts: true,
     },
   ],
@@ -145,13 +152,16 @@ export const sszorak: BossDef = {
       // abilities it deals out, each of which keeps its own spell id, its own
       // briefing and its own line in the debrief.
       //
-      // 1900ms apart is "quick succession" with the cones genuinely overlapping,
-      // which is the point: you answer the one that is landing while the next is
-      // already winding up.
+      // `gapMs` is the BREATHER AFTER a cast lands, not the period between them
+      // starting — so each cone completes before the next begins, whatever their
+      // cast times are. Dealt out on a 1.9s period with 3s cones, the Ravage and
+      // the Mutilate were in the air together and there was no instant at which
+      // the answer to one was not the wrong answer to the other. A second is
+      // enough to read what is winding up and get where it wants you.
       rule: {
         type: 'combo',
         parts: ['ravage', 'mutilate', 'ravage', 'mutilate', 'tempest'],
-        gapMs: 1900,
+        gapMs: 1000,
       },
       good: 'The flurry read one cast at a time — tanks trading on the Ravages, the groups alternating on the Mutilates, everyone off the vortices.',
       failText: '',
@@ -338,7 +348,10 @@ export const sszorak: BossDef = {
       // point of it; before then, walking into one throws the whole raid across
       // the room for nothing and costs the gales a glob.
       permanent: true,
-      raidKnockYards: 26,
+      // Far enough to put you back at his feet rather than merely off the rim.
+      // During the Maelstrom the burst throws you AT him, and landing halfway
+      // there would spend the braced seconds walking instead of hitting him.
+      raidKnockYards: 40,
       good: 'Cysts are left alone until the gales need them.',
       failText: 'Burst a Viscous Cyst — the whole raid was thrown for nothing',
     },

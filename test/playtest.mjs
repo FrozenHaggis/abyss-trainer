@@ -598,6 +598,8 @@ function play(boss, role, smart, seed, side = 'green') {
         + ` marks=${JSON.stringify(w.player.marks ?? {})}`
         + (w.player.wind ? ` wind=${w.player.wind} mate=${w.windPartnerId}` : '')
         + (w.galeTargetUid >= 0 ? ` gale=${w.galeTargetUid}` : '')
+        + (w.galeImmuneMs > 0 ? ` braced=${(w.galeImmuneMs / 1000).toFixed(1)}` : '')
+        + ` cysts=${w.instances.filter(i => i.def.raidKnockYards && !i.answered).length}`
         + (inPool.length ? ` STANDING-IN:${inPool.map(i => i.def.id).join(',')}` : ''))
     }
   }

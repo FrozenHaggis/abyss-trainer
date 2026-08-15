@@ -90,6 +90,15 @@ const WIND_REACH = 26
 const WIND_LANE = 6
 /** How hard the Maelstrom's gales push, in yards/sec. Below run speed on purpose. */
 const GALE_SPEED = 8.5
+/**
+ * How long you are planted at his feet after a cyst throws you there.
+ *
+ * The gale does not stop — it keeps blowing and the floor keeps streaming past —
+ * it simply cannot move you for these few seconds. That is the whole beat of the
+ * stage: thrown in, a moment to burn him with the wind screaming past, and then
+ * it turns and sends you at the other glob.
+ */
+const GALE_BRACE_MS = 5000
 /** How long a raider is aloft after a Crosswinds knock, in ms. */
 const WIND_ALOFT_MS = 1500
 
@@ -466,6 +475,20 @@ export interface World {
   galeTargetUid: number
   /** How many cysts this Maelstrom has burst. */
   cystsBurst: number
+  /**
+   * ms the player is braced for after a cyst has thrown them back at the boss.
+   *
+   * The gale does not stop when the glob bursts — it keeps blowing, and the
+   * renderer keeps showing it — but for these few seconds it cannot move you.
+   * That is the beat the stage is built around: you are thrown into him, you get
+   * a moment planted at his feet with the wind screaming past, and then it turns
+   * and sends you at the other glob.
+   */
+  galeImmuneMs: number
+  /** Which way the gale is blowing, kept for the renderer while you are braced. */
+  galeDir: Vec
+  /** ms the flurry runs until. The ordinary rotation stands down for it. */
+  comboUntilMs: number
 }
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
@@ -969,6 +992,9 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     windPartnerId: -1,
     galeTargetUid: -1,
     cystsBurst: 0,
+    galeImmuneMs: 0,
+    galeDir: { x: 0, y: 1 },
+    comboUntilMs: 0,
   }
   // A split fight seats the player on their own side’s entity before the first
   // tick, so their group, their mechanics and their golem are all in one place.
@@ -1648,16 +1674,27 @@ function liveCysts(w: World): Instance[] {
  * ANSWER to being blown off the platform; a version of it that could finish the
  * job would make the intermission unsurvivable by design.
  */
-function burstCyst(w: World, inst: Instance) {
+function burstCyst(w: World, inst: Instance, toBoss = false) {
   if (inst.answered) return
   inst.answered = true
-  inst.timer = -1e9                    // retired: a cyst bursts exactly once
+  // Not retired to minus infinity: it stays a beat so the impact flash can
+  // draw, and the instance filter drops it once that is over. A cyst is
+  // `permanent` so that it survives a whole rotation on the floor — which means
+  // nothing else would ever remove it.
+  inst.timer = 0
   const push = inst.def.raidKnockYards ?? 24
+  const at = toBoss ? w.bosses[0].pos : inst.pos
   const shove = (p: Vec) => {
-    const dx = p.x - inst.pos.x
-    const dy = p.y - inst.pos.y
+    // Toward the boss during a gale, away from the glob the rest of the time.
+    // "Away" is the honest physics and it is the wrong answer inside the
+    // Maelstrom: a player who reached the glob from the far side would be
+    // thrown outward, off a platform the stage had just spent five seconds
+    // walking them across.
+    const dx = toBoss ? at.x - p.x : p.x - at.x
+    const dy = toBoss ? at.y - p.y : p.y - at.y
     const d = Math.hypot(dx, dy) || 1
-    const to = clampToArena(w.boss, { x: p.x + (dx / d) * push, y: p.y + (dy / d) * push }, 2)
+    const step = toBoss ? Math.min(push, d) : push
+    const to = clampToArena(w.boss, { x: p.x + (dx / d) * step, y: p.y + (dy / d) * step }, 2)
     p.x = to.x
     p.y = to.y
   }
@@ -2088,7 +2125,20 @@ function resolveInstance(w: World, inst: Instance) {
         parts[i] = parts[j]
         parts[j] = t
       }
-      parts.forEach((id, i) => w.queue.push({ id, atMs: w.elapsedMs + i * gap }))
+      // Each cast is scheduled to begin after the previous one has RESOLVED, so
+      // no two cones are ever in the air together. On a fixed period this was
+      // two frontals overlapping — one asking you into it and the other asking
+      // you out, with no instant at which both answers existed. The two cones
+      // here are 3s casts and the period was 1.9s, so it was not close.
+      let at = w.elapsedMs
+      for (const id of parts) {
+        w.queue.push({ id, atMs: at })
+        at += (w.boss.mechanics.find(m => m.id === id)?.telegraphMs ?? 0) + gap
+      }
+      // Nothing else lands during a flurry. It is a set piece — five casts the
+      // fight delivers one at a time — and the ordinary rotation arriving on top
+      // of it puts a floor AoE under a cone you are already committed to.
+      w.comboUntilMs = at
       break
     }
 
@@ -2781,24 +2831,12 @@ function allyThink(w: World) {
       }
     }
 
-    // 3e. The gales. The raid rides the wind into the cyst rather than fighting
-    //     it — "Raid moves WITH the wind, stays off the edge" is the tactic
-    //     file's own Good line — and the glob bursting is what throws everybody
-    //     back to the middle. A raid that treated the cyst as ground to avoid
-    //     would be blown past it and off the far rim, which is the mistake this
-    //     stage exists to punish.
+    // 3e. The gales are not theirs. The raid is off the floor for the Maelstrom,
+    //     so they simply hold their marks and walk back on when it ends — the
+    //     glob is the player's to reach.
     const gale = activePhase(w)?.windToCysts
       ? w.instances.find(i => i.uid === w.galeTargetUid)
       : undefined
-    if (gale) {
-      // Straight at it, and with the wind rather than across it. Steering only
-      // laterally and letting the gale do the carrying is the prettier read and
-      // it cost a clear in every role: raiders drifting down a lane get strung
-      // out, the glob goes unburst for longer, and the stage that is supposed to
-      // rescue the raid from the wind spends longer holding them in it.
-      a.want.x = gale.pos.x
-      a.want.y = gale.pos.y
-    }
 
     // 4. Get clear of anything lethal. Highest priority, overrides the above —
     //    and checked against where they ARE as well as where they are going, so
@@ -3049,9 +3087,12 @@ function allyMove(w: World, dt: number) {
   // whole-raid relocation. That only reads as one if the bodies are on the floor
   // when it happens.
   const relocateWork = w.adds.some(a => a.alive && a.def.deathSpawnsAtAllPlayers)
-  // The Maelstrom is the most collective thing in the raid: the entire group is
-  // being blown at one glob and the burst throws all of them back.
-  const galeWork = !!activePhase(w)?.windToCysts
+  // The Maelstrom is the one stretch of this fight you face alone. The raid is
+  // off the floor for it — he has buried himself and the wind has the room — so
+  // the glob is burst by your body or not at all. Nineteen allies riding the
+  // same gale turned a solo sequence into a crowd arriving first and popping it
+  // for you, which is a stage you watch rather than one you play.
+  const galeSolo = !!activePhase(w)?.windToCysts
   // The two stack groups stay on the floor for the whole flurry, not only while
   // a cone happens to be in the air. Which group is carrying a Gash is a state
   // the player has to be able to read between casts — that is when the decision
@@ -3061,8 +3102,9 @@ function allyMove(w: World, dt: number) {
 
   for (const a of w.allies) {
     if (!a.alive) { a.presence = Math.max(0, a.presence - dt * 3); continue }
-    const wanted = a.role === 'tank' || groupWork || corpseWork || relocateWork
-      || galeWork || groupsUp || a.wind || a.debuff || a.marked ? 1 : 0
+    const wanted = galeSolo ? 0
+      : (a.role === 'tank' || groupWork || corpseWork || relocateWork
+        || groupsUp || a.wind || a.debuff || a.marked ? 1 : 0)
     // Walk on briskly, drift off gently — a raid that blinks out mid-mechanic
     // reads as a bug.
     a.presence += Math.max(-dt * 1.1, Math.min(dt * 3.4, wanted - a.presence))
@@ -3204,8 +3246,17 @@ function computePrompt(w: World): Prompt | null {
   // out of the stage. Ranked above the floor because being blown past the glob
   // ends the pull and standing in a puddle does not.
   if (activePhase(w)?.windToCysts) {
-    const target = w.instances.find(i => i.uid === w.galeTargetUid)
-    if (target) {
+    const target = w.instances.find(i => i.uid === w.galeTargetUid && !i.answered)
+    if (w.galeImmuneMs > 0) {
+      // Planted at his feet with the wind unable to move you. There is exactly
+      // one thing to do with those seconds and it is not repositioning.
+      const dig = w.boss.mechanics.find(m => m.rule.type === 'burnWindow')
+      consider({
+        verb: 'BRACED — HIT HIM',
+        mechanic: dig?.name ?? 'Howling Maelstrom',
+        urgency: 1 - w.galeImmuneMs / GALE_BRACE_MS,
+      }, 1)
+    } else if (target) {
       const gap = dist(target.pos, w.player.pos)
       consider({
         verb: 'RIDE IT INTO THE CYST',
@@ -3852,6 +3903,7 @@ function enterPhase(w: World, index: number) {
   if (ph.windToCysts) {
     w.cystsBurst = 0
     w.galeTargetUid = -1
+    w.galeImmuneMs = 0
     // The Maelstrom guarantees its own cysts.
     //
     // Two gales need two globs to blow the raid into, and a raid that walked
@@ -3863,11 +3915,28 @@ function enterPhase(w: World, index: number) {
     // the winds come from, which is the part worth practising.
     const cystDef = w.boss.mechanics.find(m => m.raidKnockYards)
     if (cystDef) {
-      const have = liveCysts(w)
-      const used = new Set(have.map(i => clockOf(i.pos)))
-      const free = CLOCK.filter(c => !used.has(c))
-      for (let i = 0; i < 2 - have.length && i < free.length; i++) {
-        spawn(w, cystDef, clockPoint(w.boss, free[i]))
+      // EXACTLY two, on two different quarters of the room.
+      //
+      // Two because the stage is two gales, and different quarters because the
+      // second gale is supposed to be a reversal — a wind that turns eleven
+      // degrees is not something anybody needs to react to. A rotation that
+      // dropped three globs, or two on the same mark, gave a Maelstrom that
+      // either ran an extra beat nobody expected or blew the same way twice.
+      const keep: Instance[] = []
+      const used = new Set<Compass>()
+      for (const i of liveCysts(w)) {
+        const c = clockOf(i.pos)
+        if (keep.length >= 2 || used.has(c)) { i.answered = true; i.timer = 0; continue }
+        used.add(c)
+        keep.push(i)
+      }
+      while (keep.length < 2) {
+        // Opposite whatever is already down, so the wind genuinely reverses.
+        const want = keep.length ? OPPOSITE[clockOf(keep[0].pos)] : 'S'
+        const c = used.has(want) ? (CLOCK.find(x => !used.has(x)) ?? want) : want
+        used.add(c)
+        spawn(w, cystDef, clockPoint(w.boss, c))
+        keep.push(w.instances[w.instances.length - 1])
       }
     }
   }
@@ -3890,7 +3959,9 @@ function phaseComplete(w: World, ph: PhaseDef): boolean {
   // Same shape as the pairing exit above and for the same reason: no field is
   // needed because the mechanic already says so. Every glob on the floor has
   // burst, and entering the stage guaranteed there were two.
-  if (ph.windToCysts) return w.cystsBurst > 0 && liveCysts(w).length === 0
+  // ...and only once the last brace has run out, so the stage ends on the beat
+  // the fight gives you at his feet rather than the instant the glob pops.
+  if (ph.windToCysts) return w.cystsBurst > 0 && liveCysts(w).length === 0 && w.galeImmuneMs <= 0
   return false
 }
 
@@ -4089,28 +4160,36 @@ export function step(w: World, input: Input, dtMs: number) {
   // bursts it, and the burst throws everybody back toward the middle — which is
   // the only way across this stage and the reason the cysts had to land on a
   // compass point in the first place.
+  // The Maelstrom is the one stretch of this fight you face alone. The raid is
+  // off the floor for it — see allyMove — so the glob is burst by YOUR body or
+  // not at all, and the whole sequence is a solo one: blown into a cyst, thrown
+  // back at him, planted at his feet while the wind screams past, then it turns
+  // and does it again from the other side.
   if (phase?.windToCysts) {
-    const target = liveCysts(w)[0]
-    w.galeTargetUid = target ? target.uid : -1
-    if (target) {
-      const len = Math.hypot(target.pos.x, target.pos.y) || 1
-      const dir = { x: target.pos.x / len, y: target.pos.y / len }
-      const carry = GALE_SPEED * dt
-      w.player.pos.x += dir.x * carry
-      w.player.pos.y += dir.y * carry
-      for (const a of w.allies) {
-        if (!a.alive) continue
-        a.pos.x += dir.x * carry
-        a.pos.y += dir.y * carry
+    if (w.galeImmuneMs > 0) {
+      w.galeImmuneMs -= dtMs
+      if (w.galeImmuneMs <= 0) {
+        w.galeImmuneMs = 0
+        // The wind turns. Whatever glob is left is where it turns to; when
+        // there is none left, the stage is over and phaseComplete says so.
+        const next = liveCysts(w)[0]
+        w.galeTargetUid = next ? next.uid : -1
       }
-      // Anybody at all. The burst reaches the whole raid regardless of where
-      // they were standing, so it does not matter whose body sets it off — and
-      // a stage that could only be cleared by the player walking onto a four
-      // yard glob in a crosswind would be a coin flip rather than a mechanic.
-      const reach = (target.def.shape?.kind === 'circle' ? target.def.shape.radius : 4) + 2.5
-      if (dist(target.pos, w.player.pos) <= reach ||
-          w.allies.some(a => a.alive && dist(target.pos, a.pos) <= reach)) {
-        burstCyst(w, target)
+    } else {
+      const held = w.instances.find(i => i.uid === w.galeTargetUid && !i.answered)
+      const target = held ?? liveCysts(w)[0]
+      w.galeTargetUid = target ? target.uid : -1
+      if (target) {
+        const len = Math.hypot(target.pos.x, target.pos.y) || 1
+        w.galeDir = { x: target.pos.x / len, y: target.pos.y / len }
+        const carry = GALE_SPEED * dt
+        w.player.pos.x += w.galeDir.x * carry
+        w.player.pos.y += w.galeDir.y * carry
+        const reach = (target.def.shape?.kind === 'circle' ? target.def.shape.radius : 4) + 2.5
+        if (dist(target.pos, w.player.pos) <= reach) {
+          burstCyst(w, target, true)
+          w.galeImmuneMs = GALE_BRACE_MS
+        }
       }
     }
   }
@@ -4570,13 +4649,21 @@ export function step(w: World, input: Input, dtMs: number) {
 
   // ── scheduler ──
   // The current stage's rotation, or the flat one on a boss with no stages.
-  w.loopTimerMs += dtMs
-  if (w.loopTimerMs >= activeInterval(w) * 1000) {
-    w.loopTimerMs = 0
-    // Only what has been introduced so far — see unlockedCount().
-    const id = activeLoop(w)[w.loopIndex % unlockedCount(w)]
-    w.loopIndex++
-    fire(w, id)
+  //
+  // It stands down for a flurry. Apex Predator is five casts delivered one at a
+  // time and it takes longer than one loop interval, so a rotation that kept
+  // counting would drop a Caustic Claws under a cone the player was already
+  // committed to. The timer is held rather than reset, so the beat after the
+  // flurry lands where it would have.
+  if (w.elapsedMs >= w.comboUntilMs) {
+    w.loopTimerMs += dtMs
+    if (w.loopTimerMs >= activeInterval(w) * 1000) {
+      w.loopTimerMs = 0
+      // Only what has been introduced so far — see unlockedCount().
+      const id = activeLoop(w)[w.loopIndex % unlockedCount(w)]
+      w.loopIndex++
+      fire(w, id)
+    }
   }
 
   // Anything a channel queued. Four Rites a second apart is four events the
@@ -4789,7 +4876,12 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
   w.instances = w.instances.filter(i =>
-    !i.resolved
+    // A burst cyst is gone. It is `permanent` so that one glob survives a whole
+    // rotation on the floor waiting for the Maelstrom, which also means nothing
+    // else would ever take it away — so a glob that has already thrown you
+    // stayed drawn as a hazard nobody could clear, for the rest of the pull.
+    !(i.def.raidKnockYards && i.answered && -i.timer >= IMPACT_FLASH_MS)
+    && (!i.resolved
     // Furniture and pools that never expire are part of the floor now.
     || i.def.fixture
     || i.def.permanent
@@ -4797,7 +4889,7 @@ export function step(w: World, input: Input, dtMs: number) {
     // Without this a mechanic vanished on the frame it landed and the only
     // evidence it had gone off was your health bar moving.
     || -i.timer < IMPACT_FLASH_MS
-    || (i.def.lingerMs !== undefined && -i.timer < i.def.lingerMs))
+    || (i.def.lingerMs !== undefined && -i.timer < i.def.lingerMs)))
 
   // ── your damage ──
   // The boss only dies from shots you actually land. Passive HP drain meant you

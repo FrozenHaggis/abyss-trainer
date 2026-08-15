@@ -10,11 +10,15 @@ export type Role = 'tank' | 'healer' | 'dps'
  * A compass bearing, for the mechanics that are about direction rather than
  * position.
  *
- * The arena is a clock: 12 is north, 3 is east, 6 is south, 9 is west, and the
- * renderer draws those four marks whenever something is keyed to them. Sszorak
+ * The arena is a clock: 12 is north, 3 is east, 6 is south, 9 is west. Sszorak
  * is the only fight in the tier that needs it, and it needs it twice — Raging
  * Crosswinds hands every raider one of these, and a Viscous Cyst has to land on
  * one of them or the Maelstrom has nothing to blow the raid into.
+ *
+ * Deliberately NOT drawn on the floor. The four marks are how the ENGINE places
+ * a glob so a gale can be aimed at it, not a grid the player is meant to read —
+ * painted on, they were four numerals nobody needed and a clock face on a room
+ * that is not one.
  *
  * Screen coordinates, so +y is SOUTH.
  */
@@ -195,6 +199,14 @@ export type Rule =
    * Tempest in a known sequence is a dance you memorise; in an unknown one it is
    * a fight you have to read, and reading which of the two frontals is coming is
    * the skill the flurry actually tests.
+   *
+   * `gapMs` is the BREATHER AFTER a cast resolves, not the period between casts
+   * starting. Those are very different things and the difference was the whole
+   * bug: dealt out on a fixed period shorter than a cone's own telegraph, the
+   * Ravage and the Mutilate were in the air together and there was no moment at
+   * which the answer to one of them was not also the wrong answer to the other.
+   * Each cast now lands before the next one begins, whatever their cast times
+   * are, and reading the flurry is a sequence of decisions rather than one.
    */
   | { type: 'combo'; parts: string[]; gapMs: number }
   /**
@@ -768,8 +780,7 @@ export interface PhaseDef {
   /** On exit, any add corpse nobody burned stands back up as this add. */
   resurrectCorpsesAs?: string
   /**
-   * The gales. A wind blows the whole raid toward one Viscous Cyst at a time,
-   * and the stage ends once every cyst on the floor has burst.
+   * The gales, and the one stretch of the fight you face alone.
    *
    * Howling Maelstrom, which the ability data describes as "a succession of
    * directional gales" and says to "detect the phase via Dig In" because the
@@ -777,9 +788,20 @@ export interface PhaseDef {
    * stage rather than as a mechanic anybody can fail — the deaths inside it land
    * under `Falling`, exactly as the tactic file records them.
    *
-   * The stage guarantees its own cysts on entry. A raid that popped one early
-   * would otherwise arrive at a gale with nothing at the end of it, which is a
-   * wipe caused sixty seconds earlier by something the debrief cannot name.
+   * The sequence, per gale: the wind carries you at a Viscous Cyst, your body
+   * bursts it, the burst throws you back at the boss, and for five seconds the
+   * wind keeps blowing but cannot move you. Then it turns and does it again from
+   * the other side. Two globs, two gales, and the stage ends on the second brace
+   * rather than the instant the last one pops.
+   *
+   * The raid is off the floor for it. Nineteen allies riding the same wind
+   * arrive first and burst the glob for you, which is a stage you watch rather
+   * than one you play.
+   *
+   * The stage guarantees exactly two cysts, on two different quarters of the
+   * room. Fewer and a gale has nothing at the end of it — a wipe caused a minute
+   * earlier by something the debrief cannot name. More, or two on the same mark,
+   * and the wind either runs a beat nobody expected or never reverses.
    */
   windToCysts?: boolean
 }

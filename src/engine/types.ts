@@ -114,6 +114,31 @@ export type Rule =
   | { type: 'syncKill'; withinSec: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */
   | { type: 'faceAway' }
+  /**
+   * A frontal fired from a stationary caster at whoever it fixated, so the
+   * MARKED PLAYER'S FEET aim it. Where they stand decides where the line goes.
+   *
+   * Corrosive Spit. Three Spawn of Vexhul surface in the venom pocket, each
+   * fixates a non-tank raider, and each fires a line from the pocket through
+   * that raider. The abilities.json separates the two halves for us — 1293979
+   * is "the 5s targeting marker on the intended player ... use it to separate
+   * the aimed target from players clipped by the line" — and they are exactly
+   * the two jobs this rule scores:
+   *
+   *   • Marked   — the line pivots about the caster as you move. Stand where it
+   *                crosses nobody. Pointing it through the raid is the failure.
+   *                Being targeted is not: the marked player takes no damage from
+   *                their own line, the same way a Coiling Ichor carrier is
+   *                "chosen, never at fault".
+   *   • Everyone — an ordinary frontal to sidestep, scored exactly like `avoid`.
+   *
+   * This is `faceAway` with the decision moved from the tank's turning to the
+   * marked player's footwork, and it is the only other rule where a telegraph
+   * may track a player. Normally that is forbidden — an avoid-shape glued to you
+   * is something the game tells you to leave and then fails you for not leaving
+   * — but here the tracking IS the mechanic.
+   */
+  | { type: 'aimAway' }
   /** Press an ability inside the window. Kicks, dispels, taunts. */
   | { type: 'press'; ability: Ability; withinMs: number }
   /**
@@ -220,6 +245,34 @@ export interface AddDef {
   auraDps?: number
   /** Where it spawns, in yards from the arena centre. */
   spawnRadius?: number
+  /**
+   * Surfaces at one fixed point on the floor instead of anywhere on a ring.
+   *
+   * The Spawn of Vexhul come out of the venom pocket at the mouth of the
+   * platform, all three of them, every time. That is not decoration: the pocket
+   * is one end of every Corrosive Spit line, so the raid can read where the
+   * frontals will come FROM before any of them is cast, and a wave scattered
+   * around the rim would throw that away.
+   */
+  spawnAt?: Vec
+  /**
+   * Picks a raider on spawn and keeps them for life, ignoring `roles` the way a
+   * real fixate does — non-tanks only.
+   *
+   * Tanks are excluded because they are welded to a serpent 19 yards away; a
+   * fixate that dragged a tank's line across the raid would be asking them to
+   * choose between their boss and the mechanic, which the fight never does.
+   */
+  fixates?: boolean
+  /**
+   * Repeats this mechanic every `everySec` for as long as it is alive, aimed at
+   * whoever it fixated.
+   *
+   * This is what makes "deal with them quickly" mean something mechanically
+   * rather than being a slogan: a spawn nobody killed is not a static tax, it is
+   * another frontal every few seconds. Kill speed IS the lever.
+   */
+  casts?: { defId: string; everySec: number }
   /**
    * Spawns beside this entity instead of on a ring around the room.
    *
@@ -400,6 +453,17 @@ export interface MechanicDef {
   brief?: string
   /** Leaves a persistent hazard behind when it resolves. */
   spawns?: { defId: string; delayMs?: number }
+  /**
+   * On resolve, summon adds rather than drop a hazard.
+   *
+   * Venomous Emergence is "a 3s cast summoning three Spawn of Vexhul ... an
+   * add-spawn marker, not a failure", and that is the whole mechanic: the cast
+   * itself cannot be failed, and everything it costs the raid is downstream of
+   * the bodies arriving. An add summoned this way is never ALSO dealt out by the
+   * wave timer — the scheduler reads this field and takes it out of the trash
+   * rotation, so wiring up a summon cannot forget to switch the wave off.
+   */
+  summons?: { addId: string; count?: number }
   /** Persistent hazards only: how long the pool lingers. */
   lingerMs?: number
   /** Hazard detonates on the first contact and is consumed, rather than ticking. */
@@ -686,6 +750,14 @@ export interface Instance {
   carriedByPlayer: boolean
   /** Entity id that cast this, so a boss-anchored shape tracks the right one. */
   fromId: string
+  /**
+   * The raider this instance is aimed at: an `Ally.id`, or -1 for the player.
+   *
+   * Only ever set by a fixate. The shape stays anchored on its caster and swings
+   * to follow this target for as long as it is telegraphing, which is why an
+   * `aimAway` line can be re-pointed by walking and an ordinary frontal cannot.
+   */
+  aimedAt?: number
   /**
    * Overrides a `line` shape's length for this instance only.
    *

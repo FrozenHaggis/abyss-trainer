@@ -199,6 +199,23 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         ? { verb: 'POINT IT AWAY', line: 'You are holding it. Keep the cone pointed away from the raid — turn the boss, do not move the raid.', yours: mine }
         : notYours('A tank cone. Stay out of the front of the boss and let the tank aim it.')
 
+    case 'aimAway':
+      // Both halves in one line, because which half you get is decided at cast
+      // time and a raider needs to know both before it lands. A tank only ever
+      // gets the second half — a fixate never picks them — so they are told the
+      // dodge and nothing else, rather than an instruction they cannot be given.
+      return role === 'tank'
+        ? {
+            verb: 'MOVE OUT',
+            line: 'It never marks a tank. Somebody else is aiming this one — read which way the line is pointing and keep yourself and your serpent out of it.',
+            yours: mine,
+          }
+        : {
+            verb: 'POINT IT AWAY',
+            line: 'If it marks you, the line fires from the caster straight through you — so where you stand is where it goes. Walk out to the edge of the group and put it over empty floor, and keep walking, because it follows you until it fires. Nobody blames you for being marked; they blame you for what was standing behind you. If it marks someone else, just get off the line.',
+            yours: mine,
+          }
+
     case 'tankSwap':
       if (role !== 'tank') return notYours('A tank swap. Nothing for you here beyond healing the pair through it.')
       // "Watch the stacks" is wrong advice when the answer is one. A tank told
@@ -277,6 +294,18 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         return {
           verb: 'MIND THE RANGE',
           line: `You collect a stack every ${Math.round(prox.everySec)} seconds from every source you are within ${prox.radius} yards of, and they never fall off. Stay inside your own and outside the other — carrying both costs exactly double for the rest of the pull.`,
+          yours: true,
+        }
+      }
+      // A cast that summons is not a cast you answer — it is a cast you read.
+      // Nothing about it can be failed, so "nothing you can do wrong here" is
+      // technically true and completely useless: what it leaves on the floor is
+      // the entire mechanic, and the raider needs to be looking at the spawn
+      // point before the bodies are there rather than after.
+      if (def.summons) {
+        return {
+          verb: 'ADDS INCOMING',
+          line: 'The cast itself cannot be dodged or stopped — what matters is what it leaves behind. Watch where they surface and get on them immediately: every one still alive keeps casting, so a slow kill is not a slow kill, it is another mechanic on the raid.',
           yours: true,
         }
       }

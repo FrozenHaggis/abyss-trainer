@@ -268,3 +268,110 @@ test('sweep: raidDamage never has failure text on any boss', () => {
     }
   }
 })
+
+// ── 10. A summoned add is summoned, and only summoned ────────────────────────
+//
+// Venomous Emergence brings the Spawn of Vexhul, and the trash timer must not
+// bring them as well. Both halves are checked because both have a silent
+// failure mode: a `summons` naming an add that does not exist fires a 3-second
+// telegraph that does nothing at all, and an add on both paths puts fixate
+// frontals on the raid with no cast to read them off.
+test('sweep: every summons names a real add, and takes it off the wave timer', () => {
+  for (const key of BOSSES) {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const addIds = [...src.matchAll(/^ {6}id: '(\w+)', name:/gm)].map(m => m[1])
+    for (const m of src.matchAll(/summons: \{ addId: '(\w+)'/g)) {
+      assert.ok(addIds.includes(m[1]),
+        `${key}: summons names add '${m[1]}', which does not exist — the cast would summon nothing`)
+    }
+  }
+  // The scheduler has to be the thing that enforces it, rather than each boss
+  // remembering to flag its own adds.
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  assert.match(sim, /w\.boss\.adds\.filter\(a => !a\.phaseOnly && !summonedIds\(w\.boss\)\.has\(a\.id\)\)/,
+    'the wave scheduler still deals out summoned adds — Venomous Emergence and the trash ' +
+    'timer would both be delivering Spawn of Vexhul, and only one of them is a mechanic')
+})
+
+// ── 11. A fixated cast is wired to a rule that can actually be aimed ──────────
+test('sweep: every add cast names a real mechanic, and that mechanic is aimAway', () => {
+  for (const { key, mechanics } of readAllMechanics()) {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    for (const m of src.matchAll(/casts: \{ defId: '(\w+)'/g)) {
+      const target = mechanics.find(x => x.id === m[1])
+      assert.ok(target, `${key}: an add casts '${m[1]}', which is not a mechanic on this boss`)
+      assert.equal(target.rule, 'aimAway',
+        `${key}/${m[1]}: cast by a fixating add but its rule is '${target.rule}'. Only aimAway ` +
+        'reads the fixate — anything else scores the marked player for standing in a line ' +
+        'that is glued to them and cannot be left')
+    }
+  }
+})
+
+// ── 12. An aimAway line is never fired by the rotation ────────────────────────
+//
+// It has no meaning without a caster and a mark: fired from the loop it comes
+// off a serpent, aimed at nobody, and the marked-player branch scores whoever
+// happens to be standing there for a line they were never given.
+test('sweep: aimAway mechanics are cast by adds, never listed in the loop', () => {
+  for (const { key, mechanics } of readAllMechanics()) {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const loop = src.slice(src.indexOf('loop: ['), src.indexOf(']', src.indexOf('loop: [')))
+    for (const m of mechanics) {
+      if (m.rule !== 'aimAway') continue
+      assert.ok(!new RegExp(`'${m.id}'`).test(loop),
+        `${key}/${m.id}: an aimAway mechanic is in the loop. It only works cast by the add ` +
+        'that fixated someone — from the rotation it is aimed at nobody')
+      assert.ok(new RegExp(`casts: \{ defId: '${m.id}'`).test(src),
+        `${key}/${m.id}: an aimAway mechanic nothing casts. It can never fire`)
+    }
+  }
+})
+
+// ── 13. Being marked is not a failure ────────────────────────────────────────
+//
+// The rule this project keeps having to re-learn: a carrier is "chosen, never
+// at fault". The marked player is answerable for where they pointed the line
+// and for nothing else, so the aimAway branch must not deal them damage.
+test('the marked player takes no damage from their own line', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'aimAway': {")
+  assert.ok(i > 0, 'aimAway resolve branch not found in sim.ts')
+  const branch = sim.slice(i, sim.indexOf("case 'press':", i))
+  const mine = branch.slice(branch.indexOf('if (inst.carriedByPlayer)'), branch.indexOf('} else if (inside)'))
+  assert.ok(!/\b(hurt|killPlayer)\(/.test(mine),
+    'the marked player is being damaged by the line they were handed — they are scored on ' +
+    'where they aimed it, and billing them for being chosen teaches them to hide from the mark')
+})
+
+// ── 14. The Emergence chain exists, end to end ───────────────────────────────
+//
+// Sweeps 10-12 check that whatever IS wired is wired correctly, which means they
+// all pass on a boss that wires nothing. This is the positive half: the fight
+// has a Venomous Emergence, it summons Spawn of Vexhul, they fixate, and what
+// they cast is an aimable line. Delete any link and the sweeps above go quiet,
+// so this is the test that notices.
+test('twinfangs: Venomous Emergence summons spawns that fixate and spit', () => {
+  const src = readFileSync('src/bosses/twinfangs.ts', 'utf8')
+  const mechs = mechanicsOf('twinfangs')
+
+  const emergence = mechs.find(m => m.id === 'emergence')
+  assert.ok(emergence, 'Venomous Emergence is gone — nothing summons the spawns')
+  assert.match(src, /summons: \{ addId: 'spawn', count: 3 \}/,
+    'Venomous Emergence no longer summons three Spawn of Vexhul')
+  assert.equal(emergence.failText, '',
+    'Venomous Emergence is "an add-spawn marker, not a failure" — it must never name anybody')
+
+  assert.match(src, /id: 'spawn', name: 'Spawn of Vexhul'/, 'the Spawn of Vexhul add is gone')
+  assert.match(src, /fixates: true/, 'the spawns no longer fixate — the lines would aim at nobody')
+  assert.match(src, /spawnAt: \{ x: 0, y: \d+ \}/,
+    'the spawns no longer surface at a fixed point, so the raid cannot read where the lines start')
+  assert.match(src, /casts: \{ defId: 'spit', everySec: \d+ \}/,
+    'the spawns no longer repeat Corrosive Spit — killing them fast would stop mattering')
+
+  const spit = mechs.find(m => m.id === 'spit')
+  assert.ok(spit, 'Corrosive Spit is gone')
+  assert.equal(spit.rule, 'aimAway', `Corrosive Spit is rule '${spit.rule}', not aimAway`)
+  assert.equal(spit.shape, 'line', 'Corrosive Spit is not a line any more')
+  assert.equal(spit.telegraphMs, 5000, 'Corrosive Spit lost its 5s marker window')
+})

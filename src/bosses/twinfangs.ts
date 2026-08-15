@@ -43,7 +43,11 @@ export const twinfangs: BossDef = {
   // damage per pulse — a soft enrage with no interrupt, so kill the add."
   // 12 killing blows on Heroic PTR. There is nothing to kick on this boss.
   addEverySec: 30,
-  maxAdds: 3,
+  // Four: one Bloodcurdled Mass off the wave timer, plus a full Emergence of
+  // three. The cap only gates the trash timer, so a scripted Emergence always
+  // lands all three — but while they are up the Mass stops arriving, which is
+  // the right pressure. Clearing the pocket is what buys the next wave.
+  maxAdds: 4,
   adds: [
     {
       id: 'mass', name: 'Bloodcurdled Mass', npcId: 268668, spellId: 1302695,
@@ -51,6 +55,27 @@ export const twinfangs: BossDef = {
       spawnRadius: 28,
       good: 'Kill it fast — Bloody Expulsion cannot be interrupted and grows every pulse.',
       failText: 'Bloodcurdled Mass channelled Bloody Expulsion to the end',
+    },
+    {
+      // Summoned by Venomous Emergence, never by the wave timer — the scheduler
+      // reads `summons` and takes this out of the trash rotation itself.
+      //
+      // "Three spawn centre-room per Venomous Emergence. Killing them fast is
+      // the single biggest lever on raid-wide Eternal Venom income." The note
+      // says centre-room; the pocket at the mouth of the platform is where they
+      // actually surface, and it matters more than the note does — a fixed
+      // spawn point is the first half of reading the frontals, because the raid
+      // knows where every line will start before any of them is cast.
+      id: 'spawn', name: 'Spawn of Vexhul', npcId: 264023, spellId: 1291478,
+      job: 'kill', count: 3, hp: 4, fuseSec: 30, auraDps: 0.35,
+      spawnAt: { x: 0, y: 24 },
+      fixates: true,
+      // 5s of cast inside an 8s cycle: three seconds of quiet between one line
+      // firing and the next marker going out. Tighter than that and a marked
+      // player never finishes walking the first one clear.
+      casts: { defId: 'spit', everySec: 8 },
+      good: 'Kill all three fast. Each one that lives keeps spitting, and living spawns are where the raid\'s venom actually comes from.',
+      failText: 'A Spawn of Vexhul lived out its full timer',
     },
   ],
   entities: [
@@ -72,11 +97,11 @@ export const twinfangs: BossDef = {
     'envenomed', 'deluge', 'globule',
     'envenomed', 'ichor', 'storm',
     'envenomed', 'stonebreaker', 'depths',
-    'envenomed', 'feast', 'spit',
+    'envenomed', 'feast', 'emergence',
     'envenomed', 'deluge', 'globule',
     'envenomed', 'storm', 'ichor',
     'envenomed', 'stonebreaker', 'depths',
-    'envenomed', 'feast', 'spit',
+    'envenomed', 'feast', 'emergence',
   ],
 
   mechanics: [
@@ -184,24 +209,51 @@ export const twinfangs: BossDef = {
       failText: 'Held Envenomed through another channel — taunt the swap sooner',
     },
     {
+      id: 'emergence',
+      name: 'Venomous Emergence',
+      spellId: 1291404,
+      what: "3s cast summoning three Spawn of Vexhul into the pocket and applying one Eternal Venom stack to all players — an add-spawn marker, not a failure.",
+      from: 'vexhul',
+      roles: ['tank', 'dps', 'healer'],
+      telegraphMs: 3000,             // "3s cast"
+      origin: 'boss',
+      // No shape and nothing to dodge: the abilities.json calls it "an add-spawn
+      // marker, not a failure", so the only thing it costs directly is the venom
+      // stack every raid member takes. Everything else this cast does to the
+      // raid, it does through the three bodies it leaves in the pocket.
+      rule: { type: 'raidDamage', dps: 2.5 },
+      summons: { addId: 'spawn', count: 3 },
+      good: 'All three die fast. Every spawn still breathing is another Corrosive Spit every eight seconds.',
+      failText: '',
+    },
+    {
       id: 'spit',
       name: 'Corrosive Spit',
       spellId: 1291478,
-      what: "A 5s marker lands on a player, then the spawn fires a frontal line . Not kickable.",
+      what: "A 5s marker lands on a player, then the spawn fires a frontal line from the pocket straight through them. Not kickable.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 5000,             // "A 5s marker lands on a player"
       shape: { kind: 'line', length: 46, width: 7 },
-      // Fired by a Spawn of Vexhul, which the engine cannot render as a separate
-      // body — so it comes off the boss and tracks its facing, which puts the
-      // line on the tank. Dodging the frontal aimed at someone else is the same
-      // skill and the same answer. Explicitly NOT interruptible: the Journal
-      // tags it Frontal/Avoidable only and DB2 PreventionType is 0.
+      // NEVER fired from the loop, and never anchored on a serpent. A Spawn of
+      // Vexhul casts this through its `casts` link, out of the pocket it
+      // surfaced in, aimed through whichever non-tank raider it fixated — which
+      // is what the fight actually does and what the old boss-anchored version
+      // could only imitate by pointing a frontal at the tank.
+      //
+      // `origin` still has to be honest even though nothing fires this through
+      // the ordinary path: it stays 'boss' because a spawn of Vexhul's is what
+      // casts it, and the engine exempts a fixated line from the boss
+      // re-anchoring that would otherwise drag it out of the pocket and onto
+      // the serpent a tick after it was cast.
+      //
+      // Explicitly NOT interruptible: the Journal tags it Frontal/Avoidable
+      // only, DB2 PreventionType is 0, and no log shows an interrupt.
       origin: 'boss',
-      rule: { type: 'avoid' },
+      rule: { type: 'aimAway' },
       damage: 0.32,
       good: 'The marked player points the line away; everyone else clears it.',
-      failText: 'Clipped by the Corrosive Spit frontal',
+      failText: 'A Corrosive Spit line crossed the raid',
     },
     {
       id: 'depths',

@@ -506,3 +506,36 @@ test('sweep: a group soak cone cannot cover both stack marks', () => {
     }
   }
 })
+
+// ── 19. An entity standing off the floor must never move ─────────────────────
+//
+// The Twin Fangs are coiled in the acid three yards off the top edge, which is
+// only stable because they are flagged `stationary`. Every other tanked entity
+// walks after its tank and is clamped back inside the arena every tick, so an
+// unflagged entity placed off the floor is hauled onto the platform within a
+// second of the pull — the boss file says one thing and the fight does another,
+// and nothing fails. The tank AI has the mirror of the same problem: its station
+// is the entity's own position, so a tank sent to a serpent in the acid walks
+// into the acid.
+test('sweep: an entity placed off the floor is stationary', () => {
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const pts = arenaPointsOf(code)
+    if (!pts) continue                       // a round room: nothing sits outside it
+    for (const m of code.matchAll(/\{ id: '(\w+)'[^\n]*?start: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}[^\n]*/g)) {
+      const [line, id, sx, sy] = m
+      const p = { x: Number(sx), y: Number(sy) }
+      let inside = false
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j]
+        if ((a.y > p.y) !== (b.y > p.y) &&
+            p.x < ((b.x - a.x) * (p.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) inside = !inside
+      }
+      if (inside) continue
+      assert.match(line, /stationary: true/,
+        `${key}/${id} starts at (${p.x}, ${p.y}), which is off the floor, but is not ` +
+        'stationary — the follow step will clamp it onto the platform in the first second ' +
+        'and its tank will be sent into the acid to reach it')
+    }
+  }
+})

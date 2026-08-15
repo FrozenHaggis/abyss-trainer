@@ -73,3 +73,62 @@ test('the renderer draws every boss in every role without throwing', async () =>
   }
   assert.ok(frames > 5000, `only ${frames} frames drawn — the sweep is not reaching the fights`)
 })
+
+// The acid is drawn, and it is drawn where the floor is not.
+//
+// It is placed by one rule — bubble anywhere a point is not on the floor — and
+// that rule has a silent failure mode: get the test backwards, or hand it a
+// shape it reads as all-floor, and it draws nothing at all while still passing
+// the sweep above. Nothing throws when a loop `continue`s every iteration.
+// So this checks the two places the acid has to reach: the sea around the
+// platform, and the venom pocket bitten out of its bottom edge.
+test('the acid bubbles around the platform and in the pocket', async () => {
+  bundle()
+  globalThis.Path2D = class { constructor() {} }
+
+  const { createWorld, step, seedRng, TICK_MS, inArena } = await import(`../${OUT}/sim.mjs`)
+  const { BOSSES } = await import(`../${OUT}/registry.mjs`)
+  const { render, makeCamera } = await import(`../${OUT}/render.mjs`)
+
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  assert.ok(boss.acid, 'the Twin Fangs room is no longer flagged as acid')
+
+  const arcs = []
+  const noop = () => {}
+  const ctx = new Proxy({}, {
+    get(_, k) {
+      if (k === 'arc') return (x, y, r) => arcs.push({ x, y, r })
+      if (k === 'measureText') return () => ({ width: 20 })
+      if (k === 'createRadialGradient' || k === 'createLinearGradient') {
+        return () => ({ addColorStop: noop })
+      }
+      if (k === 'canvas') return { width: 1280, height: 720 }
+      return noop
+    },
+    set() { return true },
+  })
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  const cam = makeCamera(1280, 720, boss)
+  const input = { up: false, down: false, left: false, right: false, pressed: [], aim: null, firing: false }
+  step(w, input, TICK_MS)
+  render(ctx, w, cam, 1280, 720)
+
+  // Back to yards, so the assertions are about the room rather than the canvas.
+  const inYards = arcs.map(a => ({ x: (a.x - cam.cx) / cam.scale, y: (a.y - cam.cy) / cam.scale }))
+  const offFloor = inYards.filter(p => !inArena(boss, p))
+  assert.ok(offFloor.length >= 20,
+    `only ${offFloor.length} bubbles drawn off the floor — the acid is not being drawn, ` +
+    'and a room that floats in acid with none of it visible reads as a room with a void round it')
+
+  // The pocket specifically. It is the one piece of "not floor" that sits inside
+  // the platform's outline, and it is the piece that has to read as lethal —
+  // an unmarked gap in a dark floor is something players walk into.
+  const pts = boss.arena.points
+  const bottom = Math.max(...pts.map(p => p.y))
+  const inPocket = offFloor.filter(p => p.y > 8 && p.y < bottom + 2 && Math.abs(p.x) < 8)
+  assert.ok(inPocket.length >= 1,
+    'no acid drawn in the venom pocket — the hole the Spawn of Vexhul surface in ' +
+    'looks identical to solid floor, and walking into it kills')
+})

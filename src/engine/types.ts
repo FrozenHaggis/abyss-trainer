@@ -261,6 +261,23 @@ export interface BossEntityDef {
    */
   tankedApart?: boolean
   /**
+   * Never moves. It is not tanked TO anywhere — it sits where it starts, all
+   * pull, and the raid comes to it.
+   *
+   * The Twin Fangs are coiled in the acid off the top edge of their platform and
+   * no tank drags them anywhere. Every other tanked entity in this raid walks
+   * after whoever holds it, which is what makes "hold them 40 yards apart" a
+   * thing a tank can get right or wrong; here there is no such decision, and
+   * pretending otherwise has a tank towing a serpent around a room it never
+   * leaves.
+   *
+   * An entity flagged this way may also stand OFF the floor, which is the other
+   * reason the flag has to exist: the follow step clamps a moving boss into the
+   * arena every tick, and would otherwise haul these two out of the acid and up
+   * onto the platform within a second of the pull starting.
+   */
+  stationary?: boolean
+  /**
    * Cannot be shot. Mor'zahi is the confirmed case: he took 0 damage across
    * 10,001 player damage events in a Mythic PTR log while casting constantly,
    * so he sits outside the health pool and puppets the council. Shooting him
@@ -825,6 +842,17 @@ export interface BossDef {
   arenaRadius: number
   /** A non-circular floor. When absent the room is a circle of `arenaRadius`. */
   arena?: Arena
+  /**
+   * The floor is a platform in a sea of acid, and the renderer bubbles it.
+   *
+   * Placed off the arena shape rather than off a second list of coordinates:
+   * anywhere that is not floor is acid, which covers both the sea around the
+   * platform and the venom sitting in a bite taken out of it. Flavour, but
+   * load-bearing flavour on the Twin Fangs — the pocket the Spawn of Vexhul
+   * surface in has to read as somewhere you cannot stand, and an unmarked gap in
+   * a dark floor does not.
+   */
+  acid?: boolean
   /** The player picks a side before the pull, and the raid splits in two. */
   sided?: boolean
   /** Stages, when the fight has them. Omit and `loop` drives the whole pull. */

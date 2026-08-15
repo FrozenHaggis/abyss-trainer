@@ -1,4 +1,4 @@
-import type { BossDef, Compass, Instance, Role, Side, Vec } from './types'
+import type { BossDef, Instance, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
@@ -486,37 +486,6 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     pathArena(ctx, cam, w.boss, r); ctx.stroke()
   }
 
-  // ── the clock face ──
-  //
-  // Drawn whenever the fight keys anything to a compass point, which on Sszorak
-  // is where a Viscous Cyst has to end up: a gale only ever comes from one of
-  // the four quarters, so "north-ish" is an instruction a carrier can follow and
-  // "forty-one yards out on a bearing of 312" is not. Four ticks and four
-  // numerals at the rim, dim — this is furniture, not a telegraph — and the
-  // quarter that already has a glob on it is lit so the raid can see which winds
-  // the Maelstrom still has left to give them.
-  const clockKeyed = w.boss.mechanics.some(m => m.clockDrop || m.raidKnockYards)
-  if (clockKeyed) {
-    const cysts = w.instances.filter(i => i.def.raidKnockYards && i.resolved && !i.answered)
-    const face: [Compass, string][] = [['N', '12'], ['E', '3'], ['S', '6'], ['W', '9']]
-    for (const [c, numeral] of face) {
-      const dir = COMPASS[c]
-      const taken = cysts.some(i =>
-        i.pos.x * dir.x + i.pos.y * dir.y > Math.hypot(i.pos.x, i.pos.y) * 0.85)
-      const inner = toPx(cam, { x: dir.x * w.boss.arenaRadius * 0.9, y: dir.y * w.boss.arenaRadius * 0.9 })
-      const outer = toPx(cam, { x: dir.x * w.boss.arenaRadius, y: dir.y * w.boss.arenaRadius })
-      ctx.beginPath()
-      ctx.moveTo(inner.x, inner.y)
-      ctx.lineTo(outer.x, outer.y)
-      ctx.strokeStyle = `rgba(${taken ? VIOLET : BONE}, ${taken ? 0.85 : 0.28})`
-      ctx.lineWidth = taken ? 3 : 2
-      ctx.stroke()
-      ctx.lineWidth = 1
-      const lp = toPx(cam, { x: dir.x * w.boss.arenaRadius * 0.83, y: dir.y * w.boss.arenaRadius * 0.83 })
-      drawLabel(ctx, numeral, lp.x, lp.y, taken ? VIOLET : BONE, 11, taken ? 0.95 : 0.45)
-    }
-  }
-
   // ── the two stack marks ──
   //
   // Where each half of the raid stands so one Mutilate cone can take one of them
@@ -814,6 +783,13 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (inst.resolved || !inst.def.shape) continue
     if (inst.def.rule.type === 'collect') continue   // drawn above as pickups
     if (inst.def.rule.type === 'lethalGround') continue // drawn above as a hole
+    // A wind marker belongs on the raiders, not on the floor. It spawns at the
+    // player's feet and does not follow them, so drawn here it was a purple
+    // circle sitting wherever you happened to be standing eight seconds ago —
+    // unreadable as a mechanic and actively misleading as a telegraph, because
+    // nothing lands there. It is drawn as a ring on every affected raider at the
+    // bottom of this file instead, which is what the mechanic actually is.
+    if (inst.def.rule.type === 'windPair') continue
     const col = ruleColour(inst, w)
     const t = progress(inst)
     pathShape(ctx, cam, inst)
@@ -1305,13 +1281,41 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // arrow IS the mechanic — this is the same call the orbs make, and it is why
   // the raid has to be on the floor during a spread rather than faded out.
   if (w.windUp || w.player.wind) {
+    // The countdown, drawn as a ring on each body that is carrying a bearing.
+    //
+    // This is what the mechanic IS: a circle around a raider, with an arrow, and
+    // a clock. Everything you need to line up is somebody else's ring and
+    // somebody else's arrow, so both are drawn on all of them rather than on the
+    // floor — a marker sitting where you used to be standing tells you nothing
+    // about where anybody is going.
+    const windInst = w.instances.find(i => !i.resolved && i.def.rule.type === 'windPair')
+    const t = windInst ? progress(windInst) : 0
+    const ringYd = windInst?.def.shape?.kind === 'circle' ? windInst.def.shape.radius : 6
+    const ringOf = (x: number, y: number, alpha: number, mine: boolean) => {
+      const r = ringYd * cam.scale
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${mine ? LIME : VIOLET}, ${(mine ? 0.9 : 0.55) * alpha})`
+      ctx.lineWidth = mine ? 2.5 : 1.5
+      ctx.stroke()
+      // Contracting onto its own edge, the same language every other telegraph
+      // in this file uses for "when".
+      ctx.beginPath(); ctx.arc(x, y, r * (1 + 0.9 * (1 - t)), 0, Math.PI * 2)
+      ctx.setLineDash([6, 6])
+      ctx.strokeStyle = `rgba(${mine ? LIME : VIOLET}, ${(0.2 + 0.5 * t) * alpha})`
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+    }
     for (const a of w.allies) {
       if (!a.alive || !a.wind || a.presence < 0.03) continue
       const p = toPx(cam, a.pos)
+      ringOf(p.x, p.y, a.presence, false)
       const ang = Math.atan2(COMPASS[a.wind].y, COMPASS[a.wind].x)
       drawArrow(ctx, p.x, p.y - 20, ang, 20, VIOLET, 0.9 * a.presence)
     }
     if (w.player.wind) {
+      ringOf(pp.x, pp.y, 1, true)
       const dir = COMPASS[w.player.wind]
       const ang = Math.atan2(dir.y, dir.x)
       drawArrow(ctx, pp.x, pp.y - 28, ang, 28, LIME)
@@ -1367,10 +1371,15 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // necessary. Without the streaks the stage is a mysterious loss of control;
   // without the ring the one thing that ends it is a four-yard circle somewhere
   // out at the rim, indistinguishable from every other puddle on the floor.
-  const galeTarget = w.instances.find(i => i.uid === w.galeTargetUid)
-  if (galeTarget) {
-    const len = Math.hypot(galeTarget.pos.x, galeTarget.pos.y) || 1
-    const dir = { x: galeTarget.pos.x / len, y: galeTarget.pos.y / len }
+  const galeTarget = w.instances.find(i => i.uid === w.galeTargetUid && !i.answered)
+  const braced = w.galeImmuneMs > 0
+  if (galeTarget || braced) {
+    // The direction is read off the world rather than re-derived from the glob,
+    // because for five seconds after a burst there IS no glob — you are planted
+    // at his feet and the wind is still screaming past you. A wind that stopped
+    // being drawn the moment it stopped moving you would make the safe window
+    // look like the stage ending.
+    const dir = w.galeDir
     ctx.save()
     pathArena(ctx, cam, w.boss)
     ctx.clip()
@@ -1396,12 +1405,23 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.restore()
     ctx.lineWidth = 1
 
-    const gp = toPx(cam, galeTarget.pos)
-    const gr = (galeTarget.def.shape?.kind === 'circle' ? galeTarget.def.shape.radius : 4) * cam.scale
-    ctx.beginPath(); ctx.arc(gp.x, gp.y, gr + 8 + 4 * pulse, 0, Math.PI * 2)
-    ctx.strokeStyle = `rgba(${GREEN}, ${0.6 + 0.35 * pulse})`
-    ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
-    drawLabel(ctx, 'RIDE IT IN', gp.x, gp.y - gr - 20, GREEN, 12, 0.95)
+    if (galeTarget) {
+      const gp = toPx(cam, galeTarget.pos)
+      const gr = (galeTarget.def.shape?.kind === 'circle' ? galeTarget.def.shape.radius : 4) * cam.scale
+      ctx.beginPath(); ctx.arc(gp.x, gp.y, gr + 8 + 4 * pulse, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${GREEN}, ${0.6 + 0.35 * pulse})`
+      ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
+      drawLabel(ctx, 'RIDE IT IN', gp.x, gp.y - gr - 20, GREEN, 12, 0.95)
+    }
+    // Braced: the wind cannot move you, so say so on the one body it matters
+    // for. Without it the five seconds read as the gale having stopped, and a
+    // player spends them walking somewhere instead of hitting him.
+    if (braced) {
+      ctx.beginPath(); ctx.arc(pp.x, pp.y, 22, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${GREEN}, ${0.55 + 0.35 * pulse})`
+      ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
+      drawLabel(ctx, `BRACED ${(w.galeImmuneMs / 1000).toFixed(1)}s`, pp.x, pp.y - 40, GREEN, 12, 0.95)
+    }
   }
 
   ctx.restore()

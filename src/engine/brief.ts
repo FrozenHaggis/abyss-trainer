@@ -283,6 +283,44 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         yours: mine,
       }
 
+    case 'combo':
+      return {
+        verb: 'BRACE — FLURRY',
+        line: `${def.rule.parts.length} attacks back to back, in an order that changes every time. Nothing here is dodged on reflex — read which one is winding up and answer that one, because the next is already on its way.`,
+        // A window marker. The ability data says outright that it "never
+        // produces a failure", so nobody is ever scored on the container — only
+        // on the five real abilities it deals out.
+        yours: false,
+      }
+
+    case 'groupSoak':
+      if (role === 'tank') {
+        return {
+          verb: 'AIM IT AT A GROUP',
+          line: `The cone comes out of his face and his face follows you, so where you stand is which group eats it. Put it on the group that is NOT carrying a Gash — the same crowd twice takes a second one and dies where they stand.`,
+          yours: true,
+        }
+      }
+      return override({
+        verb: 'IN OR OUT — CHECK YOUR GROUP',
+        line: `It needs ${def.rule.bodies} bodies to split between, so get in when it is called on your group. When it is not, get well clear: everyone struck takes a Gash, and a second Gash on top of a live one kills. Nobody is named for the soak count — it is measured per cast.`,
+        yours: def.roles.includes(role),
+      })
+
+    case 'stackingDot':
+      return {
+        verb: 'ONE AT A TIME',
+        line: `It lasts long enough that a second application lands on top of the first, and ${def.rule.maxStacks} kills. This is why the two groups alternate — not politeness, arithmetic.`,
+        yours: mine,
+      }
+
+    case 'windPair':
+      return {
+        verb: 'LINE UP WITH YOUR OPPOSITE',
+        line: `Everyone is given an arrow. When it expires you are thrown that way ${def.rule.pushYards} yards, and two raiders thrown into each other cancel out and neither moves. Find the raider whose arrow points back at yours and stand on their line — anyone left unpaired goes over the edge.`,
+        yours: mine,
+      }
+
     case 'raidDamage': {
       // A proximity aura is the one raidDamage that IS positional. Both Marks
       // carry a radius, stack forever, and stack from EACH golem you are inside

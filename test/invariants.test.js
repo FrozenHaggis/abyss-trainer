@@ -121,13 +121,21 @@ test('sweep: no 300-yard ability is scored per-player on any boss', () => {
 // ── 2. Markers and dummies must not produce failures ─────────────────────────
 // Howling Maelstrom was a dummy phase marker given a lethal annulus.
 test('sweep: no marker or dummy ID can be failed on any boss', () => {
-  const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive']
+  // Every rule that can put a player's name in the debrief. `combo` is not one:
+  // it is a container that fires other mechanics and is never scored, which is
+  // the only reason Apex Predator — "a server-side dummy with no events, so it
+  // never produces a failure" — is allowed to be in the file at all.
+  const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive', 'groupSoak', 'windPair', 'stackingDot']
   for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
     for (const m of mechanics) {
       const sp = spells.get(m.spellId)
       const note = sp?.note ?? ''
-      if (!/CAST MARKER|phase marker|Dummy effect|server-side script/i.test(note)) continue
+      // "server-side dummy" as well as "server-side script": Apex Predator's
+      // note uses the first wording and slipped straight past a check written
+      // against the second, which is how a window marker nearly shipped as a
+      // mechanic you could be blamed for.
+      if (!/CAST MARKER|phase marker|Dummy effect|server-side (script|dummy)|Window marker/i.test(note)) continue
       if (!FAILABLE.includes(m.rule) || m.collective) continue
       assert.ok(realIdIsUnresolved(spells, sp?.name, note),
         `${key}/${m.id}: note calls ${m.spellId} a marker/dummy but rule='${m.rule}', ` +
@@ -152,7 +160,8 @@ test('sweep: mechanics the tactic files call collective never name a player', ()
     const tactic = readFileSync(BASE + MD[key], 'utf8')
     const spells = spellsOf(key)
     for (const m of mechanicsOf(key)) {   // guarded by readAllMechanics elsewhere
-      if (!['avoid', 'beInside', 'collect', 'carryOut'].includes(m.rule) || m.collective) continue
+      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair'].includes(m.rule)
+          || m.collective) continue
       const name = spells.get(m.spellId)?.name
       if (!name) continue
       // Find this ability's section and read its Bad line.
@@ -212,7 +221,12 @@ test('sweep: every soak and pickup is reachable inside its telegraph', () => {
   for (const { key, mechanics } of readAllMechanics()) {
     const arena = arenaOf(key)
     for (const m of mechanics) {
-      if (!['beInside', 'collect'].includes(m.rule) || m.collective) continue
+      // `groupSoak` is a soak like any other: you are told to get into it, so
+      // getting into it has to be possible. It is exempt from the `collective`
+      // skip that beInside gets, because being late to THIS one is not merely a
+      // missed split — the group that eats the next cone instead dies to it.
+      if (!['beInside', 'collect', 'groupSoak'].includes(m.rule)) continue
+      if (m.collective && m.rule !== 'groupSoak') continue
       const reach = PLAYER_SPEED * Math.max(0, m.telegraphMs / 1000 - REACTION)
       assert.ok(reach >= arena * 0.55,
         `${key}/${m.id}: ${(m.telegraphMs / 1000)}s telegraph reaches ${reach.toFixed(0)}yd ` +
@@ -374,4 +388,43 @@ test('twinfangs: Venomous Emergence summons spawns that fixate and spit', () => 
   assert.equal(spit.rule, 'aimAway', `Corrosive Spit is rule '${spit.rule}', not aimAway`)
   assert.equal(spit.shape, 'line', 'Corrosive Spit is not a line any more')
   assert.equal(spit.telegraphMs, 5000, 'Corrosive Spit lost its 5s marker window')
+})
+
+// ── 10. A spread you can survive by ignoring it is not a spread ───────────────
+// Raging Crosswinds shipped at a 22-yard push on a 56-yard floor, which meant
+// the answer to the fight's headline mechanic was to stand in the middle and do
+// nothing: an unpaired knock landed you comfortably back on the platform. A
+// stationary player cleared the pull. If failing to pair is survivable from the
+// centre, the mechanic teaches nothing at all.
+test('sweep: an unpaired wind knock actually leaves the platform', () => {
+  for (const { key, mechanics } of readAllMechanics()) {
+    const arena = arenaOf(key)
+    for (const m of mechanics) {
+      if (m.rule !== 'windPair') continue
+      const push = Number(/pushYards:\s*([\d.]+)/.exec(m.blk)?.[1] ?? 0)
+      assert.ok(push > arena,
+        `${key}/${m.id}: throws ${push}yd on a ${arena}yd floor, so a player standing ` +
+        'in the middle survives ignoring it — pairing has to be the only answer')
+    }
+  }
+})
+
+// ── 11. One cone must not be able to take both stack groups ──────────────────
+// The whole Mutilate rota is "hit this crowd, then the other one". A cone wide
+// enough to cover both marks at once makes the second application land on the
+// group that already has a Gash however well the tank plays it, and the rota
+// stops being something anybody can get right.
+test('sweep: a group soak cone cannot cover both stack marks', () => {
+  const MARKS_APART_DEG = 90       // GROUP_BEARINGS in sim.ts
+  for (const { key, mechanics } of readAllMechanics()) {
+    for (const m of mechanics) {
+      if (m.rule !== 'groupSoak') continue
+      const arc = Number(/arcDeg:\s*([\d.]+)/.exec(m.blk)?.[1] ?? 0)
+      assert.ok(arc > 0, `${key}/${m.id}: a groupSoak with no cone to aim`)
+      assert.ok(arc < MARKS_APART_DEG,
+        `${key}/${m.id}: a ${arc}-degree cone reaches both marks, which sit ` +
+        `${MARKS_APART_DEG} degrees apart — the second cast would always land on ` +
+        'the group that is already carrying a Gash')
+    }
+  }
 })

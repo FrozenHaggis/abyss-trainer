@@ -6,6 +6,32 @@
 
 export type Role = 'tank' | 'healer' | 'dps'
 
+/**
+ * A compass bearing, for the mechanics that are about direction rather than
+ * position.
+ *
+ * The arena is a clock: 12 is north, 3 is east, 6 is south, 9 is west, and the
+ * renderer draws those four marks whenever something is keyed to them. Sszorak
+ * is the only fight in the tier that needs it, and it needs it twice — Raging
+ * Crosswinds hands every raider one of these, and a Viscous Cyst has to land on
+ * one of them or the Maelstrom has nothing to blow the raid into.
+ *
+ * Screen coordinates, so +y is SOUTH.
+ */
+export type Compass = 'N' | 'E' | 'S' | 'W'
+
+export const COMPASS: Record<Compass, Vec> = {
+  N: { x: 0, y: -1 },
+  E: { x: 1, y: 0 },
+  S: { x: 0, y: 1 },
+  W: { x: -1, y: 0 },
+}
+
+export const OPPOSITE: Record<Compass, Compass> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+
+/** The clock face, in order, for anything that has to pick one of the four. */
+export const CLOCK: Compass[] = ['N', 'E', 'S', 'W']
+
 /** The four abilities bound to keys 1-4. Which ones you get depends on role. */
 export type Ability = 'interrupt' | 'dispel' | 'defensive' | 'taunt' | 'burst' | 'raidcd'
 
@@ -157,6 +183,54 @@ export type Rule =
    * off-tank taunts before it turns lethal. Only scored when you are the tank.
    */
   | { type: 'tankSwap'; maxStacks: number }
+  /**
+   * One cast that fires several others back-to-back, in a RANDOM order.
+   *
+   * Apex Predator. The ability data calls 1277025 a "window marker for the
+   * Ravage/Mutilate flurry — server-side dummy with no events, so it never
+   * produces a failure", which is exactly what this is: a container that can
+   * never itself be failed, holding five real abilities that each can.
+   *
+   * The order being random is the whole point. Two Ravages, two Mutilates and a
+   * Tempest in a known sequence is a dance you memorise; in an unknown one it is
+   * a fight you have to read, and reading which of the two frontals is coming is
+   * the skill the flurry actually tests.
+   */
+  | { type: 'combo'; parts: string[]; gapMs: number }
+  /**
+   * A frontal soak that must land on ONE of the raid's two stack groups, and
+   * must not land on the same one twice running.
+   *
+   * Mutilate. The damage is split among everyone struck, so too few bodies is a
+   * raid-wide hit — but every body struck also takes a Mutilated Gash, and a
+   * second Gash on a body that still has one kills it. So the two demands pull
+   * against each other: enough bodies, and never the same bodies twice.
+   *
+   * Measured per cast and never per player, exactly as the tactic file asks:
+   * "Not a per-player failure — track soak count per cast ... and attribute
+   * deaths to the DoT damage". Missing the soak costs the raid; dying to a
+   * second Gash is attributed to the Gash, which is the Deadly id.
+   */
+  | { type: 'groupSoak'; bodies: number; dotId: string }
+  /**
+   * A DoT that kills the body carrying it if it is applied again before the
+   * first application has fallen off.
+   *
+   * Mutilated Gash — 1285998, the Deadly damage id the tactic file says to
+   * attribute deaths to. It is never cast directly; a `groupSoak` applies it.
+   */
+  | { type: 'stackingDot'; maxStacks: number; durationMs: number }
+  /**
+   * Every raider is given a compass bearing and is thrown that way when it
+   * expires. Two raiders thrown into each other cancel out and neither moves.
+   *
+   * Raging Crosswinds, and the fight. The knock is NOT clamped to the rim the
+   * way `survive` is: being blown off the platform is the single biggest killer
+   * in the real logs — `Falling` took 31 killing blows in 6 pulls, more than
+   * every boss ability combined — and a knockback that cannot do that is not
+   * teaching this fight.
+   */
+  | { type: 'windPair'; pushYards: number }
 
 /**
  * One entity in the encounter.
@@ -486,6 +560,63 @@ export interface MechanicDef {
   aimsAtCaster?: boolean
   /** Hazards that drift, e.g. Sszorak's Tempest vortices. */
   driftSpeed?: number
+  /**
+   * Fire this many copies at once, fanned around the origin.
+   *
+   * Tempest is "nine vortices sent out from the boss"; Caustic Claws flings six
+   * globs of toxin around where he is standing. Drawn as one shape each was a
+   * different mechanic entirely — a single circle to sidestep, rather than a
+   * room filling up with things that are all still moving.
+   */
+  count?: number
+  /**
+   * The copies travel OUTWARD from where they spawned rather than on random
+   * bearings.
+   *
+   * The Tempest vortices leave the boss like spokes. Random drift put half of
+   * them straight back through him, which is the one part of the floor the melee
+   * and both tanks cannot leave.
+   */
+  radialDrift?: boolean
+  /**
+   * Whatever this spawns lands on the nearest of 12, 3, 6 or 9 o'clock.
+   *
+   * A Viscous Cyst has to be somewhere the Maelstrom's gales can blow the raid
+   * INTO it, and a gale only blows on one of the four compass bearings. A cyst
+   * dropped between two of them is a gale with nothing at the end of it, which
+   * is a wipe nobody can play out of — so the drop is snapped, and the carrier's
+   * job is to get it to the right QUARTER of the room rather than to hit a pixel.
+   */
+  clockDrop?: boolean
+  /**
+   * Consuming this hazard throws the WHOLE raid this far from it.
+   *
+   * The cyst. It does not matter where you were standing — the burst reaches
+   * everybody — which is what makes it usable as the answer to a gale rather
+   * than as one more puddle. Anyone it throws is thrown toward the middle,
+   * because the cyst itself is out at the rim.
+   */
+  raidKnockYards?: number
+  /**
+   * Touching this slows you, and the slow is dispellable.
+   *
+   * Tempest is the fight's only dispel — 1287083 is the single `dispellable`
+   * entry in the ability data and the logs show 76 healer removals — and the
+   * tactic file is explicit that "the slow is the lethal part, because it
+   * strands you in the wind". Modelled as a real movement penalty rather than as
+   * damage, so it costs you the thing it actually costs you.
+   */
+  slowMs?: number
+  /**
+   * The caster keeps walking after its tank while this is in the air.
+   *
+   * The engine roots a caster under its own telegraph by default, so a frontal
+   * never fires from somewhere the boss has already left. A frontal that TRACKS
+   * its caster does not have that problem — its shape is re-anchored every tick
+   * — and Sszorak's whole opening premise is that he follows the tanks, which he
+   * cannot do if five back-to-back casts pin him in place for the entire flurry.
+   */
+  mobileCaster?: boolean
   /** Pushes the player this many yards away from the shape's origin. */
   knockbackYards?: number
   /**
@@ -604,6 +735,16 @@ export interface PhaseDef {
   /** On entry, spawn this add once, outside the normal wave cadence. */
   onEnter?: { addId: string; count: number }[]
   /**
+   * A mechanic fired the instant the stage begins, rather than one interval in.
+   *
+   * Dig In is the case. It IS the intermission — he plants himself and takes
+   * +30% for 25 seconds — so a stage that waited a full loop interval before
+   * casting it would spend its opening seconds being an intermission that had
+   * not started yet, and the burn window would run out after the gales rather
+   * than during them.
+   */
+  opensWith?: string
+  /**
    * No ordinary add waves for the duration.
    *
    * A set-piece stage used to be detected by "does it bring its own adds", which
@@ -626,6 +767,21 @@ export interface PhaseDef {
   swapEntitiesOnExit?: boolean
   /** On exit, any add corpse nobody burned stands back up as this add. */
   resurrectCorpsesAs?: string
+  /**
+   * The gales. A wind blows the whole raid toward one Viscous Cyst at a time,
+   * and the stage ends once every cyst on the floor has burst.
+   *
+   * Howling Maelstrom, which the ability data describes as "a succession of
+   * directional gales" and says to "detect the phase via Dig In" because the
+   * marker itself has no cast events. So it is authored as a property of the
+   * stage rather than as a mechanic anybody can fail — the deaths inside it land
+   * under `Falling`, exactly as the tactic file records them.
+   *
+   * The stage guarantees its own cysts on entry. A raid that popped one early
+   * would otherwise arrive at a gale with nothing at the end of it, which is a
+   * wipe caused sixty seconds earlier by something the debrief cannot name.
+   */
+  windToCysts?: boolean
 }
 
 /**
@@ -802,6 +958,29 @@ export interface Ally {
    */
   green: number
   marked: boolean
+  /**
+   * Which of the two stack groups this raider runs with, 0 or 1.
+   *
+   * Distinct from `side`. A side is half a raid parked on its own boss and is
+   * about where you stand all pull; a group is a soak rota and is about WHOSE
+   * TURN it is — the two Mutilate groups alternate, and the whole demand is that
+   * the second cone finds the bodies the first one did not.
+   */
+  group: number
+  /** Which way Raging Crosswinds will throw them, or null while it is not up. */
+  wind: Compass | null
+  /**
+   * The raider they are lining up with this Crosswinds, or -1.
+   *
+   * Paired off when the bearings are dealt rather than searched for each tick.
+   * "Nearest body with the opposite arrow" looks equivalent and is not: two
+   * raiders walking past each other swap partners mid-approach, and a raid that
+   * keeps changing its mind never finishes lining up before the timer expires.
+   */
+  windMate: number
+  /** Mutilated Gash stacks. A second one on a live stack kills them. */
+  gash: number
+  gashMs: number
 }
 
 export interface PlayerState {
@@ -824,6 +1003,15 @@ export interface PlayerState {
    * Blood. Two entries at once is the split raid's characteristic mistake.
    */
   marks: Record<string, number>
+  /** Which of the two Mutilate stack groups you were assigned before the pull. */
+  group: number
+  /** Which way Raging Crosswinds will throw you, or null while it is not up. */
+  wind: Compass | null
+  /** Mutilated Gash stacks, and how long the current one has left. */
+  gash: number
+  gashMs: number
+  /** ms of Tempest slow left. The healer's dispel is what clears it. */
+  slowMs: number
 }
 
 /** A live instruction shown to the player mid-fight. */

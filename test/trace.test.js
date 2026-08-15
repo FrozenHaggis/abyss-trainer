@@ -423,6 +423,10 @@ for (const [key, dir] of present) {
         const id = strField(p, field)
         if (id) refs.push([`${at} ${field}`, id, adds, 'add'])
       }
+      // The mechanic a stage casts the instant it begins. Dangling, the
+      // intermission opens with nothing at all and the burn window never runs.
+      const opens = strField(p, 'opensWith')
+      if (opens) refs.push([`${at} opensWith`, opens, mechanics, 'mechanic'])
     }
 
     for (const m of mechanicDefs(key)) {
@@ -437,6 +441,17 @@ for (const [key, dir] of present) {
       if (m.spawnsAtSoakers) {
         refs.push([`${m.id} spawnsAtSoakers`, m.spawnsAtSoakers, mechanics, 'mechanic'])
       }
+      // The five abilities a flurry deals out, and the DoT a group soak applies.
+      // Both live inside the rule literal rather than on the mechanic, and both
+      // are plain strings — a renamed mechanic would leave Apex Predator firing
+      // four of five, or Mutilate applying a Gash that does not exist, and
+      // nothing else in the build would notice.
+      const parts = literalAfter(m.ruleLiteral, 'parts')
+      if (parts) {
+        for (const id of stringsIn(parts)) refs.push([`${m.id} combo part`, id, mechanics, 'mechanic'])
+      }
+      const dotId = strField(m.ruleLiteral, 'dotId')
+      if (dotId) refs.push([`${m.id} dotId`, dotId, mechanics, 'mechanic'])
     }
 
     for (const [where, id, known, kind] of refs) {
@@ -490,7 +505,10 @@ for (const [key, dir] of present) {
   // outright — a hole in the floor, and a collision with the wrong partner —
   // so both have to be able to say so afterwards.
   test(`${key}: a rule that kills outright always says what happened`, () => {
-    const KILLS_OUTRIGHT = ['lethalGround', 'pairUp']
+    // A second Mutilated Gash and an unpaired Crosswinds both end the pull on
+    // the spot, so both owe the debrief a sentence for the same reason a hole in
+    // the floor and a wrong orb collision do.
+    const KILLS_OUTRIGHT = ['lethalGround', 'pairUp', 'stackingDot', 'windPair']
     for (const m of mechanicDefs(key)) {
       if (!KILLS_OUTRIGHT.includes(m.rule)) continue
       assert.notEqual(m.failText.trim(), '',
@@ -504,12 +522,30 @@ for (const [key, dir] of present) {
   // exempt — it ends when the boss does.
   test(`${key}: every phase but the last can be left`, () => {
     const phases = phaseDefs(key)
-    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead']
+    // `windToCysts` is an exit like the others: the Maelstrom ends when every
+    // glob on the floor has burst, and entering it guarantees there are two.
+    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead', 'windToCysts']
     for (const p of phases.slice(0, -1)) {
       const id = strField(p, 'id') ?? '?'
       assert.ok(EXITS.some(field => new RegExp(`\\b${field}:`).test(p)),
         `phase '${id}' declares no exit condition — the pull would never leave it, ` +
         `and every phase after it is unreachable. One of ${EXITS.join(', ')} is required.`)
+    }
+    // A fight that CYCLES has no last phase — the stage list wraps, so a stage
+    // with no way out is a dead end wherever it sits in the array. The exemption
+    // for the final stage only holds when the final stage is the one the boss
+    // dies in, and Sszorak's is not: its Maelstrom hands the fight back to the
+    // flurry and round it goes again.
+    if (phases.length > 1) {
+      const last = phases[phases.length - 1]
+      const id = strField(last, 'id') ?? '?'
+      const wraps = phases.every(p => EXITS.some(f => new RegExp(`\\b${f}:`).test(p)))
+      const cycles = /endsAtFullEnergy/.test(phases[0])
+      if (cycles) {
+        assert.ok(wraps,
+          `${key} cycles its stages, so phase '${id}' is not the last one — it hands the ` +
+          'fight back to the first. It needs an exit condition like every other stage.')
+      }
     }
   })
 
@@ -808,7 +844,14 @@ test('the co-tank taunts off you before it becomes your failure', () => {
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
   const i = sim.indexOf('// ── tank swap ──')
   assert.ok(i > 0, 'tank swap block not found in sim.ts')
-  const body = sim.slice(i, i + 2200)
+  // Bounded by the NEXT section header rather than by a character count. The
+  // count was 2200, and the block outgrew it the moment the swap started
+  // iterating every tankSwap mechanic instead of the first — at which point the
+  // slice ended mid-branch, `} else if` was not in it, and the co-tank check
+  // below failed against code that was perfectly correct. A window measured in
+  // characters is a window that expires.
+  const end = sim.indexOf('// ── ', i + 20)
+  const body = sim.slice(i, end > i ? end : i + 4000)
   assert.ok(body.includes('if (tank.isPlayer)'),
     'the swap block does not branch on whether YOU are holding it, so holding it ' +
     'while overstacked falls through to the failure path')

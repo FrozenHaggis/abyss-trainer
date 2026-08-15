@@ -99,6 +99,14 @@ const GALE_SPEED = 8.5
  * it turns and sends you at the other glob.
  */
 const GALE_BRACE_MS = 5000
+/**
+ * How long a cyst burst takes to carry you.
+ *
+ * Long enough to be a flight rather than a jump cut, short enough that you are
+ * not a passenger. Sixty-odd yards over two thirds of a second is fast, which is
+ * what being thrown by an exploding glob of venom ought to look like.
+ */
+const CYST_KNOCK_MS = 650
 /** How long a raider is aloft after a Crosswinds knock, in ms. */
 const WIND_ALOFT_MS = 1500
 
@@ -912,7 +920,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
       // You are always group 0. Which group you are in is arbitrary — what
       // matters is that it never changes mid-pull, so "is this one mine?" stays
       // a question about the cone rather than about your own assignment.
-      group: 0, wind: null, gash: 0, gashMs: 0, slowMs: 0,
+      group: 0, wind: null, gash: 0, gashMs: 0, slowMs: 0, knock: null,
     },
     instances: [],
     adds: [],
@@ -1657,7 +1665,7 @@ function dealWinds(w: World, def: MechanicDef) {
 
 /** Cysts still on the floor, oldest first — what the gales have to work with. */
 function liveCysts(w: World): Instance[] {
-  return w.instances.filter(i => i.def.raidKnockYards && i.resolved && !i.answered)
+  return w.instances.filter(i => i.def.raidKnockRoom && i.resolved && !i.answered)
 }
 
 /**
@@ -1682,23 +1690,49 @@ function burstCyst(w: World, inst: Instance, toBoss = false) {
   // `permanent` so that it survives a whole rotation on the floor — which means
   // nothing else would ever remove it.
   inst.timer = 0
-  const push = inst.def.raidKnockYards ?? 24
-  const at = toBoss ? w.bosses[0].pos : inst.pos
-  const shove = (p: Vec) => {
-    // Toward the boss during a gale, away from the glob the rest of the time.
-    // "Away" is the honest physics and it is the wrong answer inside the
-    // Maelstrom: a player who reached the glob from the far side would be
-    // thrown outward, off a platform the stage had just spent five seconds
-    // walking them across.
-    const dx = toBoss ? at.x - p.x : p.x - at.x
-    const dy = toBoss ? at.y - p.y : p.y - at.y
+  // A fraction of the ROOM, not a distance that happens to suit this one. The
+  // throw carries you most of the way across the floor — from a glob at the rim
+  // that means past the boss and out the other side, which is what being blown
+  // back by an exploding cyst should look like.
+  const push = (inst.def.raidKnockRoom ?? 0.5) * w.boss.arenaRadius * 2
+
+  /**
+   * Which way the burst throws a body.
+   *
+   * Toward the boss during a gale, away from the glob the rest of the time.
+   * "Away" is the honest physics and it is the wrong answer inside the
+   * Maelstrom: a player who reached the glob from the far side would be thrown
+   * outward, off a platform the stage had just spent five seconds walking them
+   * across.
+   */
+  const bearing = (p: Vec) => {
+    const to = toBoss ? w.bosses[0].pos : inst.pos
+    const dx = toBoss ? to.x - p.x : p.x - to.x
+    const dy = toBoss ? to.y - p.y : p.y - to.y
     const d = Math.hypot(dx, dy) || 1
-    const step = toBoss ? Math.min(push, d) : push
-    const to = clampToArena(w.boss, { x: p.x + (dx / d) * step, y: p.y + (dy / d) * step }, 2)
+    return { x: dx / d, y: dy / d }
+  }
+  const shove = (p: Vec) => {
+    const dir = bearing(p)
+    const to = clampToArena(w.boss, { x: p.x + dir.x * push, y: p.y + dir.y * push }, 2)
     p.x = to.x
     p.y = to.y
   }
-  shove(w.player.pos)
+  // The player TRAVELS. Everyone else is teleported, which is what this used to
+  // do to the player as well — and at sixty-odd yards an instant reposition does
+  // not read as being thrown, it reads as a teleport. It was called one.
+  //
+  // Never capped at the distance to the boss, either. That was the actual bug:
+  // the step was `min(push, distance)`, so however hard the burst hit you it
+  // always stopped exactly on him. A knockback whose landing spot is fixed is
+  // not a knockback.
+  const dir = bearing(w.player.pos)
+  w.player.knock = {
+    vx: (dir.x * push) / (CYST_KNOCK_MS / 1000),
+    vy: (dir.y * push) / (CYST_KNOCK_MS / 1000),
+    ms: CYST_KNOCK_MS,
+    safe: true,
+  }
   w.player.aloft = WIND_ALOFT_MS
   for (const a of w.allies) {
     if (!a.alive) continue
@@ -3918,7 +3952,7 @@ function enterPhase(w: World, index: number) {
     // on the floor is used, and anything missing is made up on a free compass
     // point. Where the raid actually dropped them still decides which quarters
     // the winds come from, which is the part worth practising.
-    const cystDef = w.boss.mechanics.find(m => m.raidKnockYards)
+    const cystDef = w.boss.mechanics.find(m => m.raidKnockRoom)
     if (cystDef) {
       // EXACTLY two, on two different quarters of the room.
       //
@@ -4095,6 +4129,24 @@ export function step(w: World, input: Input, dtMs: number) {
     w.player.pos.y += my * speed * dt
   }
   if (w.player.aloft > 0) w.player.aloft -= dtMs
+
+  // Being thrown. Applied after your own input rather than instead of it, so a
+  // player mid-flight can still lean — you have no real say in where you land,
+  // which is the point, but a knock that froze the controls outright would feel
+  // like the game had stopped rather than like the room had thrown you.
+  const knock = w.player.knock
+  if (knock) {
+    const use = Math.min(dtMs, knock.ms) / 1000
+    const to = { x: w.player.pos.x + knock.vx * use, y: w.player.pos.y + knock.vy * use }
+    // A safe knock is one the fight is using to RESCUE you — the cyst burst that
+    // ends a gale — so it stops at the rim instead of finishing what the wind
+    // started.
+    const landed = knock.safe ? clampToArena(w.boss, to, 2) : to
+    w.player.pos.x = landed.x
+    w.player.pos.y = landed.y
+    knock.ms -= dtMs
+    if (knock.ms <= 0) w.player.knock = null
+  }
 
   // Falling off the platform. On Sszorak this is the single biggest killer in
   // the real logs, so it is a hard fail rather than a soft push-back. Asked of
@@ -4862,7 +4914,7 @@ export function step(w: World, input: Input, dtMs: number) {
     }
 
     if (inst.resolved && (inst.def.lingerMs || inst.def.permanent) && isInside(inst, w.player.pos)) {
-      if (inst.def.raidKnockYards) {
+      if (inst.def.raidKnockRoom) {
         // A cyst you walked into. It bursts, and the burst throws the WHOLE
         // raid — which is the mechanic, not an inconvenience. During the gales
         // that is the answer and nobody is blamed for it; the rest of the time
@@ -4895,7 +4947,7 @@ export function step(w: World, input: Input, dtMs: number) {
     // rotation on the floor waiting for the Maelstrom, which also means nothing
     // else would ever take it away — so a glob that has already thrown you
     // stayed drawn as a hazard nobody could clear, for the rest of the pull.
-    !(i.def.raidKnockYards && i.answered && -i.timer >= IMPACT_FLASH_MS)
+    !(i.def.raidKnockRoom && i.answered && -i.timer >= IMPACT_FLASH_MS)
     && (!i.resolved
     // Furniture and pools that never expire are part of the floor now.
     || i.def.fixture

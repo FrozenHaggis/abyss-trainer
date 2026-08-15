@@ -464,7 +464,7 @@ function play(boss, role, smart, seed, side = 'green') {
       // holding perfect position.
       const standingInIt = w.instances.some(i =>
         i.resolved && i.def.shape?.kind === 'circle' && (i.def.lingerMs || i.def.permanent)
-        && i.def.rule.type === 'avoid' && !i.def.raidKnockYards
+        && i.def.rule.type === 'avoid' && !i.def.raidKnockRoom
         && Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y) < i.def.shape.radius)
       if (tankAnchor && tankAnchor.d > 8 && !standingInIt) {
         tx = (tankAnchor.x - w.player.pos.x) / tankAnchor.d
@@ -599,7 +599,7 @@ function play(boss, role, smart, seed, side = 'green') {
         + (w.player.wind ? ` wind=${w.player.wind} mate=${w.windPartnerId}` : '')
         + (w.galeTargetUid >= 0 ? ` gale=${w.galeTargetUid}` : '')
         + (w.galeImmuneMs > 0 ? ` braced=${(w.galeImmuneMs / 1000).toFixed(1)}` : '')
-        + ` cysts=${w.instances.filter(i => i.def.raidKnockYards && !i.answered).length}`
+        + ` cysts=${w.instances.filter(i => i.def.raidKnockRoom && !i.answered).length}`
         + (inPool.length ? ` STANDING-IN:${inPool.map(i => i.def.id).join(',')}` : ''))
     }
   }

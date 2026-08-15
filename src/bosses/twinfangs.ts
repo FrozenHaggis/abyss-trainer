@@ -142,17 +142,36 @@ export const twinfangs: BossDef = {
     { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 8, y: -19 }, tankedApart: true, stationary: true },
   ],
   maxHp: 1,
-  loopIntervalSec: 6,
+  // 9.5, not the 6 this ran at, and the change is bookkeeping rather than a
+  // pacing decision. Deleting Envenomed took eight of the loop's twenty-two
+  // slots out, so at an unchanged interval the whole rotation shortened from
+  // 132 seconds to 84 and every OTHER mechanic in the fight arrived 57% more
+  // often. Measured, that alone moved a competent healer's death from 85
+  // seconds to 53: not because anything got harder, but because Venomous
+  // Emergence and Caustic Deluge were both being cast half again as fast.
+  // 14 slots at 9.5s is 133 seconds, which is the rotation the rest of this
+  // file was tuned against. Step 12 replaces the flat loop entirely; until it
+  // does, removing a mechanic should not silently speed up the fight.
+  loopIntervalSec: 9.5,
   energyPerSec: 2.2,            // ~45s to the Vile Flood window, so three per pull
   atFullEnergy: 'flood',
   ambient: ['venom'],
   pullLengthSec: 150,
 
-  // Two symmetric halves of 72s. Envenomed on every third slot is the swap
-  // metronome; Stone Breaker lands once a half, matching the file's "roughly
-  // once a minute". Each half forces movement inward (globule, feast, the
-  // pre-knock huddle) and outward (Coiling Ichor) rather than only outward.
+  // Two symmetric halves. Stone Breaker lands once a half, matching the file's
+  // "roughly once a minute". Each half forces movement inward (globule, feast,
+  // the pre-knock huddle) and outward (Coiling Ichor) rather than only outward.
   // Venomous Emergence sits FIFTH, not twelfth.
+  //
+  // ENVENOMED IS GONE, and with it the fight's only `tankSwap`. It was a
+  // metronome — a stack every third slot, taunt at four — and the swap it drove
+  // was a timer wearing a mechanic's name. Stone Breaker is the swap now, which
+  // is what the fight actually does: "once all three are soaked, the tank
+  // tanking Vexhul starts tanking Ithraz". A trade you earn by covering a run of
+  // soaks teaches the run; a trade that arrives on a clock teaches the clock,
+  // and the real fight's other swap driver (1289092, +33% Stone Breaker damage
+  // per soaked impact) is the same three pools counted a different way. Two
+  // mechanics for one job, and only one of them had anything to practise.
   //
   // It was in the last slot of each half, which put the first one 75 seconds
   // into a pull that a clean kill ends at 80 and an enrage ends at 150. The
@@ -175,15 +194,23 @@ export const twinfangs: BossDef = {
   // `splash` is not in it either, for the same reason and more strongly: it is a
   // beat of a channel, and a single pair of circles with no channel behind them
   // is not a mechanic anyone can read.
+  //
+  // `slam` and `pushoff` are not in it either, and for the two halves of the
+  // same reason `splash` is not. A slam is a beat of Stone Breaker's channel and
+  // arrives with its place on the arc already decided; fired from the rotation
+  // it is one pool with no run behind it and no swap in front of it. A pushoff
+  // is what happens when a slam goes unsoaked — a punishment, not a cast — and
+  // the rotation dealing one out would throw the raid into the acid for nothing
+  // anybody did.
   loop: [
-    'envenomed', 'deluge',
-    'envenomed', 'emergence', 'ichor',
-    'envenomed', 'stonebreaker', 'depths',
-    'envenomed', 'feast', 'storm',
-    'envenomed', 'deluge',
-    'envenomed', 'emergence', 'storm',
-    'envenomed', 'stonebreaker', 'depths',
-    'envenomed', 'feast', 'ichor',
+    'deluge',
+    'emergence', 'ichor',
+    'stonebreaker', 'depths',
+    'feast', 'storm',
+    'deluge',
+    'emergence', 'storm',
+    'stonebreaker', 'depths',
+    'feast', 'ichor',
   ],
 
   mechanics: [
@@ -361,27 +388,6 @@ export const twinfangs: BossDef = {
       failText: 'Missed the globule soak — it ruptured on the whole raid',
     },
     {
-      id: 'envenomed',
-      name: 'Envenomed',
-      spellId: 1310360,
-      what: "1310360 — +10% Caustic Deluge damage taken, stacking, ten stacks per channel.",
-      from: 'vexhul',
-      roles: ['tank'],
-      telegraphMs: 1500,
-      origin: 'boss',
-      // The fight's swap driver: "+10% Caustic Deluge damage taken, stacking,
-      // ten stacks per channel", and "Bad: A tank sitting on high stacks through
-      // another channel". The engine applies one stack per cast rather than ten
-      // per channel, so maxStacks is tuned to firings — 4 casts at 18s apart is
-      // ~72s, giving two swaps inside the pull. Ithraz's Stone Breaker stack
-      // (1289092) is the other swap driver in the real fight; only one tankSwap
-      // is read by the sim, and Envenomed is the cleaner teach because Stone
-      // Breaker is already carrying the knockback.
-      rule: { type: 'tankSwap', maxStacks: 4 },
-      good: "Vexhul's tanks swap so stacks decay.",
-      failText: 'Held Envenomed through another channel — taunt the swap sooner',
-    },
-    {
       id: 'emergence',
       name: 'Venomous Emergence',
       spellId: 1291404,
@@ -541,22 +547,149 @@ export const twinfangs: BossDef = {
       id: 'stonebreaker',
       name: 'Stone Breaker',
       spellId: 1288538,
-      what: "1.5s cast knocks players away, then three slam swirlies; each soaked impact hits within 3.5 yards and stacks +33% .",
+      // THE KNOCK, and the fight's second three-way split.
+      //
+      // One def used to be the whole mechanic: a push and a promise of "three
+      // slam swirlies" that never existed, so the swirlies could not be soaked,
+      // the soak could not be missed, and the tank swap they earn was being done
+      // somewhere else by a timer called Envenomed. Split the way it plays —
+      // stonebreaker knocks, slam is the run of three pools it lays, pushoff is
+      // what a missed pool does to the raid — and every clause of the spec has a
+      // home: "initially this pushes every player/ai raider back 10 yards ... he
+      // then spawns 3 3.5 yard sized pools in sequence ... once all three are
+      // soaked the tanks swap ... if the Ithraz tank fails to soak any pool it
+      // pushes all players off the platform into the venom and wipes the raid."
+      //
+      // The comment sits BELOW the id rather than above it, here and in the two
+      // defs that follow, because the sweeps parse a boss file by splitting on
+      // `{` immediately followed by `id:`. A block that opens with prose is
+      // silently glued onto the previous one and stops being checked — which is
+      // how a lethality flag three mechanics away was read as belonging to
+      // Sanguine Storm. Those parsers are regexes over text, so prose that looks
+      // like a field is a field.
+      what: "1.5s cast throws every raider 10 yards straight away from Ithraz — off the platform if that is where the push points — then lays three slam pools around him for his tank to walk.",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       // "1.5s cast ... knocks players away, then three slam swirlies." The cast
       // is 1.5s; the telegraph is stretched to cover the knock windup, because a
-      // 1.5s window is not enough to reposition for a platform-wide push.
+      // 1.5s window is not enough to reposition for a platform-wide push — and
+      // now that the push can kill, repositioning is the entire mechanic.
       telegraphMs: 3000,
-      // Arena-wide on purpose. The knock is not a puddle you sidestep — everyone
-      // goes, and the only decision is whether you were standing somewhere the
-      // push carries you across the platform or over the edge.
-      shape: { kind: 'circle', radius: 44 },
+      // Arena-wide on purpose, and it has to actually be arena-wide. The knock
+      // is not a puddle you sidestep — everyone goes, and the only decision is
+      // whether you were standing somewhere the push carries you across the
+      // platform or over the edge. It was 44, measured from Ithraz at (8,-19),
+      // which fell 6 yards short of the far corner of the mouth: the raiders
+      // standing in the most dangerous part of the room were the ones the knock
+      // could not reach, so the fatal band was quietly the only safe place to be.
+      // 52 covers the furthest floor point (50.6 yards) with margin.
+      shape: { kind: 'circle', radius: 52 },
       origin: 'boss',
       rule: { type: 'survive' },
-      knockbackYards: 18,
-      good: 'One tank soaks all three in appearance order (1x / 1.33x / 1.66x), then tanks swap; someone is always in range.',
+      // TEN, not the 18 this shipped with, and the rim no longer catches you.
+      //
+      // Both halves are the raid leader's ruling and the second one is the one
+      // that matters: being thrown off is death, not a scrape and a failure row.
+      // It was put to them with the measurement — a 10-yard push away from
+      // Ithraz makes 46.2% of this floor a fatal stand, and the whole mouth from
+      // y=14 outward is 100% fatal — and they chose lethal knowing that. 18
+      // yards would have made it 72%, which is a room with a right answer and
+      // nineteen wrong ones rather than a decision.
+      knockbackYards: 10,
+      offPlatform: true,
+      // The one instruction the derived `survive` line cannot give, because it
+      // is a fact about this polygon and the rule is also Ula'tek's. The numbers
+      // are measured, not felt: 84% of the row at y=0 survives, 67% at y=-12,
+      // 27% at y=12, 5% at y=13 and nothing at all past y=14.
+      brief: 'Ithraz throws the whole raid 10 yards straight away from himself and the edge does not stop you. He is coiled off the top of the platform, so the push always points down the wedge toward the mouth — and the mouth is where the floor runs out. Stay south of the tanks\' ledge and well north of the mouth: below about y = 12 the push lands you on floor, past it you go into the venom, and the last stretch before the pocket is fatal from every angle. Move before the cast finishes, because there is nothing to do once it lands.',
+      good: 'Everyone is inside the danger band before the cast ends; the Ithraz tank then soaks all three slams in appearance order and the tanks trade.',
       failText: 'Knocked off the platform by Stone Breaker',
+      // Three pools, 2.2s apart, on an 8-yard arc in front of Ithraz.
+      //
+      // RING 8, NOT 6, and it is the difference between a mechanic and a place
+      // to stand. The three points are clamped onto the floor, and the clamp is
+      // not shape-preserving — the right-hand one always runs into the leg of
+      // the wedge and is dragged inward — so what decides whether the tank has
+      // to walk is the smallest circle that contains all three POST-clamp. At
+      // ring 6 that circle has a radius of 4.02 yards against a soak radius of
+      // 3.5: half a yard of margin, and the tank covers the whole run from one
+      // spot by standing in the right half-yard. At ring 8 it is 5.40, which is
+      // a walk. The arc still fits comfortably inside everything else the tank
+      // is bound by — furthest pool 6.9 yards from their station and 9.4 from
+      // Ithraz himself.
+      channel: { defId: 'slam', count: 3, everyMs: 2200, ringYards: 8, arcDeg: 90 },
+    },
+    {
+      id: 'slam',
+      name: 'Stone Breaker',
+      spellId: 1310371,
+      // THE POOLS. One tank, all three, or the raid goes in the venom.
+      what: "Each slam lands a 3.5-yard impact. The tank holding Ithraz has to be standing in every one of them — a slam that strikes nobody knocks the whole raid off the platform instead.",
+      from: 'ithraz',
+      // TANK ONLY, and this is a scoring claim rather than a damage one. "A tank
+      // eating this is correct play; a non-tank in the swirly is the positioning
+      // failure" — but the positioning that put them there is Stone Breaker's
+      // knock, which already has their name on it. Charging a dps for a soak
+      // they were never assigned would be the trainer inventing a second failure
+      // out of the first one.
+      roles: ['tank'],
+      // 2s of telegraph against a 2.2s beat, so the run is genuinely a sequence:
+      // one pool lands and is gone before the next arrives, and the tank walks a
+      // line rather than standing in an overlap. It also has to clear the
+      // reachability sweep — 2s reaches 23 yards on a 32-yard floor.
+      telegraphMs: 2000,
+      shape: { kind: 'circle', radius: 3.5 },   // "3 3.5 yard sized pools"
+      // Only ever consulted when something fires this WITHOUT a place, which is
+      // a drill and nothing else: from the channel every beat arrives with its
+      // point on the arc already chosen. 'random' rather than the honest 'boss'
+      // because Ithraz is coiled in the acid, and a boss-origin fire would drop
+      // the pool three yards off the top edge where no tank can reach it.
+      origin: 'random',
+      rule: { type: 'tankSoak', missFires: 'pushoff' },
+      damage: 0.2,
+      // "Once all three are soaked, the tank tanking Vexhul starts tanking
+      // Ithraz, and the tank tanking Ithraz tanks Vexhul." On the CHILD, because
+      // the child is what knows whether it is the last of the run and whether the
+      // run stayed clean — see MechanicDef.tradeTanksOnClean.
+      tradeTanksOnClean: true,
+      good: 'The Ithraz tank walks all three in appearance order and the tanks trade; nobody else is anywhere near them.',
+      failText: 'A Stone Breaker slam landed on nobody — the raid was thrown into the venom',
+    },
+    {
+      id: 'pushoff',
+      name: 'Stone Breaker',
+      spellId: 1289153,
+      // THE PUNISHMENT. Never in the loop, never dodgeable, never anybody's
+      // individual fault — the slam that went unsoaked already named the tank.
+      what: "The untanked slam. Armour-ignoring damage to the whole raid and a push that takes everyone off the platform — a collective consequence, never a per-player failure.",
+      // 1289153 is category Deadly, so this carries `lethal` to satisfy the
+      // sweep that derives lethality from the data. Note it is not what kills
+      // anybody here: `offPlatform` leaves every body outside the polygon and
+      // the floor does the rest, which is how `windPair` has always worked.
+      lethal: true,
+      from: 'ithraz',
+      roles: ['tank', 'dps', 'healer'],
+      // Almost no window, because there is nothing to answer. The failure
+      // happened 2 seconds ago when a pool landed on empty floor; this is the
+      // consequence arriving, and a long cast bar would read as a mechanic the
+      // raid was supposed to play around.
+      telegraphMs: 800,
+      shape: { kind: 'circle', radius: 52 },
+      origin: 'boss',
+      rule: { type: 'survive' },
+      // Far enough that no point on the floor survives it. The widest survivable
+      // stand under the 10-yard knock is about 14 yards of floor left in front
+      // of you; 70 clears the whole wedge from anywhere on it, which is what
+      // "pushes all players away off the platform into the venom and wipes the
+      // raid" means.
+      knockbackYards: 70,
+      offPlatform: true,
+      // Measured per cast, never per player. The tank who dropped the soak is
+      // named by `slam`; naming everyone again here would put nineteen rows in
+      // the debrief for one mistake.
+      collective: true,
+      good: 'Never happens — it only fires when a slam struck nobody.',
+      failText: '',
     },
     {
       id: 'flood',

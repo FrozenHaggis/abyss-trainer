@@ -471,6 +471,44 @@ function play(boss, role, smart, seed, side = 'green') {
         ty = (tankAnchor.y - w.player.pos.y) / tankAnchor.d
       }
 
+      // ── a knock the edge does not catch ──
+      //
+      // Stone Breaker throws every body ten yards straight away from Ithraz and
+      // does not stop them at the rim: 46% of the Twin Fangs floor is a landing
+      // in the venom, and the tank mark for Vexhul is one of the fatal squares.
+      // A bot with no model of this stood exactly where it was told to stand and
+      // died at twenty-seven seconds on every seed and all three roles — so the
+      // harness measured nothing this fight does after its first minute. Reading
+      // the push is not optional play here, it is the mechanic, and a "competent
+      // player" who cannot read it is not modelling one.
+      //
+      // Toward the caster, because the push is radial: every yard closer to it
+      // is a yard more floor left on the far side of you. Weighted above the
+      // tankedApart anchor (capped at 18) on purpose — holding the mark is the
+      // tank's job right up until the mark is the thing about to kill them.
+      const thrower = w.instances.find(i =>
+        !i.resolved && i.def.offPlatform && i.def.knockbackYards)
+      // `extra` is margin past the stated push, and the two callers want
+      // different amounts of it. The resolver below is choosing between headings
+      // and only needs the lip covered. The force needs MORE, or it switches
+      // itself off the instant the landing is barely on the floor and the
+      // tankedApart anchor — which is pulling the tank back at up to 18 — drags
+      // them straight back over the line. The bot oscillated on exactly that
+      // boundary and died on it, holding a mark that was a fatal square.
+      const landsOnFloor = (x, y, extra = 2) => {
+        if (!thrower) return true
+        const a = Math.atan2(y - thrower.pos.y, x - thrower.pos.x)
+        const p = thrower.def.knockbackYards + extra
+        return onFloor(boss, x + Math.cos(a) * p, y + Math.sin(a) * p)
+      }
+      if (thrower && !landsOnFloor(w.player.pos.x, w.player.pos.y, 6)) {
+        const dx = thrower.pos.x - w.player.pos.x
+        const dy = thrower.pos.y - w.player.pos.y
+        const d = Math.hypot(dx, dy) || 1
+        tx += (dx / d) * 26
+        ty += (dy / d) * 26
+      }
+
       // ── resolve the desired direction against hard constraints ──
       //
       // Summed forces cannot express "never", only "strongly prefer", and every
@@ -516,7 +554,12 @@ function play(boss, role, smart, seed, side = 'green') {
             if (Math.hypot(nx - i.pos.x, ny - i.pos.y) < (i.def.shape.radius ?? 10) + 3) { bad = true; break }
           }
           if (bad) continue
-          const dot = dx * wx + dy * wy
+          // A heading whose LANDING is on the floor beats one that merely ends
+          // on it. Ranked rather than vetoed: when a knock is in the air and no
+          // heading saves you, standing still is worse than walking the best of
+          // a bad set — and `dot` never exceeds 1, so any survivable heading
+          // outranks every doomed one whatever direction the forces wanted.
+          const dot = dx * wx + dy * wy + (landsOnFloor(nx, ny) ? 2 : 0)
           if (dot > bestDot) { bestDot = dot; best = [dx, dy] }
         }
         // Boxed in on every heading: stand still rather than pick a lethal one.

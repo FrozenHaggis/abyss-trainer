@@ -193,7 +193,12 @@ test('sweep: no mechanic is scored against a role that lacks the button', () => 
           assert.ok(KIT[r].includes('burst'), `${key}/${m.id}: burnWindow scores ${r}, who has no burst`)
         }
       }
-      if (['tankSwap', 'faceAway', 'keepApart'].includes(m.rule)) {
+      // `tankSoak` joins the list for exactly the same reason the other three are
+      // on it: it is one person's job by construction. Stone Breaker's slams are
+      // soaked by the tank holding Ithraz and by nobody else, and a def that
+      // listed a dps in `roles` would put a failure row on somebody the knock
+      // happened to throw into a pool.
+      if (['tankSwap', 'faceAway', 'keepApart', 'tankSoak'].includes(m.rule)) {
         for (const r of m.roles) {
           assert.equal(r, 'tank', `${key}/${m.id}: '${m.rule}' is a tank job but scores ${r}`)
         }
@@ -225,7 +230,11 @@ test('sweep: every soak and pickup is reachable inside its telegraph', () => {
       // getting into it has to be possible. It is exempt from the `collective`
       // skip that beInside gets, because being late to THIS one is not merely a
       // missed split — the group that eats the next cone instead dies to it.
-      if (!['beInside', 'collect', 'groupSoak'].includes(m.rule)) continue
+      // `tankSoak` is the strictest case of all. One named tank has to be
+      // standing in it, so if the telegraph is shorter than the walk there is
+      // literally nobody who can answer it — and a Stone Breaker slam nobody
+      // answers does not cost a stack, it throws the whole raid into the acid.
+      if (!['beInside', 'collect', 'groupSoak', 'tankSoak'].includes(m.rule)) continue
       if (m.collective && m.rule !== 'groupSoak') continue
       const reach = PLAYER_SPEED * Math.max(0, m.telegraphMs / 1000 - REACTION)
       assert.ok(reach >= arena * 0.55,

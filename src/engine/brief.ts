@@ -270,11 +270,36 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         : notYours('A burn window for the damage dealers. Keep the raid up so they can use it.')
 
     case 'survive':
-      return {
-        verb: 'BRACE',
-        line: 'You are going to be knocked. Position so the push carries you across the floor rather than off the edge.',
+      // A knock the rim catches and a knock it does not are two different
+      // mechanics wearing one rule, and one line cannot serve both. "Brace" is
+      // sound advice for a shove that ends on the floor and it is how you die to
+      // the other kind: bracing means standing still, and standing still is the
+      // failure when half the room's landings are in the acid.
+      //
+      // WHERE the safe half of the floor is stays in the boss file. It is a fact
+      // about one polygon — this rule is also Ula'tek's Circling Prey, on a
+      // completely different room — so the derived line says the band exists and
+      // `MechanicDef.brief` says where it is. That is exactly the split the
+      // override was added for.
+      return override({
+        verb: def.offPlatform ? 'GET OFF THE EDGE' : 'BRACE',
+        line: def.offPlatform
+          ? 'This one does not stop you at the edge. Everyone is thrown the same distance directly away from the caster, so where you are standing when it goes off decides whether you land on the floor or in what is under it — and a large part of this room has nothing under it. Move BEFORE the cast finishes: get well inside, on the caster\'s side of the room, and leave yourself the length of the push between you and the far edge.'
+          : 'You are going to be knocked. Position so the push carries you across the floor rather than off the edge.',
         yours: mine,
-      }
+      })
+
+    case 'tankSoak':
+      // Only one person in the raid can answer this, and the other nineteen
+      // being told to stay off it is half the mechanic — an unsoaked one does not
+      // merely go unhealed, it wipes the group.
+      return role === 'tank'
+        ? {
+            verb: 'SOAK THEM ALL',
+            line: 'These are yours, and only yours — you have to be standing in every one of them as it lands, in the order they appear. They are laid out around the boss so you can read the whole run off the first one: walk the line, do not chase it. Miss a single pool and nobody is struck, which is far worse than you taking all three.',
+            yours: mine,
+          }
+        : notYours('One tank eats every one of these. Get out of them and stay out — a body in the swirly is standing where the soak has to happen, and it takes the slam for nothing.')
 
     case 'syncKill':
       return {

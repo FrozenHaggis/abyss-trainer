@@ -1,7 +1,7 @@
 import type { BossDef, Instance, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
-import { VENOM_FLASH_MS, inArena } from './sim'
+import { VENOM_FLASH_MS, bossUnitFor, inArena } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
 
@@ -188,6 +188,17 @@ function ruleColour(inst: Instance, w?: World): string {
      */
     case 'groupSoak':
       return w && w.player.group === w.calledGroup && w.player.gash <= 0 ? GREEN : RED
+    /**
+     * The second one, and the same argument.
+     *
+     * A Stone Breaker slam is a place the Ithraz tank must be standing and a
+     * place nobody else may be. One colour for both would tell nineteen people
+     * to walk into the thing that is only survivable because one person is
+     * eating it — so it is green to the tank holding Ithraz and red to everybody
+     * else, including the OTHER tank, who is welded to Vexhul and cannot help.
+     */
+    case 'tankSoak':
+      return w && bossUnitFor(w, inst.fromId).targetId === 0 ? GREEN : RED
     default: return RED
   }
 }

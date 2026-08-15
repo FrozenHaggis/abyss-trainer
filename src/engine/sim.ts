@@ -383,8 +383,26 @@ export interface World {
   proxTimers: Record<string, number>
   /** Mechanic id -> extra damage taken per stack, so two marks compound. */
   markPct: Record<string, number>
-  /** Mechanics a channel has queued: what to fire, and when. */
-  queue: { id: string; atMs: number }[]
+  /**
+   * Mechanics a channel has queued: what to fire, when, and — for a channel that
+   * placed its whole run up front — exactly where.
+   *
+   * `at` is how a sequenced arc stays an arc. Without it each beat rolls its own
+   * origin when it fires, so "three pools laid out in front of Ithraz" would be
+   * three unrelated circles arriving a couple of seconds apart, and the tank
+   * would be chasing rather than walking a line they can read off the first one.
+   */
+  queue: { id: string; atMs: number; at?: Vec }[]
+  /**
+   * Has every soak in the run currently on the floor been covered?
+   *
+   * Stone Breaker's reward. The three slams are answered one at a time and the
+   * tanks only trade if the tank held ALL of them, so the verdict has to survive
+   * between resolves — one boolean, set when the run is queued and knocked down
+   * by the first pool nobody stood in. Read by the last child of the run, which
+   * is also the only thing that ever trades on it.
+   */
+  soakRunClean: boolean
   /** How many times each mechanic that splits the raid in half has been cast. */
   altCount: Record<string, number>
   /** Helical Toxins: the sum a pair has to reach between them. */
@@ -1047,6 +1065,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     proxTimers: {},
     markPct: {},
     queue: [],
+    soakRunClean: true,
     altCount: {},
     pairTarget: 0,
     pairPartnerId: -1,
@@ -1182,6 +1201,34 @@ export function nearestEdge(boss: BossDef, p: Vec): { at: Vec; yards: number } {
 export function edgeDistance(boss: BossDef, p: Vec): number {
   return nearestEdge(boss, p).yards
 }
+
+/**
+ * Where a body standing at `p` ends up when `from` pushes it `yards` away.
+ *
+ * Straight-line, radially outward, unclamped. Three callers want the identical
+ * arithmetic and two of them are not moving anybody: the resolve that performs
+ * the throw, and the ally AI asking "would the throw kill me from here?" both
+ * before and after every other preference it has. Three hand-rolled copies of an
+ * `atan2` and two trig calls is how a pre-position quietly stops agreeing with
+ * the knock it is supposed to be dodging.
+ */
+export function knockLanding(p: Vec, from: Vec, yards: number): Vec {
+  const away = Math.atan2(p.y - from.y, p.x - from.x)
+  return { x: p.x + Math.cos(away) * yards, y: p.y + Math.sin(away) * yards }
+}
+
+/**
+ * How much further than the push itself a raider's landing has to clear the rim by.
+ *
+ * The AI does not stand still between deciding where to be and being thrown: the
+ * idle sway at step 6 is worth 1.6 yards on each axis, the reachability clamp at
+ * step 7 another few, and the last of the walk happens while the telegraph is
+ * already running. A spot whose landing is EXACTLY on the edge is therefore a
+ * coin flip, and a coin flip that kills. Measured along the push ray rather than
+ * as a radius on purpose — that is the axis the error actually travels down, and
+ * it costs one `inArena` instead of a walk round the polygon.
+ */
+const KNOCK_MARGIN = 3
 
 /**
  * The same point when it is comfortably on the floor, otherwise the nearest spot
@@ -2410,27 +2457,129 @@ function resolveInstance(w: World, inst: Instance) {
       break
 
     case 'survive':
-      if (inside && def.knockbackYards) {
-        const away = Math.atan2(w.player.pos.y - inst.pos.y, w.player.pos.x - inst.pos.x)
-        const landing = {
-          x: w.player.pos.x + Math.cos(away) * def.knockbackYards,
-          y: w.player.pos.y + Math.sin(away) * def.knockbackYards,
+      if (def.knockbackYards) {
+        const push = def.knockbackYards
+        if (inside) {
+          const landing = knockLanding(w.player.pos, inst.pos, push)
+          if (!inArena(w.boss, landing)) {
+            if (scored) recordFailure(w, def)
+            if (def.offPlatform) {
+              // The rim does not catch you. Deliberately no `killPlayer` here —
+              // the body is simply left where the push put it, outside the
+              // polygon, and the floor check at the top of `step` turns that
+              // into the fall on the next tick with the room's own death text
+              // ("Fell into the acid"). Exactly what `windPair` does, for the
+              // same reason: the fight should not need a second opinion about
+              // what happens to somebody standing in the venom.
+              w.shake = 1
+            } else {
+              // Shoved back on. It still counts as a failure — you were standing
+              // somewhere the knock could not survive — but the fight catches you.
+              const held = clampToArena(w.boss, landing, 1.5)
+              landing.x = held.x
+              landing.y = held.y
+              hurt(w, def.damage ?? 0.25, def.name)
+            }
+          }
+          w.player.pos.x = landing.x
+          w.player.pos.y = landing.y
+          w.player.aloft = 1200
+          w.shake = 1
         }
-        if (!inArena(w.boss, landing)) {
-          // Clamped to the rim, and it counts as a failure: you were standing
-          // somewhere the knock could not survive.
-          const held = clampToArena(w.boss, landing, 1.5)
-          landing.x = held.x
-          landing.y = held.y
-          if (scored) recordFailure(w, def)
-          hurt(w, def.damage ?? 0.25, def.name)
+        // The raid goes too.
+        //
+        // It did not, and that was survivable only because the knock used to be
+        // survivable: nineteen bodies were shoved about invisibly and the player
+        // was the only one who could be thrown anywhere that mattered. With
+        // `offPlatform` the push is the fight's one real positioning decision,
+        // and a raid standing serenely still through it would be the trainer
+        // showing the player that the decision is not a decision.
+        //
+        // The other half of this — `allyThink` step 6e, which walks them
+        // somewhere the push can be survived from — is not optional and is not a
+        // later refinement. Over this floor, 31 of the 72 bearings the raid used
+        // to gather on land off the platform under a 10-yard push away from
+        // Ithraz. Ship the throw without the pre-position and Stone Breaker
+        // kills roughly eight raiders every cast, for nothing anybody did.
+        for (const a of w.allies) {
+          if (!a.alive || !isInside(inst, a.pos)) continue
+          const at = knockLanding(a.pos, inst.pos, push)
+          if (!inArena(w.boss, at)) {
+            if (def.offPlatform) {
+              a.alive = false
+              a.health = 0
+              w.alliesLost++
+              continue
+            }
+            const held = clampToArena(w.boss, at, 1.5)
+            at.x = held.x
+            at.y = held.y
+          }
+          a.pos.x = at.x
+          a.pos.y = at.y
+          // And their destination with them, or the raid walks straight back to
+          // where it was standing before the throw and the knock reads as a
+          // stutter rather than as the room moving them.
+          a.want.x = at.x
+          a.want.y = at.y
         }
-        w.player.pos.x = landing.x
-        w.player.pos.y = landing.y
-        w.player.aloft = 1200
-        w.shake = 1
       }
       break
+
+    case 'tankSoak': {
+      // One pool, one tank, and a run the raid is judged on as a whole.
+      //
+      // Who: the tank actually holding the entity that cast it, never "a tank".
+      // There are two of them and only one is standing at Ithraz; telling the
+      // Vexhul tank they missed a Stone Breaker soak would be blaming them for
+      // being on the other serpent, which is where the fight put them.
+      const caster = bossUnitFor(w, inst.fromId)
+      const holder = currentTank(w, caster)
+      const covered = holder.isPlayer ? inside : isInside(inst, holder.pos)
+      // Only the named tank can be named. `def.roles` is `['tank']`, so `scored`
+      // already excludes a dps or a healer; this adds the second half, which is
+      // that the OTHER tank is not answerable for it either.
+      const yours = scored && holder.isPlayer
+
+      if (covered) {
+        // Correct play, and it costs. "A tank eating this is correct play" —
+        // Physical damage within 3.5 yards, undodgeable, stacking +33% per
+        // impact, which is what makes the run a swap driver rather than three
+        // free pools. Only the player's half is modelled; an AI tank's health is
+        // the raid bar's problem.
+        if (holder.isPlayer) hurt(w, def.damage ?? 0.2, def.name)
+      } else {
+        // Nobody stood in it. The untanked variant goes off — on this fight that
+        // is the whole raid thrown into the venom — and the run is spoiled, so
+        // the tanks do not get their trade even if the remaining pools are held.
+        w.soakRunClean = false
+        if (yours) recordFailure(w, def)
+        fire(w, def.rule.missFires)
+      }
+
+      // Anyone else caught in it takes the hit and is never named for it. The
+      // ability data is explicit that "a non-tank in the swirly is the
+      // positioning failure", but it is a failure of the `survive` knock that
+      // put them there rather than of a soak they were never assigned — and the
+      // raid leader's ruling is that non-tanks must not be scored on these.
+      if (inside && !holder.isPlayer) hurt(w, def.damage ?? 0.2, def.name)
+      for (const a of w.allies) {
+        if (!a.alive || a.id === caster.targetId) continue
+        if (isInside(inst, a.pos)) a.health = Math.max(0.1, a.health - 0.12)
+      }
+
+      // The last of the run, and the run was clean: the tanks trade.
+      //
+      // "Once all three are soaked, the tank tanking Vexhul starts tanking
+      // Ithraz, and the tank tanking Ithraz tanks Vexhul." Last is read off the
+      // queue rather than counted, because the queue is the only thing that
+      // knows how many beats a channel put out.
+      if (def.tradeTanksOnClean && !w.queue.some(q => q.id === def.id)) {
+        if (w.soakRunClean) tradeTanks(w)
+        w.soakRunClean = true
+      }
+      break
+    }
 
     case 'tankSwap': {
       // Applies a stack to whoever holds the entity that cast it. The failure is
@@ -2743,9 +2892,42 @@ function resolveInstance(w: World, inst: Instance) {
   // the healer has to cover, and the energy it feeds the boss would arrive as a
   // number instead of as four events you watched happen.
   if (def.channel) {
-    for (let i = 0; i < def.channel.count; i++) {
-      w.queue.push({ id: def.channel.defId, atMs: w.elapsedMs + i * def.channel.everyMs })
+    const ch = def.channel
+    /**
+     * A channel that declares a ring lays its whole run out NOW, on an arc in
+     * front of the caster, and hands each beat its place along with its time.
+     *
+     * Stone Breaker needs this and Soulcoil Ignition must not have it: three
+     * pools a tank walks in sequence are a line you read off the first one,
+     * while four Rites landing on the raid are four separate rolls and pinning
+     * them to an arc would turn a channel into a formation.
+     *
+     * The bearing is the caster's own facing everywhere else it could have come
+     * from, and it is deliberately NOT that here. Both serpents turn to look at
+     * whoever is holding them, so the arc would swing with the tank — and there
+     * are tank positions (hard against the right leg, which a player may pick on
+     * purpose) where every clamped point collapses into one 2.8-yard cluster and
+     * a tank covers all three without moving a step. Measured over the real
+     * wedge: worst case 5.40 yards of minimum enclosing radius pointing at the
+     * middle of the room, against 2.77 following the tank. Pointing into the
+     * room is also what the fight says the pools do, so the honest reading and
+     * the uncheesable one are the same reading.
+     */
+    const src = bossUnitFor(w, def.from)
+    const at = ch.ringYards
+      ? arcOnFloor(
+          w.boss, src.pos,
+          Math.atan2(-src.pos.y, -src.pos.x),
+          ch.count, ch.ringYards, ch.arcDeg ?? 90)
+      : null
+    for (let i = 0; i < ch.count; i++) {
+      w.queue.push({ id: ch.defId, atMs: w.elapsedMs + i * ch.everyMs, at: at?.[i] })
     }
+    // A run of soaks starts clean, and the first pool nobody covers spoils it.
+    // Reset here rather than on the first child so a run that was spoiled last
+    // time cannot deny the tanks a trade they earned this time.
+    const child = w.boss.mechanics.find(m => m.id === ch.defId)
+    if (child?.tradeTanksOnClean) w.soakRunClean = true
   }
 
   // Energy is fed by events, never by the clock — see the bar in step().
@@ -3130,6 +3312,17 @@ function allyThink(w: World) {
       a.want.y = sweep.pos.y
     }
 
+    // The pool this raider has to be standing in, because they are the tank
+    // holding the thing that cast it. Found once here rather than inside the
+    // instance loop below, because two later steps have to know about it: the
+    // tank leash at 6b, which is shorter than the arc is wide, and the floor
+    // clamp at 7, which is set further in than the arc is laid. Both would
+    // otherwise stop the tank two yards short of a pool that wipes the raid if
+    // nobody covers it, and neither would look like anything but the AI dithering.
+    const soakTarget = w.instances.find(i =>
+      !i.resolved && i.def.rule.type === 'tankSoak'
+      && w.bosses.some(b => b.def.id === i.fromId && b.targetId === a.id)) ?? null
+
     // 3a. Stand on a corpse, if one is going unburned.
     let onCorpseDuty = false
     if (a.role !== 'tank' && corpseNext < claimableCorpses.length) {
@@ -3194,10 +3387,26 @@ function allyThink(w: World) {
       } else if (rt === 'survive') {
         // A knockback is coming: spread out and stand where the push carries
         // you ACROSS the platform, not off it. Everyone drifts inward first.
+        //
+        // This is only the gather — the legible "the raid is getting ready"
+        // move, and on its own it is not remotely safe: measured over the Twin
+        // Fangs' wedge, 31 of the 72 bearings on this very ring are thrown off
+        // the platform by Stone Breaker. Step 6e is what actually keeps them
+        // alive, and it runs last because everything between here and there is
+        // willing to walk a raider twenty-six yards to find cleaner floor.
         const r = Math.hypot(a.pos.x, a.pos.y) || 1
         const safe = arena * 0.42
         a.want.x = (a.pos.x / r) * safe + Math.cos(a.id) * 5
         a.want.y = (a.pos.y / r) * safe + Math.sin(a.id) * 5
+      } else if (rt === 'tankSoak') {
+        // One tank soaks the whole run, alone, and it is the tank holding the
+        // thing that cast it. Everybody else treats these as ground to leave —
+        // that is handled in step 4 below, with the holder exempted there for
+        // the same reason a tank is exempted from their own frontal.
+        if (w.bosses.some(b => b.def.id === inst.fromId && b.targetId === a.id)) {
+          a.want.x = inst.pos.x
+          a.want.y = inst.pos.y
+        }
       } else if (rt === 'groupSoak') {
         // Mutilate. The called group walks into the cone; everybody else gets
         // well clear of it. Both halves are the mechanic — a body from the other
@@ -3318,12 +3527,27 @@ function allyThink(w: World) {
       // the thing casting it. Ravage kills anyone else it strikes on the second
       // application, and a raid that stood in it because the engine only taught
       // them to dodge `avoid` shapes is a raid the player cannot learn from.
-      if (rt === 'faceAway') {
+      // A tank soak is the same bargain seen from the other side: the tank
+      // holding the caster is walking INTO it on purpose (step 3c sent them),
+      // and everybody else has to be out of it — an unsoaked slam wipes the
+      // raid, so a body milling about in the swirly is not merely taking
+      // avoidable damage, it is standing where the tank has to be.
+      if (rt === 'faceAway' || rt === 'tankSoak') {
         if (w.bosses.some(b => b.def.id === inst.fromId && b.targetId === a.id)) continue
       } else if (rt !== 'avoid' && rt !== 'lethalGround') continue
       // The cyst the gale is aimed at is the way OUT of the Maelstrom, not a
       // puddle. Fleeing it is how a raid gets blown off the far rim.
       if (gale && inst.uid === gale.uid) continue
+      // A tank walking a soak run is not to be talked out of it by anything
+      // short of ground that kills. This is the strongest form of the "stands in
+      // a puddle to get the job done" bargain below and it needed to be, because
+      // the run collides with Caustic Deluge by construction: a splash landing
+      // near the third pool sent the Ithraz tank eleven yards clear of it, the
+      // slam struck nobody, and the untanked variant threw all twenty bodies
+      // into the venom. Measured — the AI tank held the first two pools and lost
+      // the third on every seed once the Deluge overlapped. A stack for standing
+      // in acid is a price; a missed slam is the pull.
+      if (soakTarget && rt !== 'lethalGround') continue
       // A raider on corpse duty, or one with ten seconds to find a partner,
       // stands in a puddle to get the job done. Pools on these two fights never
       // expire, so bodies and partners both end up standing in them: a raid that
@@ -3382,7 +3606,15 @@ function allyThink(w: World) {
     for (const inst of w.instances) {
       // A raider with orbs over their head has ten seconds to find a partner and
       // nothing else matters; clean feet are a luxury for the rest of the pull.
-      if (onCorpseDuty || a.marked || a.wind || !inst.resolved || !inst.def.shape) continue
+      //
+      // A tank on a soak run is the same and worse. This pass will happily walk
+      // a body twenty-six yards to find cleaner ground, and Coiling Ichor drops
+      // its pools roughly fifteen seconds ahead of Stone Breaker: measured on a
+      // full pull, a Congealed Gore under the Ithraz tank sent them off the arc,
+      // the third slam struck nobody, and the raid was thrown into the venom at
+      // thirty-four seconds — for tidiness. Ground that KILLS still moves them,
+      // which is the same line step 4 draws.
+      if (onCorpseDuty || a.marked || a.wind || soakTarget || !inst.resolved || !inst.def.shape) continue
       if (!inst.def.lingerMs && !inst.def.permanent) continue
       fouled += threatAt(inst, a.want.x, a.want.y) > 0 ? 1 : 0
     }
@@ -3455,7 +3687,15 @@ function allyThink(w: World) {
       // wanders is a yard the pair closes — at 11 the Lost Explorers' two
       // tanked council members drifted 22 yards together and sat inside
       // United Defense for the whole pull, barking PULL THEM APART forever.
-      const leash = 6
+      //
+      // It stretches for one thing, and only as far as that one thing. Stone
+      // Breaker lays three pools on an 8-yard arc around Ithraz and its tank has
+      // to stand in every one; measured against the real polygon, the far end of
+      // that arc is 6.9 yards from the station, so a flat 6 leaves the AI tank
+      // half a yard short of a soak whose miss throws the whole raid into the
+      // acid. This widens the leash for one body walking to one pool it is
+      // required to be in, not for the raid and not for the rest of the pull.
+      const leash = soakTarget ? Math.max(6, dist(station, soakTarget.pos) + 0.5) : 6
       if (sd > leash) {
         a.want.x = station.x + (sdx / sd) * leash
         a.want.y = station.y + (sdy / sd) * leash
@@ -3523,6 +3763,67 @@ function allyThink(w: World) {
       }
     }
 
+    // 6e. Do not stand where the push would kill you.
+    //
+    //     Enforced after every other preference, for the same reason 6d is: a
+    //     raider who dodged a puddle into the death band has answered one
+    //     mechanic by failing a worse one, and the steps above will happily walk
+    //     somebody twenty-six yards to find cleaner floor.
+    //
+    //     This exists because `offPlatform` exists. A knock the rim catches is
+    //     scenery for the AI — nineteen bodies shoved about and shoved back — and
+    //     one it does not catch is a killing field: measured over the Twin Fangs'
+    //     wedge, a 10-yard push away from Ithraz makes 46% of the floor fatal,
+    //     everything at y >= 14 certain, and 31 of the 72 bearings on the gather
+    //     ring at 3c doomed. Without this step Stone Breaker kills roughly eight
+    //     raiders a cast, which is not a mechanic the player can learn anything
+    //     from — it is the encounter deleting its own raid on a timer.
+    //
+    //     Nearest-first rather than best: the raid is looking for somewhere it
+    //     can survive standing, not for the safest square on the floor, and a
+    //     nineteen-body stampede to the same corner would read as a bug. A tank's
+    //     search is bounded by their own leash, because the answer has to be
+    //     somewhere they are allowed to be — on this floor the Ithraz station is
+    //     already safe and the Vexhul one has a survivable spot 5.8 yards away,
+    //     inside the 6 they are given.
+    const throwing = w.instances
+      .filter(i => !i.resolved && i.def.offPlatform && i.def.knockbackYards)
+      .sort((x, y) => x.timer - y.timer)[0]
+    if (throwing) {
+      const push = throwing.def.knockbackYards!
+      const from = throwing.pos
+      const survives = (p: Vec) =>
+        inArena(w.boss, p)
+        && inArena(w.boss, knockLanding(p, from, push))
+        && inArena(w.boss, knockLanding(p, from, push + KNOCK_MARGIN))
+      if (!survives(a.want)) {
+        const bound = station ? 6 : Infinity
+        let best: Vec | null = null
+        search:
+        for (const step of [3, 6, 9, 13, 18, 24]) {
+          for (let i = 0; i < 16; i++) {
+            // Fanned off the raider's own id so the raid does not queue up along
+            // one bearing, and so two raiders in the same spot pick differently.
+            const ang = (i / 16) * Math.PI * 2 + a.id * 2.39996
+            const p = { x: a.want.x + Math.cos(ang) * step, y: a.want.y + Math.sin(ang) * step }
+            if (station && dist(p, station) > bound) continue
+            if (!survives(p)) continue
+            best = p
+            break search
+          }
+        }
+        // Nothing survivable within reach — which on this floor only happens to
+        // an ally the fight has already decided against, and to everybody at
+        // once when the push is the arena-wide one an unsoaked slam fires. Left
+        // where they were rather than sent somewhere arbitrary: a raid sprinting
+        // nowhere in particular teaches the player to sprint nowhere in particular.
+        if (best) {
+          a.want.x = best.x
+          a.want.y = best.y
+        }
+      }
+    }
+
     // 7. Never walk off the platform. Asked of the floor, which on an octagon is
     //    a shorter walk on the diagonals than it is on the axes.
     //
@@ -3540,7 +3841,17 @@ function allyThink(w: World) {
     //    further. Everyone else, and every other destination this raider might
     //    have been given since, keeps the full inset — this widens the floor for
     //    one body walking to one place, not for the raid.
-    const reach = sweep ? Math.min(arena * 0.1, edgeDistance(w.boss, sweep.pos)) : arena * 0.1
+    //
+    //    A tank soak is the same exemption for a stronger reason. `arcOnFloor`
+    //    clamps Stone Breaker's pools with an inset of two, and two of the three
+    //    land inside the band — 1.5 and 2.0 yards off the edge against this 3.2
+    //    — so without this the AI tank stops short of a pool whose miss pushes
+    //    the entire raid into the venom. A missed globule costs the raid a stack
+    //    each; a missed slam costs the pull.
+    const destination = sweep ?? soakTarget
+    const reach = destination
+      ? Math.min(arena * 0.1, edgeDistance(w.boss, destination.pos))
+      : arena * 0.1
     const bounded = clampToArena(w.boss, a.want, reach)
     a.want.x = bounded.x
     a.want.y = bounded.y
@@ -3848,7 +4159,29 @@ function computePrompt(w: World): Prompt | null {
         if (inside) consider({ verb: 'MOVE OUT', mechanic: def.name, urgency: t }, 3)
         break
       case 'survive':
-        if (inside) consider({ verb: 'BRACE — KNOCKBACK', mechanic: def.name, urgency: t }, 4)
+        // Two different instructions off one telegraph, decided by whether the
+        // rim will catch you. "BRACE" is right for a shove that ends on the
+        // floor and dangerously wrong for one that does not: a player told to
+        // brace stands still, and standing still is how 46% of this floor kills
+        // you. Where the push cannot be survived from, the prompt has to be a
+        // move order and it has to say which way.
+        if (inside && def.offPlatform
+            && !inArena(w.boss, knockLanding(w.player.pos, inst.pos, def.knockbackYards ?? 0))) {
+          consider({ verb: 'MOVE IN — IT THROWS YOU OFF', mechanic: def.name, urgency: t }, 4)
+        } else if (inside) {
+          consider({ verb: 'BRACE — KNOCKBACK', mechanic: def.name, urgency: t }, 4)
+        }
+        break
+      case 'tankSoak':
+        // Only ever spoken to the tank actually holding the caster, and both
+        // halves are worth saying. They have to get in; anybody else has to get
+        // out, because a body in the swirly is standing where the soak has to
+        // happen and takes the slam for nothing.
+        if (mine) {
+          if (!inside) consider({ verb: 'SOAK IT', mechanic: def.name, urgency: t }, 1)
+        } else if (inside) {
+          consider({ verb: 'GET OUT — TANK SOAK', mechanic: def.name, urgency: t }, 2)
+        }
         break
       case 'faceAway':
         // Only your problem when you are the one holding the thing casting it —
@@ -4493,41 +4826,54 @@ function tradeTanks(w: World) {
   const t = held[0].targetId
   held[0].targetId = held[1].targetId
   held[1].targetId = t
-  // The stations trade too, so each golem's home is now its NEW tank's end
-  // of the room. "The tanks swap bosses and drag them over to their side" —
-  // the tanks do not cross, the golems do, and each group follows its own
-  // golem to the far end. Swapping the holders but leaving the stations put
-  // every golem on the opposite side from the tank holding it: the golem
-  // walked toward its tank, the tank walked toward the old station, and the
-  // pair met in the middle and stayed linked for the rest of the pull.
-  const s = held[0].station
-  held[0].station = held[1].station
-  held[1].station = s
+  // The stations trade too — unless the entities cannot move, in which case
+  // trading them is exactly backwards.
+  //
+  // A station is "where the thing I am holding lives". On the Sentinels the
+  // golems genuinely cross the room and the stations have to cross with them.
+  // The Twin Fangs are `stationary`: Vexhul is coiled at (-8,-19) and Ithraz at
+  // (8,-19) for the whole pull, and nothing a tank does moves either of them. So
+  // handing the new Vexhul tank Ithraz's station sends them to the far serpent
+  // and leaves both tanks standing on the wrong one, with the leash below then
+  // pulling each back toward the entity it is measured against — two orders in
+  // opposite directions, and the pair end up somewhere neither serpent is.
+  if (!held[0].def.stationary && !held[1].def.stationary) {
+    // ...otherwise each golem's home is now its NEW tank's end of the room.
+    // "The tanks swap bosses and drag them over to their side" — the tanks do
+    // not cross, the golems do, and each group follows its own golem to the far
+    // end. Swapping the holders but leaving the stations put every golem on the
+    // opposite side from the tank holding it: the golem walked toward its tank,
+    // the tank walked toward the old station, and the pair met in the middle and
+    // stayed linked for the rest of the pull.
+    const s = held[0].station
+    held[0].station = held[1].station
+    held[1].station = s
+  }
   // A tank's side follows the golem they now hold.
   //
-  // Without this a tank holds one golem while their group parks at the
-  // other, so the side-parking pass drags them back toward their group and
-  // the golem they are holding comes with them. Both tanks did that at once
-  // and the pair settled 28 yards apart, linked, with neither tank able to
-  // pull out — they were each obeying two instructions that pointed in
-  // opposite directions.
+  // Without this a tank holds one golem while their group parks at the other, so
+  // the side-parking pass drags them back toward their group and the golem they
+  // are holding comes with them. Both tanks did that at once and the pair
+  // settled 28 yards apart, linked, with neither tank able to pull out — they
+  // were each obeying two instructions that pointed in opposite directions.
   for (const b of held) {
     if (b.targetId <= 0 || !b.def.side) continue
     const holder = w.allies.find(a => a.id === b.targetId)
     if (holder) holder.side = b.def.side
   }
-  // And the player keeps their own group's golem regardless — their side is
-  // a choice they made before the pull, not something a swap takes off them.
+  // And on a SPLIT fight the player keeps their own group's golem regardless —
+  // their side is a choice they made before the pull, not something a swap takes
+  // off them. `seatPlayerTank` re-asserts that choice, and the golem it hands
+  // them is the one that just came to their side, so the trade stands.
   //
-  // READ THIS BEFORE CALLING `tradeTanks` FROM A FIGHT THAT IS NOT `sided`.
-  // On a sided fight this line re-asserts a CHOICE — the player's side — and
-  // the golem it hands them is the one that just came to their side, so the
-  // trade stands. With no side to match on, `seatPlayerTank` seats the player
-  // on `bosses[0]` instead, which is precisely the entity the trade just took
-  // off them: it hands it straight back and gives the displaced ally the other
-  // one, and the swap is undone in the same tick it happened. A mid-fight tank
-  // swap on an unsided fight has to suppress this or re-seat around it.
-  seatPlayerTank(w)
+  // Gated on `sided`, because with no side to match on the same call is the
+  // opposite of a re-assertion: it seats the player on `bosses[0]`, which is
+  // precisely the entity the trade just took off them. It hands Vexhul straight
+  // back, gives the displaced ally Ithraz, and the swap is undone in the tick it
+  // happened — so the Twin Fangs' tanks traded four times a pull and never once
+  // ended up holding anything different. On an unsided fight the trade IS the
+  // seating: whichever serpent the player was on, they are now on the other.
+  if (w.boss.sided) seatPlayerTank(w)
   // Deliberately NOT teleported. They are dragged, and the dragging is the
   // mechanic — a grace window covers the seconds it takes so nobody is scored
   // for a separation the fight itself just closed.
@@ -5238,7 +5584,9 @@ export function step(w: World, input: Input, dtMs: number) {
   // healer watches arrive, which is what a channel is; one lump of damage with
   // the same total would hide it.
   if (w.queue.length) {
-    for (const q of w.queue) if (q.atMs <= w.elapsedMs) fire(w, q.id)
+    // `q.at` carries the spot a sequenced channel already chose for this beat.
+    // Undefined for every other channel in the raid, where `fire` rolls one.
+    for (const q of w.queue) if (q.atMs <= w.elapsedMs) fire(w, q.id, q.at)
     w.queue = w.queue.filter(q => q.atMs > w.elapsedMs)
   }
 

@@ -180,8 +180,36 @@ export type Rule =
   | { type: 'raidDamage'; dps: number }
   /** Carry a debuff at least this far from the arena centre before it expires. */
   | { type: 'carryOut'; minDistance: number }
-  /** Get knocked, but not off the platform. Failure is leaving the arena. */
+  /**
+   * Get knocked. Failure is leaving the arena.
+   *
+   * By default the rim catches you — you are shoved back on, take a scrape and
+   * are named for it. A `survive` that also declares `offPlatform` does not
+   * catch you: the landing is left where the push put it and the floor check at
+   * the top of `step` turns it into the fall. That is Stone Breaker, where being
+   * thrown into the venom is the whole reason the knock is a decision.
+   */
   | { type: 'survive' }
+  /**
+   * A pool only the tank holding the casting entity may soak, and MUST.
+   *
+   * Stone Breaker's three slams. Not `beInside`: that judges the player's feet
+   * and pays a flat raid chip whether or not any body covered it, so nineteen
+   * raiders standing anywhere would satisfy it and the tank's job would not
+   * exist. Not `faceAway` or `tankSwap` either — both are pinned to entity 0 by
+   * the ownership sweep, and this one is Ithraz's.
+   *
+   * The rule is one-sided in both directions. The named tank has to be standing
+   * in it when it lands, and nobody else may be scored on it at all: a dps
+   * caught in a swirly is taking damage they should have walked out of, not
+   * failing a soak they were never assigned.
+   *
+   * `missFires` is the mechanic id that goes off when the pool lands on nobody
+   * — the untanked variant, which on the Twin Fangs pushes the whole raid into
+   * the acid. Naming it in data rather than hard-coding the consequence keeps
+   * the punishment visible in the boss file next to the thing that causes it.
+   */
+  | { type: 'tankSoak'; missFires: string }
   /**
    * A stacking tank debuff. The boss applies a stack to whoever it is on; the
    * off-tank taunts before it turns lethal. Only scored when you are the tank.
@@ -656,6 +684,51 @@ export interface MechanicDef {
   /** Pushes the player this many yards away from the shape's origin. */
   knockbackYards?: number
   /**
+   * The knock is NOT clamped back onto the rim, and every body it catches goes
+   * — the raid as well as you.
+   *
+   * `survive` was written as a shove you get scolded for: the landing is pulled
+   * back inside the floor, a failure is recorded, and you carry on. That is the
+   * right model for Circling Prey and the wrong one for Stone Breaker, where the
+   * raid leader's ruling is explicit — being thrown off the platform kills you.
+   * Measured over the real wedge, a 10-yard push away from Ithraz makes 46% of
+   * the floor a fatal place to stand and everything at y >= 14 certain death, so
+   * this flag turns a knockback nobody had to think about into the fight's one
+   * real positioning decision.
+   *
+   * Two things ride on it together and they must never be separated. Allies are
+   * thrown and killed by the same code the player is, AND the ally AI gets a
+   * knock-aware pre-position (`allyThink` step 6e). Without the second, 31 of the
+   * 72 bearings the raid used to gather on are fatal and a single cast kills
+   * roughly eight raiders — see the comment on that step.
+   *
+   * The precedent is `windPair`, which has done exactly this since the Sszorak
+   * work: it does not kill anybody itself, it simply leaves the body outside the
+   * polygon and lets the floor check in `step` do the rest. So this needs no
+   * `lethal` — which matters, because lethality is derived from the ability's
+   * category and Stone Breaker's is Important, not Deadly.
+   */
+  offPlatform?: boolean
+  /**
+   * On the CHILD of a `channel`: when the last of the run has been answered
+   * cleanly, the two tanks trade entities.
+   *
+   * Stone Breaker's three slams are the Twin Fangs' swap driver — "once all
+   * three are soaked, the tank tanking Vexhul starts tanking Ithraz". Envenomed
+   * used to be, as a plain `tankSwap` on a timer, and the fight is better for
+   * the trade being earned rather than announced: a tank who covers the run gets
+   * the swap, a tank who drops one gets the raid pushed into the acid instead.
+   *
+   * On the child rather than on the parent `channel` deliberately. The child
+   * already knows both of the other two facts — whether it is the last of its
+   * run (`w.queue` has none of it left) and whether the run stayed clean
+   * (`World.soakRunClean`) — so putting the third here means the resolve reads
+   * three fields it holds. On the parent it would need a reverse lookup over
+   * every mechanic on the boss on every child resolve, which returns `undefined`
+   * the day somebody renames the child.
+   */
+  tradeTanksOnClean?: boolean
+  /**
    * Which half of a split raid this belongs to. A side-tagged mechanic only
    * fires at that group, and is only scored against the player when they are
    * running with it.
@@ -697,8 +770,19 @@ export interface MechanicDef {
    *
    * Soulcoil Ignition is four Soulcoil Rites a second apart. Rolling it into a
    * single lump of damage would hide the thing the healer actually has to cover.
+   *
+   * `ringYards` and `arcDeg` place the run instead of leaving each beat to roll
+   * its own spot: the children are fanned across an arc in front of the caster,
+   * on the floor, in the order they fire. Stone Breaker is three slam pools laid
+   * out around Ithraz, and a tank cannot be asked to walk a sequence that lands
+   * somewhere different every time. Omit both and every beat rolls its own
+   * origin exactly as Soulcoil Ignition always has.
+   *
+   * Different mechanism from the `count` fan in `fire`, and kept apart from it
+   * on purpose — see `arcOnFloor`. The fan puts a ring AROUND a point all at
+   * once; this lays a bounded arc, sequenced, with the endpoints included.
    */
-  channel?: { defId: string; count: number; everyMs: number }
+  channel?: { defId: string; count: number; everyMs: number; ringYards?: number; arcDeg?: number }
   /**
    * Energy granted to the boss when this resolves.
    *

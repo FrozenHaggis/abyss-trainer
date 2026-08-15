@@ -687,3 +687,300 @@ test('a side-tagged pickup is only ever reserved for the side that owns it', asy
     assert.equal(live().length >= want, true, 'the reserved droplet erupted early')
   }
 })
+
+// ── Stone Breaker ────────────────────────────────────────────────────────────
+//
+// The mechanic with the most ways to be quietly broken in the raid, because
+// three of its four pieces only misbehave in combination: a knock the rim does
+// not catch, a run of soaks exactly one body may answer, the punishment for
+// missing one, and a tank swap that is the reward for not missing any.
+
+/**
+ * A world with nothing in it but Stone Breaker.
+ *
+ * The rotation is stripped for the same reason `pickupBench` strips it: with the
+ * loop running, a Caustic Deluge splash lands on the player two seconds into the
+ * soak run and puts a failure row in the debrief that has nothing to do with the
+ * thing being measured. Here every failure, every death and every body that
+ * moved is Stone Breaker's.
+ */
+async function breakerBench(role, seed, seat) {
+  const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  seedRng(seed)
+  const w = createWorld(boss, role, 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const ithraz = w.bosses.find(b => b.def.id === 'ithraz')
+  const vexhul = w.bosses.find(b => b.def.id === 'vexhul')
+  assert.ok(ithraz && vexhul, 'the Twin Fangs are no longer two named serpents')
+  // Who the player is holding. The default seating gives them Vexhul and the AI
+  // tank Ithraz, which is the case where the RAID has to do the soaks; 'ithraz'
+  // is the case where the player does.
+  if (seat === 'ithraz') {
+    const displaced = ithraz.targetId
+    ithraz.targetId = 0
+    vexhul.targetId = displaced
+  }
+  const brk = boss.mechanics.find(m => m.id === 'stonebreaker')
+  const slam = boss.mechanics.find(m => m.id === 'slam')
+  assert.ok(brk && slam, 'Stone Breaker no longer splits into a knock and its slams')
+  assert.equal(slam.rule.type, 'tankSoak', 'the slams are no longer a tank soak')
+  return { w, boss, brk, slam, ithraz, vexhul, fire, step, TICK_MS }
+}
+
+/** How long the whole cast takes: the knock, then every beat of the channel. */
+const breakerRunMs = brk =>
+  brk.telegraphMs + (brk.channel.count - 1) * brk.channel.everyMs + 2000 + 1200
+
+// Plan test 9, the positive half.
+//
+// A tanking player who does nothing at all must not lose the pull to this. They
+// are holding Vexhul, which is where the fight starts them, so the run belongs
+// to the AI tank on Ithraz — and the whole point of the check is that the AI
+// really does walk all three. Every earlier version of this fight had "three
+// slam swirlies" in a what: string and nothing on the floor, so there was
+// nothing to walk and nothing to miss.
+test('Stone Breaker is not an automatic wipe for a tanking player', async () => {
+  const { w, brk, ithraz, vexhul, fire, step, TICK_MS } = await breakerBench('tank', 7)
+  // In melee, between the serpents, which is where the boss file puts melee —
+  // and, measured against the real polygon, a landing that stays on the floor.
+  w.player.pos.x = 0
+  w.player.pos.y = -13
+  const before = { ithraz: ithraz.targetId, vexhul: vexhul.targetId }
+  assert.equal(before.vexhul, 0, 'a tanking player no longer opens holding Vexhul')
+
+  fire(w, 'stonebreaker')
+  let swaps = 0
+  let seat = `${vexhul.targetId}/${ithraz.targetId}`
+  for (let ms = 0; ms < breakerRunMs(brk); ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+    const now = `${vexhul.targetId}/${ithraz.targetId}`
+    if (now !== seat) { swaps++; seat = now }
+  }
+
+  assert.equal(w.player.alive, true, `the player died to Stone Breaker doing nothing: ${w.deathCause}`)
+  assert.equal(w.alliesLost, 0,
+    `${w.alliesLost} raiders were killed by a knock they were supposed to be positioned for`)
+  assert.equal(w.seen.has('pushoff'), false,
+    'the untanked variant fired — the AI tank did not cover the run')
+  assert.deepEqual([...w.failures.keys()], [],
+    `failures recorded for a clean Stone Breaker: ${[...w.failures.keys()].join(', ')}`)
+
+  assert.equal(swaps, 1, `the tanks traded ${swaps} times, not once`)
+  assert.equal(vexhul.targetId, before.ithraz, 'Vexhul did not go to the tank who was on Ithraz')
+  assert.equal(ithraz.targetId, before.vexhul, 'Ithraz did not go to the tank who was on Vexhul')
+})
+
+// Plan test 9, the negative half.
+//
+// The same cast with the player on Ithraz and nowhere near the pools. This is
+// the consequence the whole mechanic is built on and it has to be total: a slam
+// that strikes nobody fires the untanked variant, which throws every body off
+// the platform. If this ever becomes survivable the soak run stops being a
+// decision and the tank swap stops being earned.
+test('a Stone Breaker slam nobody soaks throws the raid into the acid', async () => {
+  const { w, brk, ithraz, fire, step, TICK_MS } = await breakerBench('tank', 7, 'ithraz')
+  assert.equal(ithraz.targetId, 0, 'the player is not holding Ithraz')
+  // Far from every pool on the arc, and — measured — a spot the opening 10-yard
+  // knock itself survives, so the death below can only be the untanked variant.
+  w.player.pos.x = -6
+  w.player.pos.y = -5
+
+  fire(w, 'stonebreaker')
+  for (let ms = 0; ms < breakerRunMs(brk) && w.player.alive; ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+  }
+
+  assert.equal(w.seen.has('pushoff'), true, 'a slam landed on nobody and nothing happened')
+  assert.equal(w.player.alive, false, 'the player survived a push that clears the whole platform')
+  assert.match(w.deathCause ?? '', /acid/i,
+    `died of "${w.deathCause}" rather than of the venom under the platform`)
+  assert.ok(w.alliesLost > 0, 'the raid was thrown off the platform and nobody was lost')
+  assert.ok(w.failures.has('slam'),
+    'the tank who dropped the soak was not named — somebody has to be, and it is not the raid')
+  assert.equal(w.failures.has('pushoff'), false,
+    'the untanked variant named a player. It is collective: the missed soak is the failure')
+})
+
+// The raid leader's requirement, stated directly: the player must be able to do
+// it when playing tank. The AI doing it is not evidence that a human can — the
+// AI is exempt from the arena inset and gets a widened leash — so this drives
+// the player's own feet through the run at player speed, through the knock,
+// with nothing but WASD.
+test('a player tank can walk all three Stone Breaker soaks themselves', async () => {
+  const { w, brk, ithraz, vexhul, fire, step, TICK_MS } = await breakerBench('tank', 3, 'ithraz')
+  w.player.pos.x = 7
+  w.player.pos.y = -13
+
+  fire(w, 'stonebreaker')
+  let soaked = 0
+  const seen = new Set()
+  for (let ms = 0; ms < breakerRunMs(brk) && w.player.alive; ms += TICK_MS) {
+    // Walk at whichever pool is on the floor; otherwise hold still.
+    const pool = w.instances.find(i => !i.resolved && i.def.id === 'slam')
+    const input = NO_INPUT()
+    if (pool) {
+      const dx = pool.pos.x - w.player.pos.x
+      const dy = pool.pos.y - w.player.pos.y
+      if (Math.hypot(dx, dy) > 1) {
+        input.right = dx > 0.4
+        input.left = dx < -0.4
+        input.down = dy > 0.4
+        input.up = dy < -0.4
+      }
+      if (!seen.has(pool.uid) && Math.hypot(dx, dy) <= 3.5) { seen.add(pool.uid); soaked++ }
+    }
+    step(w, input, TICK_MS)
+  }
+
+  assert.equal(w.player.alive, true, `the player died walking the run: ${w.deathCause}`)
+  assert.equal(soaked, brk.channel.count,
+    `the player reached ${soaked} of ${brk.channel.count} pools at player speed — the run is not walkable`)
+  assert.equal(w.seen.has('pushoff'), false, 'a pool the player stood in still fired the untanked variant')
+  assert.deepEqual([...w.failures.keys()], [],
+    `failures on a clean player-tank run: ${[...w.failures.keys()].join(', ')}`)
+  assert.equal(ithraz.targetId !== 0 && vexhul.targetId === 0, true,
+    'the player soaked the whole run and did not get the swap')
+})
+
+// Plan test 12, first half: the argument for the whole mechanic, rasterised.
+//
+// knockbackYards is one number in a boss file and it decides what fraction of
+// the room is a fatal place to stand. At 18 — what this shipped with — it was
+// 72%, which is not a decision, it is a room with one right answer. At 10 it is
+// 46%. Pinned because raising the push or reshaping the mouth moves it silently,
+// and because the raid leader was shown this exact figure and ruled on it.
+test('Stone Breaker leaves the raid somewhere to stand, and somewhere it cannot', async () => {
+  const { inArena, knockLanding, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const brk = boss.mechanics.find(m => m.id === 'stonebreaker')
+  const ithraz = boss.entities.find(e => e.id === 'ithraz')
+  assert.equal(brk.offPlatform, true, 'the Stone Breaker knock is caught by the rim again')
+
+  let cells = 0
+  let survives = 0
+  const rows = new Map()
+  for (let x = -24; x <= 24; x += 0.25) {
+    for (let y = -17; y <= 22; y += 0.25) {
+      const p = { x, y }
+      if (!inArena(boss, p)) continue
+      cells++
+      const ok = inArena(boss, knockLanding(p, ithraz.start, brk.knockbackYards))
+      if (ok) survives++
+      const r = rows.get(Math.round(y)) ?? { n: 0, ok: 0 }
+      r.n++
+      if (ok) r.ok++
+      rows.set(Math.round(y), r)
+    }
+  }
+  const fatal = 100 * (1 - survives / cells)
+  // Both bounds matter. Too low and the knock is scenery nobody has to read;
+  // too high and there is no route through the room that answers it.
+  assert.ok(fatal > 35 && fatal < 55,
+    `${fatal.toFixed(1)}% of the floor is a fatal stand. Below 35 nobody has to read the ` +
+    'knock; above 55 there is no route through the room that answers it')
+
+  // The mouth is certain death and the middle of the wedge is not. This is the
+  // shape the briefing promises the player — stay south of the ledge and well
+  // north of the mouth — and a brief that promises a band the floor does not
+  // have is worse than no brief.
+  assert.equal(rows.get(16).ok, 0, 'the mouth of the platform is survivable — the danger band is gone')
+  assert.ok(rows.get(0).ok / rows.get(0).n > 0.7,
+    'the middle of the wedge is not reliably survivable, so there is nowhere to be told to go')
+})
+
+// Hazard 4.4, measured rather than trusted.
+//
+// The three pools are laid on an arc and then CLAMPED onto the floor, and the
+// clamp is not shape-preserving: the right-hand point runs into the leg of the
+// wedge and is dragged inward. So whether the tank has to walk is decided by the
+// post-clamp positions, and the honest test is the smallest circle containing
+// all three — if that is inside the soak radius, one spot covers the run and the
+// tank never moves. ringYards 6 gives 4.02 against 3.5, which is half a yard of
+// margin. This is why the fight uses 8.
+test('the Stone Breaker arc cannot be soaked from a standing start', async () => {
+  const { arcOnFloor, clampToArena, edgeDistance, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const brk = boss.mechanics.find(m => m.id === 'stonebreaker')
+  const slam = boss.mechanics.find(m => m.id === 'slam')
+  const from = boss.entities.find(e => e.id === 'ithraz').start
+  const ch = brk.channel
+  // The same bearing the engine uses: out of the caster toward the middle of the
+  // room, NOT the caster's own facing. See the comment at the channel block.
+  const ps = arcOnFloor(boss, from, Math.atan2(-from.y, -from.x), ch.count, ch.ringYards, ch.arcDeg)
+
+  // Smallest enclosing circle of three points: the diameter of the longest side
+  // when the triangle is not acute, the circumcircle otherwise.
+  let mec = Infinity
+  for (let i = 0; i < ps.length; i++) {
+    for (let j = i + 1; j < ps.length; j++) {
+      const c = { x: (ps[i].x + ps[j].x) / 2, y: (ps[i].y + ps[j].y) / 2 }
+      const r = Math.hypot(ps[i].x - c.x, ps[i].y - c.y)
+      if (ps.every(p => Math.hypot(p.x - c.x, p.y - c.y) <= r + 1e-9)) mec = Math.min(mec, r)
+    }
+  }
+  if (mec === Infinity) {
+    const [A, B, C] = ps
+    const d = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y))
+    const ux = ((A.x ** 2 + A.y ** 2) * (B.y - C.y) + (B.x ** 2 + B.y ** 2) * (C.y - A.y)
+      + (C.x ** 2 + C.y ** 2) * (A.y - B.y)) / d
+    const uy = ((A.x ** 2 + A.y ** 2) * (C.x - B.x) + (B.x ** 2 + B.y ** 2) * (A.x - C.x)
+      + (C.x ** 2 + C.y ** 2) * (B.x - A.x)) / d
+    mec = Math.hypot(A.x - ux, A.y - uy)
+  }
+  const soak = slam.shape.radius
+  assert.ok(mec > soak + 1,
+    `the three pools fit inside a ${mec.toFixed(2)}yd circle against a ${soak}yd soak — a tank ` +
+    'standing in the right spot covers the whole run without moving')
+
+  // And the run has to be reachable from the tank's own mark, or the AI cannot
+  // play it and the leash exemption at allyThink 6b is aimed at the wrong number.
+  const station = clampToArena(boss, from, 2)
+  for (const p of ps) {
+    const d = Math.hypot(p.x - station.x, p.y - station.y)
+    assert.ok(d < 9, `a pool is ${d.toFixed(1)}yd from the tank's station — beyond a sidestep`)
+  }
+  // Two of the three land inside the arena inset the ally AI is otherwise held
+  // to, which is exactly why that bound relaxes for a tank's own soak. If this
+  // ever stops being true the exemption is dead code and should go.
+  assert.ok(ps.some(p => edgeDistance(boss, p) < boss.arenaRadius * 0.1),
+    'no pool lands inside the ally floor inset any more — the soak reach exemption is unreachable')
+})
+
+// Hazard 4.2's other half, and the reason the ally knock and the ally
+// pre-position are one commit.
+//
+// A tank cannot leave their station: the leash is six yards. So if a station's
+// landing is off the platform and there is nothing survivable within six yards
+// of it, that tank dies to every Stone Breaker for the whole pull and no AI
+// change can save them. Measured, the Ithraz mark is already safe and the Vexhul
+// one is not — its nearest survivable spot is 5.8 yards away, which fits, but
+// only just.
+test('both tank stations have somewhere survivable inside the tank leash', async () => {
+  const { inArena, clampToArena, knockLanding, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const brk = boss.mechanics.find(m => m.id === 'stonebreaker')
+  const from = boss.entities.find(e => e.id === 'ithraz').start
+  const LEASH = 6                       // allyThink step 6b
+
+  for (const e of boss.entities) {
+    const station = clampToArena(boss, e.start, 2)
+    let nearest = Infinity
+    for (let i = 0; i < 180; i++) {
+      for (let r = 0; r <= LEASH; r += 0.25) {
+        const th = (i / 180) * Math.PI * 2
+        const p = { x: station.x + Math.cos(th) * r, y: station.y + Math.sin(th) * r }
+        if (!inArena(boss, p)) continue
+        if (!inArena(boss, knockLanding(p, from, brk.knockbackYards + 3))) continue
+        nearest = Math.min(nearest, r)
+      }
+    }
+    assert.ok(nearest <= LEASH,
+      `${e.id}'s tank has nowhere inside their ${LEASH}yd leash that survives Stone Breaker — ` +
+      'they are thrown into the venom every cast and there is nothing the AI can do about it')
+  }
+})

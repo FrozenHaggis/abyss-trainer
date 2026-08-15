@@ -1,6 +1,7 @@
 import type { BossDef, Instance, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
+import { WIND_TOUCH_YARDS } from './sim'
 import { inArena } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
@@ -1372,6 +1373,25 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       ringOf(p.x, p.y, a.presence, false)
       const ang = Math.atan2(COMPASS[a.wind].y, COMPASS[a.wind].x)
       drawArrow(ctx, p.x, p.y - 20, ang, 20, VIOLET, 0.9 * a.presence)
+      // The one holding your opposite is named.
+      //
+      // The orb puzzle deliberately does NOT do this — finding the right body is
+      // the whole mechanic there. Here it is not: the skill is the geometry, and
+      // working out WHICH of nineteen identical glyphs is carrying the arrow
+      // that completes yours is a search problem the real fight solves with a
+      // raid marker and a callout. So it gets one.
+      if (a.id === w.windPartnerId) {
+        // Drawn at the range that actually cancels, so "get inside this" is a
+        // place rather than a hope. A ring at some arbitrary pixel size would be
+        // decoration; this one is the test the engine runs.
+        const touch = WIND_TOUCH_YARDS * cam.scale
+        ctx.beginPath(); ctx.arc(p.x, p.y, touch, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(${GREEN}, ${0.10 * a.presence})`
+        ctx.fill()
+        ctx.strokeStyle = `rgba(${GREEN}, ${(0.7 + 0.3 * pulse) * a.presence})`
+        ctx.lineWidth = 2.5; ctx.stroke(); ctx.lineWidth = 1
+        drawLabel(ctx, 'YOUR PARTNER', p.x, p.y + touch + 12, GREEN, 11, 0.95 * a.presence)
+      }
     }
     if (w.player.wind) {
       ringOf(pp.x, pp.y, 1, true)

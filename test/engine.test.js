@@ -78,3 +78,69 @@ test('a raid knockback throws the player across the room, not onto the boss', as
       'whose landing spot is fixed is not a knockback — it is a teleport, and it reads as one')
   }
 })
+
+// The wind partner used to hold a spot measured from the PLAYER — thirty yards
+// along their bearing from wherever they happened to be standing. So it moved
+// every time the player did: they walked at it, it walked away by exactly as
+// much, and the pair drifted to the rim together with the mechanic never
+// resolving. A carrot on a stick, on a platform that kills you for reaching the
+// end of it.
+//
+// Playing it is the only way to see that, because every position involved is
+// individually reasonable. So this plays it: walk straight at the partner for
+// the whole window and check the two things that were wrong.
+test('the wind partner holds still and can be reached', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'sszorak')
+  assert.ok(boss.mechanics.some(m => m.rule.type === 'windPair'),
+    'no windPair mechanic — this check would be vacuous')
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  const input = {
+    up: false, down: false, left: false, right: false, pressed: [], aim: null, firing: false,
+  }
+
+  let windows = 0
+  let cancelled = 0
+  let drift = 0
+  let worstRadius = 0
+  let seen = null
+
+  for (let i = 0; i < 60 * 300 && w.player.alive; i++) {
+    const mate = w.allies.find(a => a.id === w.windPartnerId && a.wind)
+    const had = !!w.player.wind
+    if (mate) {
+      if (!seen) { seen = { x: mate.pos.x, y: mate.pos.y }; windows++ }
+      // How far the partner has wandered since it settled, and how close to the
+      // edge it has taken the pair.
+      drift = Math.max(drift, Math.hypot(mate.pos.x - seen.x, mate.pos.y - seen.y))
+      worstRadius = Math.max(worstRadius, Math.hypot(mate.pos.x, mate.pos.y))
+      // Walk straight at them, which is the input that used to fail.
+      const dx = mate.pos.x - w.player.pos.x
+      const dy = mate.pos.y - w.player.pos.y
+      input.right = dx > 0.5; input.left = dx < -0.5
+      input.down = dy > 0.5; input.up = dy < -0.5
+    } else {
+      input.right = input.left = input.up = input.down = false
+    }
+    step(w, input, TICK_MS)
+    // Survived the expiry with the wind gone: the two of you cancelled.
+    if (had && !w.player.wind && w.player.alive) cancelled++
+    if (!mate) seen = null
+  }
+
+  assert.ok(windows > 0,
+    'no Raging Crosswinds ever reached a partner in a full pull — this check would ' +
+    'pass without measuring anything')
+  assert.equal(cancelled, windows,
+    `${cancelled} of ${windows} windows cancelled. Running at the body the fight reserved ` +
+    'for you has to work — it is the instruction the fight gives')
+  // Settling takes a moment, so this is about wandering rather than walking.
+  assert.ok(drift < 24,
+    `the partner moved ${drift.toFixed(1)}yd while the player closed on it. It is supposed ` +
+    'to hold a mark, not retreat — a partner measured from the player can never be caught')
+  assert.ok(worstRadius < boss.arenaRadius * 0.5,
+    `the partner held ${worstRadius.toFixed(1)}yd out on a ${boss.arenaRadius}yd floor. ` +
+    'Lining up must not mean standing next to an edge that kills you')
+})

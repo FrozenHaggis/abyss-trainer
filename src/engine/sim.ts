@@ -2973,10 +2973,15 @@ function allyThink(w: World) {
     //     and it is the reason the pair stopped walking to the wall: the aim
     //     mark is a place in the room, and wandering off it is what turned every
     //     later Mutilate into a cone pointed at empty floor.
-    const station = w.bosses.find(b => b.targetId === a.id && b.def.tankedApart)?.def.start
+    const rawStation = w.bosses.find(b => b.targetId === a.id && b.def.tankedApart)?.def.start
       ?? (w.bosses[0].targetId === a.id
         ? (hasGroups(w) ? tankStation(w, w.bosses[0]) : altarStation(w))
         : null)
+    // Onto the floor, always. A station is where a tank is told to stand, and an
+    // entity's own position is not automatically somewhere a body can be: the
+    // Twin Fangs sit in the acid off the top edge, so parking their tanks on
+    // them would march both of them off the platform at the pull.
+    const station = rawStation ? clampToArena(w.boss, rawStation, 2) : null
     if (station) {
       const sdx = a.want.x - station.x
       const sdy = a.want.y - station.y
@@ -4096,10 +4101,16 @@ export function step(w: World, input: Input, dtMs: number) {
   // the floor rather than of a radius: on the Sentinels' octagon the diagonals
   // genuinely end sooner than the axes, which is what the measured corner/axis
   // ratio of 0.89 was telling us all along.
+  //
+  // "Off the floor" is one test and it covers two ways to go: over an outer
+  // edge, or into a bite taken out of the middle of one. The Twin Fangs' venom
+  // pocket is the second kind and it kills exactly like the rim does — there is
+  // no shallow end, and a raider who walks into the pocket chasing a globule is
+  // as dead as one blown off the mouth of the platform.
   if (!inArena(w.boss, w.player.pos)) {
     w.player.alive = false
     w.player.health = 0
-    w.deathCause = 'Fell off the platform'
+    w.deathCause = w.boss.acid ? 'Fell into the acid' : 'Fell off the platform'
     recordFailure(w, {
       id: 'falling', name: 'Falling', spellId: 3, roles: [w.player.role],
       telegraphMs: 0, origin: 'random', rule: { type: 'avoid' },
@@ -4508,6 +4519,10 @@ export function step(w: World, input: Input, dtMs: number) {
         b.pos.x += ((to.x - b.pos.x) / d) * step
         b.pos.y += ((to.y - b.pos.y) / d) * step
       }
+    } else if (b.def.stationary) {
+      // Coiled where it started and staying there. No follow step, and no clamp
+      // either — these two sit in the acid off the edge of the platform, and
+      // clamping would walk them onto the floor the raid is standing on.
     } else if (b.targetId >= 0 && !rooted) {
       // A tanked entity follows its tank. Without this the bosses were bolted to
       // their spawn points, and "hold them 40 yards apart" was not something a

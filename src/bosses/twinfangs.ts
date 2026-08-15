@@ -44,6 +44,9 @@ export const twinfangs: BossDef = {
   // at the mouth and narrowing to the ledge the serpents are coiled on, with a
   // pocket of venom bitten out of the middle of its bottom edge.
   arenaRadius: 32,
+  // The platform floats in it, and the pocket is a hole straight through to it.
+  // Falling in either place is the same death.
+  acid: true,
   arena: {
     kind: 'polygon',
     points: [
@@ -53,7 +56,12 @@ export const twinfangs: BossDef = {
       // Every corner stays inside arenaRadius, which the engine still treats as
       // the bounding radius everywhere else — the wedge is a shape for the same
       // 32-yard floor the logs measured, not a bigger room.
-      { x: -14, y: -25 }, { x: 14, y: -25 },
+      //
+      // The top edge was at y=-25 and the room played long: a raid at the mouth
+      // and a serpent on the ledge were 45 yards apart, most of it empty floor
+      // nothing ever used. Cut to y=-16, which takes 9 yards out of the middle
+      // and none out of the mouth, where the pocket and the soaks live.
+      { x: -10, y: -16 }, { x: 10, y: -16 },
       // The right leg, flaring out to the mouth.
       { x: 23, y: 21 },
       // The venom pocket — a bite out of the bottom edge, not a puddle on it.
@@ -114,24 +122,21 @@ export const twinfangs: BossDef = {
       failText: 'A Spawn of Vexhul lived out its full timer',
     },
   ],
-  // High on the wedge, tanked apart, with the raid working up at them from the
-  // wide end. NOT jammed against the top wall, and this is a measured position
-  // rather than a drawn one.
+  // Coiled in the acid off the top edge of the platform, three yards clear of
+  // the floor, and they do not move: no tank drags them anywhere and they never
+  // walk after anybody. The raid comes to them.
   //
-  // They were first put at (±9,-19), right on the ledge where the screenshot
-  // shows them. A shot is eaten by the first entity it passes within 4.5 yards
-  // of, so from up there each serpent stood squarely between its own raid and
-  // everything south of it: the Bloodcurdled Mass sat at full health for its
-  // entire fuse while the bot shot it with 100% recorded accuracy — every round
-  // stopping in a serpent — and then killed the raid. Twin Fangs went from two
-  // cleared cells out of three to none.
-  //
-  // Measured across the playtest: (±9,-19) 15/27 clears, (±13,-16) 17/27,
-  // (±16,-4) 17/27. This is the highest placement that does not have the bosses
-  // body-blocking the fight they are in.
+  // Being OFF the floor is what makes this placement work where an earlier one
+  // failed. A shot is eaten by the first entity it passes within 4.5 yards of,
+  // so when the serpents stood ON the ledge the players who ran up to them
+  // ended up behind them, and every round fired south at the Bloodcurdled Mass
+  // stopped in a serpent's back — the add sat at full health for its whole fuse
+  // at 100% recorded accuracy and then killed the raid. Now there is no floor
+  // behind them to stand on: the raid is always south of them, shooting north,
+  // and the adds are south again in the pocket.
   entities: [
-    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -13, y: -16 }, tankedApart: true },
-    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 13, y: -16 }, tankedApart: true },
+    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -8, y: -19 }, tankedApart: true, stationary: true },
+    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 8, y: -19 }, tankedApart: true, stationary: true },
   ],
   maxHp: 1,
   loopIntervalSec: 6,

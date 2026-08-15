@@ -1,6 +1,7 @@
 import type { BossDef, Instance, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
+import { inArena } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
 
@@ -466,6 +467,64 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // players reach measurably less far on the diagonals than on the axes, which
   // is exactly what an octagon looks like through a circle fit. A true circle
   // would have come back 1.0.
+  // ── the acid the platform floats in ──
+  //
+  // Drawn BEFORE the floor, and placed by one rule: bubble wherever a point is
+  // not on the floor. That gets the sea around the platform and the venom in the
+  // pocket bitten out of its bottom edge from the same test, and it keeps
+  // following the room if the shape ever changes again — no second list of
+  // "where the acid is" to fall out of step with the polygon.
+  //
+  // Deterministic: every bubble's position, size and phase are hashed from its
+  // index, so this animates without touching the RNG the fight is seeded on.
+  // A renderer that consumed random numbers would make the playtest's fixed
+  // seeds depend on how many frames had been drawn.
+  if (w.boss.acid) {
+    const span = arenaReach(w.boss) * 1.25
+    // Two passes, because the two bodies of acid are different sizes. A scatter
+    // wide enough to fill the sea around the platform hits the pocket about
+    // never — it is seventy square yards inside five thousand — and the pocket
+    // is the half that matters, since it is the one a player can walk into.
+    // So: a wide scatter for the sea, and a fine grid over the floor's own
+    // bounding box for whatever holes are cut into it.
+    const seats: Vec[] = []
+    for (let i = 0; i < 110; i++) {
+      // Golden-angle scatter, so the sea looks sown rather than gridded.
+      const a = i * 2.399963
+      const rr = Math.sqrt((i % 37) / 37) * span
+      seats.push({ x: Math.cos(a) * rr + ((i * 7) % 11) - 5, y: Math.sin(a) * rr + ((i * 13) % 11) - 5 })
+    }
+    const step = span / 11
+    for (let gx = -11; gx <= 11; gx++) {
+      for (let gy = -11; gy <= 11; gy++) {
+        // Jittered off the lattice so a hole never fills with a visible grid.
+        seats.push({
+          x: gx * step + ((gx * 5 + gy * 3) % 7) * 0.35,
+          y: gy * step + ((gx * 3 + gy * 7) % 7) * 0.35,
+        })
+      }
+    }
+    for (let i = 0; i < seats.length; i++) {
+      const at = seats[i]
+      if (Math.abs(at.x) > span || Math.abs(at.y) > span) continue
+      if (inArena(w.boss, at)) continue          // that is floor, not acid
+      // Rise, swell, pop, repeat — each on its own clock.
+      const period = 1700 + ((i * 271) % 1900)
+      const t = ((w.elapsedMs + i * 617) % period) / period
+      const p = toPx(cam, { x: at.x, y: at.y - t * 3.2 })   // drifts up as it grows
+      const r = (0.5 + 1.5 * t) * cam.scale
+      // Fades in fast, holds, then bursts at the top.
+      const alpha = (t < 0.15 ? t / 0.15 : 1 - Math.max(0, (t - 0.75) / 0.25)) * 0.5
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(126, 224, 108, ${(alpha * 0.5).toFixed(3)})`
+      ctx.fill()
+      ctx.strokeStyle = `rgba(158, 240, 130, ${alpha.toFixed(3)})`
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+  }
+
   const c = { x: cam.cx, y: cam.cy }
   const R = arenaReach(w.boss) * cam.scale
   const grad = ctx.createRadialGradient(c.x, c.y, R * 0.1, c.x, c.y, R)

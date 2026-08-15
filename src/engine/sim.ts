@@ -1,7 +1,8 @@
 import type {
-  Ability, AddDef, Ally, AltarDef, BossDef, BossEntityDef, Corpse, FailureRow, Instance, MechanicDef,
-  PhaseDef, PlayerState, Prompt, Role, RunResult, Side, Vec,
+  Ability, AddDef, Ally, AltarDef, BossDef, BossEntityDef, Compass, Corpse, FailureRow, Instance,
+  MechanicDef, PhaseDef, PlayerState, Prompt, Role, RunResult, Side, Vec,
 } from './types'
+import { CLOCK, COMPASS, OPPOSITE } from './types'
 
 // The simulation. Deliberately framework-free and side-effect-free so it can be
 // stepped by a test as easily as by requestAnimationFrame.
@@ -60,6 +61,81 @@ const PAIR_AI_DELAY_MS = 3200
 const PAIR_ARM_MS = 750
 /** How close a body has to be standing to a corpse to count as standing on it. */
 const CORPSE_RANGE = 3
+
+// ── the wind ─────────────────────────────────────────────────────────────────
+//
+// Raging Crosswinds is the fight. Everyone is handed a bearing and thrown that
+// way, and two raiders thrown into each other cancel out — so the whole mechanic
+// is a question about where you are standing relative to one specific other
+// body, which is a completely different demand from every other telegraph in
+// this raid.
+
+/**
+ * How far apart two raiders may be and still be thrown into each other.
+ *
+ * Generous, and it has to be. This is not a collision you walk into — it is a
+ * line-up you set before the timer expires, judged once, and the two of you are
+ * thrown together from wherever you stand. Sized just over the push itself so a
+ * pair lined up at the limit genuinely meet in the middle.
+ */
+const WIND_REACH = 26
+/**
+ * How far off the axis a partner may sit and still count as lined up.
+ *
+ * The lesson is "get on their line", so there has to be a line to get on and a
+ * way to be off it. Two glyphs are about 2 yards wide at this camera, so a 6
+ * yard lane is a couple of body widths — visibly a lane rather than a coin flip,
+ * and tight enough that standing vaguely nearby is not the answer.
+ */
+const WIND_LANE = 6
+/** How hard the Maelstrom's gales push, in yards/sec. Below run speed on purpose. */
+const GALE_SPEED = 8.5
+/** How long a raider is aloft after a Crosswinds knock, in ms. */
+const WIND_ALOFT_MS = 1500
+
+/** The compass bearing nearest a point, as seen from the middle of the room. */
+function clockOf(p: Vec): Compass {
+  let best: Compass = 'N'
+  let bd = -Infinity
+  const len = Math.hypot(p.x, p.y) || 1
+  for (const c of CLOCK) {
+    const dot = (p.x / len) * COMPASS[c].x + (p.y / len) * COMPASS[c].y
+    if (dot > bd) { bd = dot; best = c }
+  }
+  return best
+}
+
+/**
+ * Where a cyst dropped on this bearing actually lands.
+ *
+ * Out near the rim, because the gale has to have room to build before it gets
+ * there — and back far enough from the edge that the burst throws the raid
+ * inward rather than over it.
+ */
+function clockPoint(boss: BossDef, c: Compass): Vec {
+  const r = boss.arenaRadius * 0.74
+  return { x: COMPASS[c].x * r, y: COMPASS[c].y * r }
+}
+
+/**
+ * Is `partner` positioned so the two of them cancel?
+ *
+ * Three things, all of them necessary. They must be blown the OTHER way, or
+ * both of you simply travel in company. They must be on the side of you that
+ * you are about to be thrown toward, or you are thrown apart rather than
+ * together. And they must be close to your axis, because "lined up" is the
+ * instruction and a body twenty yards off to one side is not lined up with
+ * anybody.
+ */
+function windCancels(mine: Compass, from: Vec, theirs: Compass | null, at: Vec): boolean {
+  if (!theirs || theirs !== OPPOSITE[mine]) return false
+  const dir = COMPASS[mine]
+  const dx = at.x - from.x
+  const dy = at.y - from.y
+  const along = dx * dir.x + dy * dir.y
+  const across = Math.abs(dx * -dir.y + dy * dir.x)
+  return along > 0 && along <= WIND_REACH && across <= WIND_LANE
+}
 
 // ── randomness ───────────────────────────────────────────────────────────────
 // Seedable, so a headless balance run is reproducible.
@@ -352,6 +428,44 @@ export interface World {
    * already been paid for as a leak.
    */
   addDeathMs: Record<string, number>
+
+  // ── the flurry, the groups and the wind ──────────────────────────────────
+  /**
+   * How long each tank-swap mechanic's holder has been over its threshold.
+   *
+   * Keyed by mechanic id, because Sszorak has two of them and the ability data
+   * names them as a pair — Corroding Venom stacking on every melee, and Ravage's
+   * +300% on every cone. A single counter served whichever mechanic happened to
+   * be declared first and the other silently never fired at all.
+   */
+  overStackBy: Record<string, number>
+  /**
+   * Which of the two stack groups the next `groupSoak` must land on.
+   *
+   * Not a choice the fight makes freely: it is whichever group is not still
+   * carrying a Gash. That is the entire mechanic, so it is derived from
+   * `groupGashMs` rather than alternated on a counter that could drift out of
+   * step with what the raid is actually carrying.
+   */
+  calledGroup: number
+  /** ms of Mutilated Gash left on each stack group. */
+  groupGashMs: number[]
+  /** Where the two stack groups are standing, in yards. Empty off Sszorak. */
+  groupMarks: Vec[]
+  /** True while a Crosswinds is in the air, so the renderer draws the arrows. */
+  windUp: boolean
+  /**
+   * The ally holding YOUR opposite bearing.
+   *
+   * Reserved out of the raid's own pairing for the same reason the orb partner
+   * is: a puzzle whose only valid answer may already have paired off with
+   * somebody else is not a puzzle, and this one throws you off the platform.
+   */
+  windPartnerId: number
+  /** The cyst the current gale is blowing the raid into, by instance uid. */
+  galeTargetUid: number
+  /** How many cysts this Maelstrom has burst. */
+  cystsBurst: number
 }
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
@@ -398,6 +512,11 @@ function makeAllies(playerRole: Role, playerSide: Side): Ally[] {
       // Tanks are on the boss from the pull; everyone else walks on when needed.
       presence: r === 'tank' ? 1 : 0,
       side: 'green', green: 0, marked: false,
+      // Dealt alternately WITHIN each role, for the same reason the sides are:
+      // a stack group with no healer is a group that dies to its own Gash, and
+      // a raid that discovered that by luck of array order would read as the
+      // trainer being broken rather than as a mechanic.
+      group: i % 2, wind: null, windMate: -1, gash: 0, gashMs: 0,
     })
   })
   assignSides(out, playerRole, playerSide)
@@ -525,6 +644,137 @@ export function primaryBoss(w: World): BossUnit {
   return w.bosses[0]
 }
 
+// ── the two stack groups ─────────────────────────────────────────────────────
+//
+// Mutilate has to land on one group and then on the other, so the raid needs two
+// places to be that are far enough apart for a 60-degree cone to take one and
+// miss the other, and near enough the boss that both are reachable inside a
+// telegraph.
+//
+// Both marks are painted on the FLOOR, on fixed bearings from the middle of the
+// room — not hung off the boss.
+//
+// Hanging them off the boss was the obvious thing and it was wrong, in the way
+// this engine has been wrong before. The boss walks after his tank, so a tank
+// standing "five yards along the mark's bearing from the boss" moves his own
+// target every time the boss closes on him: he drifts a yard out, the boss
+// follows, his mark moves a yard further out, and the pair crawl to the wall
+// together. They reached the west rim by seventy seconds, the cone pointed at
+// nothing but floor from there, and every Mutilate for the rest of the pull
+// landed on zero bodies. It is the same runaway the `tankedApart` tanks already
+// had, and it has the same answer: hold a station, do not orbit a thing that is
+// following you.
+
+/** South-west and south-east of the arena centre, 90 degrees apart. */
+const GROUP_BEARINGS = [(3 * Math.PI) / 4, Math.PI / 4]
+/**
+ * How far out the marks sit. Inside the cone's reach, well outside its apex —
+ * and outside the ring of Caustic Claws globs, which land around the boss and
+ * would otherwise foul both stacks every time he throws them.
+ */
+const GROUP_RANGE = 16
+/** How far a raider may stray from their mark while a cone is in the air. */
+const GROUP_LEASH = 7
+/**
+ * How far out the tank stands to aim.
+ *
+ * Short, deliberately. The boss stops a melee range behind whoever he is
+ * chasing, so a tank at seven yards keeps him near the middle of the room —
+ * which is where the rest of this fight needs him, because Caustic Claws eats
+ * the floor he is standing on and the Maelstrom's gales measure from the centre.
+ */
+const AIM_RANGE = GROUP_RANGE
+
+function baseMark(g: number): Vec {
+  const a = GROUP_BEARINGS[((g % 2) + 2) % 2]
+  return { x: Math.cos(a) * GROUP_RANGE, y: Math.sin(a) * GROUP_RANGE }
+}
+
+/**
+ * Where a tank has to stand to put the cone on a given group: ON THE MARK, with
+ * them.
+ *
+ * This one number took three attempts and each failure was instructive, so both
+ * are written down.
+ *
+ * A station relative to the boss — "five yards along the mark's bearing from
+ * him" — runs away. He walks after his tank, so the tank drifts a yard out, he
+ * follows, the station moves out another yard, and the pair reach the west rim
+ * by seventy seconds with the cone pointing at nothing. The `tankedApart` tanks
+ * had the identical bug.
+ *
+ * A fixed station SHORT of the mark does not aim. He stops a melee range from
+ * his tank along whatever line he happened to approach on, so when the rota
+ * flips he settles on the chord between the two stations rather than on the
+ * bearing — everybody perfectly positioned, cone forty-five degrees off, zero
+ * bodies struck. Two points do not define a bearing when they sit at the same
+ * radius.
+ *
+ * Standing ON the mark fixes both at once, because the cone is aimed at wherever
+ * the tank IS. He faces his tank; the tank is in the middle of the group; the
+ * cone therefore covers the group no matter which way he came from. It is also
+ * the version that matches how the fight is described — the boss follows the
+ * tanks, and the tanks walk him between the two stacks.
+ */
+function aimStation(w: World, g: number): Vec {
+  const i = ((g % 2) + 2) % 2
+  return w.groupMarks[i] ?? baseMark(i)
+}
+
+/**
+ * Where a tank has to stand to point a frontal AWAY from the raid.
+ *
+ * Directly opposite the bulk of the raid, in melee — the boss faces his tank, so
+ * putting yourself on the far side of him from everybody else is the whole of
+ * "point it away". With both stack groups parked south of him this comes out
+ * north, which is the shape the fight is described in: the raid stacks behind
+ * him and the tank holds his face.
+ */
+function faceAwayStation(w: World): Vec {
+  const raid = raidAnchor(w)
+  const d = Math.hypot(raid.x, raid.y)
+  // Measured from the MIDDLE OF THE ROOM, not from the boss. Anchoring it on him
+  // is the same runaway as before wearing a different hat: he walks away from
+  // the raid to follow his tank, which makes "away from the raid" point further
+  // out again, and the pair leave the platform together.
+  const dir = d < 1 ? { x: 0, y: -1 } : { x: -raid.x / d, y: -raid.y / d }
+  return clampToArena(w.boss, { x: dir.x * AIM_RANGE, y: dir.y * AIM_RANGE }, 4)
+}
+
+/**
+ * Where the tank holding `unit` should be standing right now.
+ *
+ * The fight asks a tank for two opposite things and gives them under two seconds
+ * to switch: Ravage must point AWAY from everybody, and Mutilate must point
+ * straight AT one of the two stacks. Both come out of the same face, both are in
+ * the air at once during a flurry, and the only sane reading is that you aim for
+ * whichever one lands FIRST and then move for the next. That is what a tank on
+ * this fight is actually doing, and it is why the flurry order being random is
+ * the thing worth practising.
+ */
+function tankStation(w: World, unit: BossUnit): Vec | null {
+  let next: Instance | null = null
+  for (const i of w.instances) {
+    if (i.resolved || i.fromId !== unit.def.id) continue
+    const rt = i.def.rule.type
+    if (rt !== 'faceAway' && rt !== 'groupSoak') continue
+    if (!next || i.timer < next.timer) next = i
+  }
+  if (next) {
+    return next.def.rule.type === 'faceAway'
+      ? faceAwayStation(w)
+      : aimStation(w, w.calledGroup)
+  }
+  // Nothing in the air: stand ready on the next group's line. The cone that
+  // needs aiming is the one that is hard to fix late.
+  return hasGroups(w) ? aimStation(w, w.calledGroup) : null
+}
+
+/** Does this fight run the two-group rota at all? */
+function hasGroups(w: World): boolean {
+  return w.boss.mechanics.some(m => m.rule.type === 'groupSoak')
+}
+
 /** The entity that casts a given mechanic, falling back to the primary. */
 export function bossUnitFor(w: World, from?: string): BossUnit {
   if (!from) return w.bosses[0]
@@ -636,6 +886,10 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
       pos: { x: 0, y: 12 }, role, health: 1, alive: true,
       carrying: {}, cooldowns: {}, aloft: 0,
       side, green: 0, marked: false, marks: {},
+      // You are always group 0. Which group you are in is arbitrary — what
+      // matters is that it never changes mid-pull, so "is this one mine?" stays
+      // a question about the cone rather than about your own assignment.
+      group: 0, wind: null, gash: 0, gashMs: 0, slowMs: 0,
     },
     instances: [],
     adds: [],
@@ -707,6 +961,14 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     infusionMult: {},
     trailTimers: {},
     addDeathMs: {},
+    overStackBy: {},
+    calledGroup: 0,
+    groupGashMs: [0, 0],
+    groupMarks: [],
+    windUp: false,
+    windPartnerId: -1,
+    galeTargetUid: -1,
+    cystsBurst: 0,
   }
   // A split fight seats the player on their own side’s entity before the first
   // tick, so their group, their mechanics and their golem are all in one place.
@@ -1144,7 +1406,12 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       (def.origin === 'targeted' && Math.hypot(pos.x - w.player.pos.x, pos.y - w.player.pos.y) < 0.01),
   }
   if (def.driftSpeed) {
-    const a = rnd() * Math.PI * 2
+    // A radial hazard leaves on the bearing it was fanned onto. The Tempest
+    // vortices are spokes coming out of the boss, and rolling a fresh bearing
+    // for each one sent about a third of them straight back through him — over
+    // the melee and both tanks, which is the one patch of floor nobody on this
+    // fight is allowed to leave.
+    const a = def.radialDrift ? ang : rnd() * Math.PI * 2
     inst.drift = { x: Math.cos(a) * def.driftSpeed, y: Math.sin(a) * def.driftSpeed }
   }
   // Furniture is already on the floor. It has no telegraph and no resolve
@@ -1222,6 +1489,38 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
     dealOrbs(w, def)
   }
 
+  if (def.rule.type === 'windPair') {
+    dealWinds(w, def)
+  }
+
+  /**
+   * Several at once, fanned around wherever this comes from.
+   *
+   * Tempest is nine vortices sent out of the boss and Caustic Claws is six globs
+   * flung around him, and both were single circles before — which is not the
+   * same mechanic slightly smaller, it is a different one. Nine spokes leaving
+   * the boss is a room you have to pick a way through; one drifting circle is a
+   * sidestep.
+   *
+   * Each copy is spawned on its own bearing and handed that bearing as its
+   * angle, so a `radialDrift` hazard travels the way it was thrown.
+   */
+  if (def.count && def.count > 1 && def.rule.type !== 'collect') {
+    const src = bossUnitFor(w, def.from)
+    const base = at ?? (def.origin === 'boss' ? src.pos : def.origin === 'player' ? w.player.pos : src.pos)
+    // A whole-turn offset per cast, so the spokes are not in the same place
+    // twice and the gaps between them have to be read rather than remembered.
+    const spin = rnd() * Math.PI * 2
+    const ring = (def.shape?.kind === 'circle' ? def.shape.radius : 5) * 1.6
+    for (let i = 0; i < def.count; i++) {
+      const a = spin + (i / def.count) * Math.PI * 2
+      const p = clampToArena(
+        w.boss, { x: base.x + Math.cos(a) * ring, y: base.y + Math.sin(a) * ring }, 2)
+      spawn(w, def, p, a)
+    }
+    return
+  }
+
   if (def.rule.type === 'collect') {
     // Scattered pickups, not one shape. Each is its own instance so each can be
     // eaten independently, which is what "one player walks in first and eats it
@@ -1279,6 +1578,99 @@ function dealOrbs(w: World, def: MechanicDef) {
     a.marked = true
     a.green = a === reserved ? target - w.player.green : hand()
   }
+}
+
+/**
+ * Deal the compass bearings for Raging Crosswinds.
+ *
+ * Everybody gets one, and they are dealt in OPPOSED PAIRS rather than rolled
+ * independently. That is not a kindness: a roll can hand nineteen raiders north
+ * and one south, and a raid where most people have no possible partner is not a
+ * hard mechanic, it is a broken one. The real fight throws the raid two ways at
+ * once and every raider has an opposite number somewhere.
+ *
+ * One ally is reserved holding YOUR opposite and kept out of the raid's own
+ * pairing, exactly as the orb partner is — and for the same reason. They walk
+ * onto your axis and stop short, because closing the last stretch themselves
+ * would answer the mechanic for you.
+ */
+function dealWinds(w: World, def: MechanicDef) {
+  if (def.rule.type !== 'windPair') return
+  w.windUp = true
+  // The axis this cast throws along. Two directions at a time, which is what
+  // the ability data has at Heroic — the third and fourth bearings are Mythic.
+  // Which axis is rolled per cast, so the answer is never the same twice.
+  const axis = rnd() < 0.5 ? (['N', 'S'] as Compass[]) : (['E', 'W'] as Compass[])
+  const live = w.allies.filter(a => a.alive)
+  w.player.wind = axis[Math.floor(rnd() * 2)]
+
+  // Your partner comes from the half of the raid nearest you, so the answer is
+  // reachable inside the telegraph from wherever the last mechanic left you.
+  const near = [...live].sort((x, y) => dist(x.pos, w.player.pos) - dist(y.pos, w.player.pos))
+  const pool = near.slice(0, Math.max(3, Math.floor(near.length / 2)))
+  const reserved = pool[Math.floor(rnd() * Math.max(1, pool.length))]
+  w.windPartnerId = reserved ? reserved.id : -1
+  if (reserved) reserved.wind = OPPOSITE[w.player.wind]
+
+  // The rest, two at a time, so every one of them has somebody to meet. Paired
+  // by index and told who, rather than left to find each other: a raid that
+  // re-picks the nearest opposite arrow every tick swaps partners mid-approach
+  // and never finishes lining up.
+  const rest = live.filter(a => a !== reserved)
+  for (let i = 0; i < rest.length; i++) {
+    rest[i].wind = i % 2 === 0 ? axis[0] : axis[1]
+    const mate = rest[i ^ 1]
+    rest[i].windMate = mate ? mate.id : -1
+  }
+  // An odd body out is thrown, and has to be able to survive it: they are sent
+  // to the middle so the push crosses the floor instead of leaving it. Nobody
+  // is ever knocked off for an arithmetic leftover.
+  if (rest.length % 2 === 1) rest[rest.length - 1].windMate = -1
+  if (reserved) reserved.windMate = 0
+}
+
+/** Cysts still on the floor, oldest first — what the gales have to work with. */
+function liveCysts(w: World): Instance[] {
+  return w.instances.filter(i => i.def.raidKnockYards && i.resolved && !i.answered)
+}
+
+/**
+ * A Viscous Cyst bursts, and throws the entire raid clear of it.
+ *
+ * "Regardless of where they are" is the whole point and the reason this is not
+ * an ordinary puddle: the burst is what the Maelstrom's gale is aimed at, so it
+ * has to reach the people the gale is carrying rather than only the one who
+ * touched it. Everyone is thrown directly away from the glob — and the cyst sits
+ * out at the rim, so away from it is toward the middle, which is where the fight
+ * needs the raid to end up.
+ *
+ * Deliberately clamped to the floor, unlike a Crosswinds knock. This one is the
+ * ANSWER to being blown off the platform; a version of it that could finish the
+ * job would make the intermission unsurvivable by design.
+ */
+function burstCyst(w: World, inst: Instance) {
+  if (inst.answered) return
+  inst.answered = true
+  inst.timer = -1e9                    // retired: a cyst bursts exactly once
+  const push = inst.def.raidKnockYards ?? 24
+  const shove = (p: Vec) => {
+    const dx = p.x - inst.pos.x
+    const dy = p.y - inst.pos.y
+    const d = Math.hypot(dx, dy) || 1
+    const to = clampToArena(w.boss, { x: p.x + (dx / d) * push, y: p.y + (dy / d) * push }, 2)
+    p.x = to.x
+    p.y = to.y
+  }
+  shove(w.player.pos)
+  w.player.aloft = WIND_ALOFT_MS
+  for (const a of w.allies) {
+    if (!a.alive) continue
+    shove(a.pos)
+    a.want.x = a.pos.x
+    a.want.y = a.pos.y
+  }
+  w.cystsBurst++
+  w.shake = 1
 }
 
 /**
@@ -1516,7 +1908,29 @@ function resolveInstance(w: World, inst: Instance) {
         if (scored) recordFailure(w, def)
         w.raidHealth -= 0.1
       }
-      if (inside) hurt(w, def.damage ?? 0.25, def.name)
+      // Struck by a tank cone you are not tanking.
+      //
+      // Ravage "stacks +300% Ravage damage taken for 25s on everyone struck",
+      // so the second one genuinely kills a body the first one clipped — and
+      // there are two of them in every Apex Predator flurry. That is the whole
+      // reason it is a swap driver, and it is why "only the active tank in the
+      // cone" is the tactic file's Good line rather than a preference.
+      //
+      // Lethality here is NOT a balance choice dressed up: the first hit cannot
+      // kill, and the second only kills a body already carrying the amp the
+      // ability's own tooltip applies. `lethal` stays unset because 1277002 is
+      // not category Deadly, and it must keep matching the data.
+      if (inside && !currentTank(w, bossUnitFor(w, inst.fromId)).isPlayer) {
+        if (w.player.carrying[def.id] !== undefined) {
+          if (scored) recordFailure(w, def)
+          killPlayer(w, `${def.name} — struck at +300%`)
+        } else {
+          w.player.carrying[def.id] = 25000
+          hurt(w, def.damage ?? 0.25, def.name)
+        }
+      } else if (inside) {
+        hurt(w, def.damage ?? 0.25, def.name)
+      }
       break
     }
 
@@ -1658,6 +2072,159 @@ function resolveInstance(w: World, inst: Instance) {
       w.raidHealth -= (def.rule.dps / 100) * empowerment(w, def)
       break
 
+    case 'combo': {
+      // The flurry. Five real abilities dealt out back-to-back in an order
+      // nobody can memorise, from a marker that can never itself be failed.
+      //
+      // Staggered rather than simultaneous, and not only for readability: the
+      // announcement channel is a single slot cleared every tick, so two
+      // first-sight mechanics landing on one frame would teach one of them and
+      // silently mark the other as already seen, forever.
+      const parts = [...def.rule.parts]
+      const gap = def.rule.gapMs
+      for (let i = parts.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1))
+        const t = parts[i]
+        parts[i] = parts[j]
+        parts[j] = t
+      }
+      parts.forEach((id, i) => w.queue.push({ id, atMs: w.elapsedMs + i * gap }))
+      break
+    }
+
+    case 'groupSoak': {
+      // Two demands pulling against each other, which is the mechanic.
+      //
+      // Enough bodies, or the hit is not split and it lands on the raid whole.
+      // And never the same bodies twice, because every body struck takes a Gash
+      // and a second Gash on a live one kills it. So the cone has to find a
+      // crowd, and it has to find a DIFFERENT crowd than last time.
+      const dotId = def.rule.dotId
+      const need = def.rule.bodies
+      const dot = w.boss.mechanics.find(m => m.id === dotId)
+      // The tank holding him is exempt from the Gash, and only the tank.
+      //
+      // Aiming this cone means standing on the bearing you are aiming it down,
+      // so the active tank is inside their own frontal on every single cast by
+      // construction — they cannot be in a stack group and cannot step out
+      // without pointing it somewhere else. Giving them a Gash a cast killed
+      // them on the second one for doing their job perfectly, which is the exact
+      // defect class this project keeps having to re-fix. They still count as a
+      // body: they are genuinely in it, and the damage genuinely splits.
+      const holder = currentTank(w, bossUnitFor(w, inst.fromId))
+      const struck: Ally[] = []
+      let bodies = inside ? 1 : 0
+      for (const a of w.allies) {
+        if (!a.alive || !isInside(inst, a.pos)) continue
+        bodies++
+        if (a.pos !== holder.pos) struck.push(a)
+      }
+      const playerSoaks = inside && !holder.isPlayer
+
+      if (bodies < need) {
+        // Measured per cast, never per player — the tactic file is explicit
+        // ("Not a per-player failure — track soak count per cast"), and `def` is
+        // `collective`, so `scored` is already false and nobody is named. What
+        // it costs is the raid, and it costs them nearly all of it: an unsplit
+        // Mutilate is one hit away from a wipe rather than a scratch.
+        w.raidHealth -= 0.55
+        w.shake = 1
+        if (def.failText) w.lastFailure = { name: def.name, failText: def.failText, atMs: w.elapsedMs }
+      }
+
+      const life = dot && dot.rule.type === 'stackingDot' ? dot.rule.durationMs : 22000
+      const cap = dot && dot.rule.type === 'stackingDot' ? dot.rule.maxStacks : 2
+      const hitGroups = new Set<number>()
+
+      if (playerSoaks) {
+        hitGroups.add(w.player.group)
+        w.player.gash += 1
+        if (w.player.gash >= cap && dot) {
+          // Attributed to the Gash, which is the Deadly id the tactic file says
+          // to attribute these deaths to — never to Mutilate, which is a soak
+          // and can never name anybody.
+          if (def_scored(w, dot)) recordFailure(w, dot)
+          killPlayer(w, dot.name)
+        } else {
+          w.player.gashMs = life
+          chip(w, (dot?.damage ?? 0.1), dot?.name ?? def.name)
+        }
+      }
+      for (const a of struck) {
+        hitGroups.add(a.group)
+        a.gash += 1
+        if (a.gash >= cap) {
+          // The raid genuinely loses the group that ate two. Without this the
+          // rota is an instruction with no consequence attached, and a tank
+          // could aim at the same crowd all night.
+          a.alive = false
+          a.health = 0
+          w.alliesLost++
+        } else {
+          a.gashMs = life
+          a.health = Math.max(0.15, a.health - 0.25)
+        }
+      }
+      for (const g of hitGroups) w.groupGashMs[g] = life
+      break
+    }
+
+    case 'stackingDot':
+      // Never cast on its own. A `groupSoak` applies it, and step() runs the
+      // clock down — so arriving here at all means a boss file put it in a loop,
+      // and doing nothing is the honest response to that.
+      break
+
+    case 'windPair': {
+      w.windUp = false
+      const push = def.rule.pushYards
+      const mine = w.player.wind
+      if (mine) {
+        const met = w.allies.some(a => a.alive && windCancels(mine, w.player.pos, a.wind, a.pos))
+        if (!met) {
+          if (scored) recordFailure(w, def)
+          const v = COMPASS[mine]
+          // Deliberately NOT clamped to the rim, which is what `survive` does.
+          // Falling off the platform took 31 killing blows in six pulls here —
+          // more than every boss ability combined — and a knock that politely
+          // stops at the edge is a different fight from the one being taught.
+          // The floor check at the top of step() turns this into the fall.
+          w.player.pos.x += v.x * push
+          w.player.pos.y += v.y * push
+          w.player.aloft = WIND_ALOFT_MS
+          hurt(w, def.damage ?? 0.18, def.name)
+          w.shake = 1
+        }
+      }
+      for (const a of w.allies) {
+        if (!a.alive || !a.wind) continue
+        const partner = w.allies.some(o =>
+          o !== a && o.alive && windCancels(a.wind!, a.pos, o.wind, o.pos)) ||
+          windCancels(a.wind, a.pos, w.player.wind, w.player.pos) ||
+          // An odd body out was never given anybody to meet. Throwing them off
+          // the platform for an arithmetic leftover would put a death in the
+          // debrief that the player could not have prevented — the same line the
+          // orb puzzle draws for exactly the same reason.
+          a.windMate < 0
+        if (!partner) {
+          const v = COMPASS[a.wind]
+          a.pos.x += v.x * push
+          a.pos.y += v.y * push
+          if (!inArena(w.boss, a.pos)) {
+            a.alive = false
+            a.health = 0
+            w.alliesLost++
+          }
+        }
+        a.want.x = a.pos.x
+        a.want.y = a.pos.y
+        a.wind = null
+      }
+      w.player.wind = null
+      w.windPartnerId = -1
+      break
+    }
+
     case 'keepApart':
     case 'lethalGround':
       // Never resolved. Both are judged continuously in step(): one is a state
@@ -1700,7 +2267,16 @@ function resolveInstance(w: World, inst: Instance) {
       // A carried debuff leaves its pool wherever the carrier is standing when
       // it expires — that is the point of running it out.
       const carried = def.rule.type === 'carryOut' && inst.carriedByPlayer
-      const at = carried ? { ...w.player.pos } : inst.pos
+      let at: Vec = carried ? { ...w.player.pos } : { ...inst.pos }
+      // Snapped onto the clock face.
+      //
+      // A Viscous Cyst has to end up somewhere a gale can blow the raid into,
+      // and a gale only comes from one of the four compass quarters. Dropping
+      // one between two of them is a Maelstrom with nothing at the end of it,
+      // which is a wipe nobody in the room could have played out of. So the
+      // carrier's job is the QUARTER, not the pixel — walk it north-ish and it
+      // lands on north.
+      if (def.clockDrop) at = clockPoint(w.boss, clockOf(at))
       // A beam fires from where it spawned back into whatever cast the parent,
       // and reaches exactly that far — not the parent's own facing, which for a
       // floor circle is a random number.
@@ -1896,6 +2472,11 @@ function threatAt(inst: Instance, x: number, y: number): number {
  */
 function allyThink(w: World) {
   const arena = w.boss.arenaRadius
+  // Is a stack-group cone in the air, or about to be? While one is, holding the
+  // mark outranks clean feet — the acid costs a healer's cooldown and missing
+  // the soak costs half the raid bar.
+  const groupsUp = w.groupMarks.length > 0 && w.instances.some(i =>
+    !i.resolved && (i.def.rule.type === 'combo' || i.def.rule.type === 'groupSoak'))
 
   // Where melee stands: the midpoint of everything being tanked. With one boss
   // that is the boss. With Vexhul and Ithraz held apart it is the gap between
@@ -1964,6 +2545,18 @@ function allyThink(w: World) {
     a.want.x = home.x + Math.cos(spread) * ringR
     a.want.y = home.y + Math.sin(spread) * ringR
 
+    // On a fight with two stack groups, a raider's home is their group's mark
+    // rather than a ring around the boss — and it is a STACK, not a ring. A cone
+    // has to be able to take one group whole and miss the other entirely, which
+    // a raid spread evenly around the room can never offer it.
+    if (w.groupMarks.length && a.role !== 'tank') {
+      const gm = w.groupMarks[((a.group % w.groupMarks.length) + w.groupMarks.length) % w.groupMarks.length]
+      const fan = a.id * 2.39996
+      const tight = 2.4 + (a.id % 4) * 1.1
+      a.want.x = gm.x + Math.cos(fan) * tight
+      a.want.y = gm.y + Math.sin(fan) * tight
+    }
+
     // 2. Tanks. A tank stands in front of whatever it is holding, so the frontal
     //    stays put and points away from the raid. On a fight where two entities
     //    are held apart that puts a tank at each — which is the mechanic. A tank
@@ -1980,6 +2573,20 @@ function allyThink(w: World) {
     } else if (held) {
       a.want.x = held.pos.x + Math.cos(held.angle) * 5
       a.want.y = held.pos.y + Math.sin(held.angle) * 5
+      // Two stack groups turn "stand in front of him" into a decision. The cone
+      // comes out of his face, his face follows his tank, so where the tank
+      // stands is which group eats the Mutilate — and a group that eats two in a
+      // row dies to the second Gash. The AI tank therefore holds the CALLED
+      // group's bearing at all times rather than a fixed mark, which is exactly
+      // the footwork a player tank has to copy, performed where they can watch
+      // it happen.
+      if (hasGroups(w)) {
+        const st = tankStation(w, held)
+        if (st) {
+          a.want.x = st.x
+          a.want.y = st.y
+        }
+      }
       // On a fight with fountains, standing in front of the boss is not enough.
       // The two nearest him are the two that drain, and a tank who holds station
       // feeds the same pair every drink and stacks its Infusion forever — the
@@ -2076,6 +2683,61 @@ function allyThink(w: World) {
         const safe = arena * 0.42
         a.want.x = (a.pos.x / r) * safe + Math.cos(a.id) * 5
         a.want.y = (a.pos.y / r) * safe + Math.sin(a.id) * 5
+      } else if (rt === 'groupSoak') {
+        // Mutilate. The called group walks into the cone; everybody else gets
+        // well clear of it. Both halves are the mechanic — a body from the other
+        // group standing in this one takes a second Gash and dies — so the raid
+        // has to visibly do two different things at once, which is the only way
+        // a player can read which of the two they are supposed to be doing.
+        if (a.role !== 'tank') {
+          if (a.group === w.calledGroup && a.gash <= 0) {
+            const pt = soakPoint(inst, a.id % 9, 9)
+            a.want.x = pt.x
+            a.want.y = pt.y
+          } else {
+            // Their OWN mark, which is ninety degrees off the cone and already
+            // clear of it. Sending them to the called group's mark instead —
+            // the obvious "get away from the cone" — walked the whole raid into
+            // one pile, so the next cast could not miss anybody and the group
+            // that had just taken a Gash took a second one.
+            const own = w.groupMarks[((a.group % 2) + 2) % 2]
+            if (own) {
+              const fan = a.id * 2.39996
+              a.want.x = own.x + Math.cos(fan) * 3
+              a.want.y = own.y + Math.sin(fan) * 3
+            }
+          }
+        }
+      } else if (rt === 'windPair' && a.wind) {
+        // Raging Crosswinds. Two raiders thrown into each other cancel, so a
+        // pair walks onto a shared axis and stops eight yards short on their own
+        // side of it. Standing next to somebody is not the answer and must not
+        // look like it: they line up FACING each other down the wind.
+        const mate = w.allies.find(o => o.id === a.windMate && o.alive)
+        const dir = COMPASS[a.wind]
+        if (mate) {
+          const mid = { x: (a.pos.x + mate.pos.x) / 2, y: (a.pos.y + mate.pos.y) / 2 }
+          const hold = clampToArena(w.boss, mid, arena * 0.28)
+          a.want.x = hold.x - dir.x * 8
+          a.want.y = hold.y - dir.y * 8
+        } else if (a.windMate === 0) {
+          // Holding YOUR opposite. They come to your axis and stop just outside
+          // the range that would cancel it, because closing the last few yards
+          // themselves would answer the mechanic for you — the same bargain the
+          // orb partner makes on the Coiled Altar.
+          const held = clampToArena(w.boss, {
+            x: w.player.pos.x + COMPASS[OPPOSITE[a.wind]].x * (WIND_REACH + 4),
+            y: w.player.pos.y + COMPASS[OPPOSITE[a.wind]].y * (WIND_REACH + 4),
+          }, arena * 0.12)
+          a.want.x = held.x
+          a.want.y = held.y
+        } else {
+          // An odd body out with nobody to meet. They go to the middle, so the
+          // throw crosses the floor instead of leaving it — nobody in this raid
+          // dies to an arithmetic leftover.
+          a.want.x = -dir.x * 6
+          a.want.y = -dir.y * 6
+        }
       } else if (rt === 'press' && inst.def.rule.ability === 'dispel') {
         // A drifting hazard: the raid gives it a wide berth rather than
         // walking through it.
@@ -2119,6 +2781,25 @@ function allyThink(w: World) {
       }
     }
 
+    // 3e. The gales. The raid rides the wind into the cyst rather than fighting
+    //     it — "Raid moves WITH the wind, stays off the edge" is the tactic
+    //     file's own Good line — and the glob bursting is what throws everybody
+    //     back to the middle. A raid that treated the cyst as ground to avoid
+    //     would be blown past it and off the far rim, which is the mistake this
+    //     stage exists to punish.
+    const gale = activePhase(w)?.windToCysts
+      ? w.instances.find(i => i.uid === w.galeTargetUid)
+      : undefined
+    if (gale) {
+      // Straight at it, and with the wind rather than across it. Steering only
+      // laterally and letting the gale do the carrying is the prettier read and
+      // it cost a clear in every role: raiders drifting down a lane get strung
+      // out, the glob goes unburst for longer, and the stage that is supposed to
+      // rescue the raid from the wind spends longer holding them in it.
+      a.want.x = gale.pos.x
+      a.want.y = gale.pos.y
+    }
+
     // 4. Get clear of anything lethal. Highest priority, overrides the above —
     //    and checked against where they ARE as well as where they are going, so
     //    a hazard landing on a standing ally makes them move.
@@ -2129,14 +2810,29 @@ function allyThink(w: World) {
     //    learn from.
     for (const inst of w.instances) {
       if (!inst.def.shape) continue
-      if (inst.def.rule.type !== 'avoid' && inst.def.rule.type !== 'lethalGround') continue
+      const rt = inst.def.rule.type
+      // A tank frontal is ground to leave for everybody except the tank holding
+      // the thing casting it. Ravage kills anyone else it strikes on the second
+      // application, and a raid that stood in it because the engine only taught
+      // them to dodge `avoid` shapes is a raid the player cannot learn from.
+      if (rt === 'faceAway') {
+        if (w.bosses.some(b => b.def.id === inst.fromId && b.targetId === a.id)) continue
+      } else if (rt !== 'avoid' && rt !== 'lethalGround') continue
+      // The cyst the gale is aimed at is the way OUT of the Maelstrom, not a
+      // puddle. Fleeing it is how a raid gets blown off the far rim.
+      if (gale && inst.uid === gale.uid) continue
       // A raider on corpse duty, or one with ten seconds to find a partner,
       // stands in a puddle to get the job done. Pools on these two fights never
       // expire, so bodies and partners both end up standing in them: a raid that
       // treated clean feet as the higher priority would refuse to burn a single
       // corpse and would never cross the room to pair, and both intermissions
       // would be lost to tidiness. Ground that KILLS is still absolute.
-      if ((onCorpseDuty || a.marked) && inst.resolved && inst.def.rule.type === 'avoid') continue
+      // A raider with a wind arrow over their head is in the same position as
+      // one holding orbs: they have eight seconds to be on somebody's line and
+      // nothing else matters, because the alternative is the abyss. Stepping
+      // around a puddle costs a few points of health; stepping off the line
+      // costs the pull.
+      if ((onCorpseDuty || a.marked || a.wind) && inst.resolved && inst.def.rule.type === 'avoid') continue
       const sh = inst.def.shape
       const threatWant = threatAt(inst, a.want.x, a.want.y)
       const threatNow = threatAt(inst, a.pos.x, a.pos.y)
@@ -2183,7 +2879,7 @@ function allyThink(w: World) {
     for (const inst of w.instances) {
       // A raider with orbs over their head has ten seconds to find a partner and
       // nothing else matters; clean feet are a luxury for the rest of the pull.
-      if (onCorpseDuty || a.marked || !inst.resolved || !inst.def.shape) continue
+      if (onCorpseDuty || a.marked || a.wind || !inst.resolved || !inst.def.shape) continue
       if (!inst.def.lingerMs && !inst.def.permanent) continue
       fouled += threatAt(inst, a.want.x, a.want.y) > 0 ? 1 : 0
     }
@@ -2218,7 +2914,7 @@ function allyThink(w: World) {
     //    are up: a partner holding station two yards outside collision range is
     //    the difference between a pairing and a death, and idling across that
     //    line is not a decision anybody made.
-    if (!a.marked) {
+    if (!a.marked && !a.wind) {
       a.want.x += Math.sin(w.elapsedMs / 2600 + a.id * 1.7) * 1.6
       a.want.y += Math.cos(w.elapsedMs / 3100 + a.id * 2.3) * 1.6
     }
@@ -2235,8 +2931,14 @@ function allyThink(w: World) {
     //     were walking away from — and the Infusion the raid then eats is the
     //     AI's dithering rather than anything a player did. Sidestep, yes;
     //     wander, no.
+    //     A tank aiming a group cone is leashed for exactly the same reason,
+    //     and it is the reason the pair stopped walking to the wall: the aim
+    //     mark is a place in the room, and wandering off it is what turned every
+    //     later Mutilate into a cone pointed at empty floor.
     const station = w.bosses.find(b => b.targetId === a.id && b.def.tankedApart)?.def.start
-      ?? (w.bosses[0].targetId === a.id ? altarStation(w) : null)
+      ?? (w.bosses[0].targetId === a.id
+        ? (hasGroups(w) ? tankStation(w, w.bosses[0]) : altarStation(w))
+        : null)
     if (station) {
       const sdx = a.want.x - station.x
       const sdy = a.want.y - station.y
@@ -2289,6 +2991,30 @@ function allyThink(w: World) {
       }
     }
 
+    // 6d. Hold your stack.
+    //
+    //     Enforced after every other preference, and it has to be. A cone that
+    //     needs one group whole and the other one clear only works if both are
+    //     actually WHERE they are supposed to be, and every other rule in this
+    //     function is happy to walk a raider twenty-six yards to find cleaner
+    //     floor. Caustic Claws lands six globs around the boss, the marks sit
+    //     just outside them, and the tidying pass dragged group one out to
+    //     thirty-two yards — so the next Mutilate found a single body and the
+    //     raid ate an unsplit hit for something nobody did.
+    //
+    //     A leash, not a clamp: sidestepping a vortex is still allowed, leaving
+    //     the stack is not. Same shape as the tank leash above, same reason.
+    if (groupsUp && a.role !== 'tank' && w.groupMarks.length) {
+      const gm = w.groupMarks[((a.group % w.groupMarks.length) + w.groupMarks.length) % w.groupMarks.length]
+      const dx = a.want.x - gm.x
+      const dy = a.want.y - gm.y
+      const d = Math.hypot(dx, dy)
+      if (d > GROUP_LEASH) {
+        a.want.x = gm.x + (dx / d) * GROUP_LEASH
+        a.want.y = gm.y + (dy / d) * GROUP_LEASH
+      }
+    }
+
     // 7. Never walk off the platform. Asked of the floor, which on an octagon is
     //    a shorter walk on the diagonals than it is on the axes.
     const bounded = clampToArena(w.boss, a.want, arena * 0.1)
@@ -2305,6 +3031,12 @@ function allyMove(w: World, dt: number) {
     i.def.rule.type === 'beInside' ||
     i.def.rule.type === 'carryOut' ||
     i.def.rule.type === 'pairUp' ||
+    // Both of Sszorak's group mechanics, and they are the clearest case of why
+    // this list exists at all. You cannot line up with a raider who is not being
+    // drawn, and you cannot tell which stack group a cone is about to take if
+    // neither group is on the floor.
+    i.def.rule.type === 'groupSoak' ||
+    i.def.rule.type === 'windPair' ||
     // A trail is one raider's job, but it is a job about everybody else: the
     // point of walking it is that the pools miss the raid, and with an empty
     // floor there is nothing for them to miss.
@@ -2317,11 +3049,20 @@ function allyMove(w: World, dt: number) {
   // whole-raid relocation. That only reads as one if the bodies are on the floor
   // when it happens.
   const relocateWork = w.adds.some(a => a.alive && a.def.deathSpawnsAtAllPlayers)
+  // The Maelstrom is the most collective thing in the raid: the entire group is
+  // being blown at one glob and the burst throws all of them back.
+  const galeWork = !!activePhase(w)?.windToCysts
+  // The two stack groups stay on the floor for the whole flurry, not only while
+  // a cone happens to be in the air. Which group is carrying a Gash is a state
+  // the player has to be able to read between casts — that is when the decision
+  // is made — and a raid that blinked out between Mutilates would hide it.
+  const groupsUp = w.groupMarks.length > 0 && w.instances.some(i =>
+    !i.resolved && (i.def.rule.type === 'combo' || i.def.rule.type === 'groupSoak'))
 
   for (const a of w.allies) {
     if (!a.alive) { a.presence = Math.max(0, a.presence - dt * 3); continue }
     const wanted = a.role === 'tank' || groupWork || corpseWork || relocateWork
-      || a.debuff || a.marked ? 1 : 0
+      || galeWork || groupsUp || a.wind || a.debuff || a.marked ? 1 : 0
     // Walk on briskly, drift off gently — a raid that blinks out mid-mechanic
     // reads as a bug.
     a.presence += Math.max(-dt * 1.1, Math.min(dt * 3.4, wanted - a.presence))
@@ -2365,14 +3106,18 @@ function computePrompt(w: World): Prompt | null {
   }
 
   // Tank swap: the boss has been on one tank too long and you are the other.
-  const swapDef = w.boss.mechanics.find(m => m.rule.type === 'tankSwap')
-  if (swapDef && swapDef.rule.type === 'tankSwap' && w.player.role === 'tank') {
-    // The entity that casts the swap, not just whatever is listed first.
-    const tank = currentTank(w, bossUnitFor(w, swapDef.from))
-    if (!tank.isPlayer && tank.stacks >= swapDef.rule.maxStacks - 1) {
-      // Called a stack early so you have time to react rather than being told
-      // at the instant the clock starts running on a failure.
-      consider({ verb: 'TAUNT', mechanic: swapDef.name, urgency: 1 }, 0)
+  // Every driver, not the first declared — Sszorak has two, and being told about
+  // only one of them is how a tank eats the other.
+  if (w.player.role === 'tank') {
+    for (const swapDef of w.boss.mechanics) {
+      if (swapDef.rule.type !== 'tankSwap') continue
+      // The entity that casts the swap, not just whatever is listed first.
+      const tank = currentTank(w, bossUnitFor(w, swapDef.from))
+      if (!tank.isPlayer && tank.stacks >= swapDef.rule.maxStacks - 1) {
+        // Called a stack early so you have time to react rather than being told
+        // at the instant the clock starts running on a failure.
+        consider({ verb: 'TAUNT', mechanic: swapDef.name, urgency: 1 }, 0)
+      }
     }
   }
 
@@ -2451,6 +3196,22 @@ function computePrompt(w: World): Prompt | null {
     const gap = dist(inst.pos, w.player.pos) - inst.def.shape.radius
     if (gap < 6) {
       consider({ verb: 'GET OFF IT', mechanic: inst.def.name, urgency: 1 - Math.max(0, gap) / 6 }, 0)
+    }
+  }
+
+  // The gales. There is no telegraph to read and no shape to leave — the whole
+  // instruction is a direction, and the thing at the end of it is the only way
+  // out of the stage. Ranked above the floor because being blown past the glob
+  // ends the pull and standing in a puddle does not.
+  if (activePhase(w)?.windToCysts) {
+    const target = w.instances.find(i => i.uid === w.galeTargetUid)
+    if (target) {
+      const gap = dist(target.pos, w.player.pos)
+      consider({
+        verb: 'RIDE IT INTO THE CYST',
+        mechanic: target.def.name,
+        urgency: Math.max(0.2, 1 - gap / Math.max(1, w.boss.arenaRadius)),
+      }, 1)
     }
   }
 
@@ -2535,9 +3296,17 @@ function computePrompt(w: World): Prompt | null {
         if (inside) consider({ verb: 'BRACE — KNOCKBACK', mechanic: def.name, urgency: t }, 4)
         break
       case 'faceAway':
-        // Only your problem when you are the one holding the thing casting it.
+        // Only your problem when you are the one holding the thing casting it —
+        // unless you are standing in it, in which case it is very much your
+        // problem whatever your role is. Ravage kills a second time.
         if (w.player.role === 'tank' && bossUnitFor(w, def.from).targetId === 0) {
           consider({ verb: 'POINT IT AWAY', mechanic: def.name, urgency: t }, 2)
+        } else if (inside) {
+          consider({
+            verb: w.player.carrying[def.id] !== undefined ? 'GET OUT — IT KILLS' : 'GET OUT OF THE CONE',
+            mechanic: def.name,
+            urgency: t,
+          }, 1)
         }
         break
       case 'aimAway':
@@ -2552,6 +3321,40 @@ function computePrompt(w: World): Prompt | null {
         } else if (inside) {
           consider({ verb: 'MOVE OUT', mechanic: def.name, urgency: t }, 3)
         }
+        break
+
+      case 'groupSoak': {
+        const called = w.calledGroup
+        if (w.player.role === 'tank' && bossUnitFor(w, def.from).targetId === 0) {
+          // The tank is the only person who decides where this lands.
+          consider({ verb: `AIM AT GROUP ${called === 0 ? 'A' : 'B'}`, mechanic: def.name, urgency: t }, 1)
+        } else if (w.player.group === called && w.player.gash <= 0) {
+          if (!inside) consider({ verb: 'GET IN — YOUR GROUP', mechanic: def.name, urgency: t }, 2)
+        } else if (inside) {
+          // Your group already has a Gash. A second one kills you, so being in
+          // this cone is the failure — the exact inverse of the instruction the
+          // other half of the raid is reading off the same telegraph.
+          consider({ verb: 'GET OUT — YOU HAVE A GASH', mechanic: def.name, urgency: t }, 0)
+        }
+        break
+      }
+
+      case 'windPair':
+        if (w.player.wind) {
+          const met = w.allies.some(a =>
+            a.alive && windCancels(w.player.wind!, w.player.pos, a.wind, a.pos))
+          consider({
+            verb: met ? `LINED UP — ${w.player.wind}` : `LINE UP — BLOWN ${w.player.wind}`,
+            mechanic: def.name,
+            urgency: met ? t * 0.4 : t,
+          }, met ? 3 : 0)
+        }
+        break
+
+      case 'combo':
+        // A window marker with no shape and nothing to answer. What it is worth
+        // saying is that five things are about to arrive at once.
+        consider({ verb: 'BRACE — FLURRY', mechanic: def.name, urgency: t }, 5)
         break
       default:
         break
@@ -3045,6 +3848,29 @@ function enterPhase(w: World, index: number) {
       w.phaseAddsSpawned = true
     }
   }
+  if (ph.opensWith) fire(w, ph.opensWith)
+  if (ph.windToCysts) {
+    w.cystsBurst = 0
+    w.galeTargetUid = -1
+    // The Maelstrom guarantees its own cysts.
+    //
+    // Two gales need two globs to blow the raid into, and a raid that walked
+    // through one during the last rotation would otherwise arrive at a wind with
+    // nothing at the end of it — a wipe caused sixty seconds earlier by a
+    // mistake the debrief has no way to attribute. So whatever the rotation left
+    // on the floor is used, and anything missing is made up on a free compass
+    // point. Where the raid actually dropped them still decides which quarters
+    // the winds come from, which is the part worth practising.
+    const cystDef = w.boss.mechanics.find(m => m.raidKnockYards)
+    if (cystDef) {
+      const have = liveCysts(w)
+      const used = new Set(have.map(i => clockOf(i.pos)))
+      const free = CLOCK.filter(c => !used.has(c))
+      for (let i = 0; i < 2 - have.length && i < free.length; i++) {
+        spawn(w, cystDef, clockPoint(w.boss, free[i]))
+      }
+    }
+  }
 }
 
 /** Has this stage done what it was waiting for? */
@@ -3060,12 +3886,21 @@ function phaseComplete(w: World, ph: PhaseDef): boolean {
   if (pairs && w.pairFired && !w.player.marked
       && !w.allies.some(a => a.alive && a.marked)
       && !w.instances.some(i => !i.resolved && i.def.rule.type === 'pairUp')) return true
+  // "The intermission ends once both cysts have knocked the raid back into him."
+  // Same shape as the pairing exit above and for the same reason: no field is
+  // needed because the mechanic already says so. Every glob on the floor has
+  // burst, and entering the stage guaranteed there were two.
+  if (ph.windToCysts) return w.cystsBurst > 0 && liveCysts(w).length === 0
   return false
 }
 
 /** Wind a stage up and hand the fight to the next one. */
 function exitPhase(w: World, ph: PhaseDef) {
   if (ph.endsAtFullEnergy) w.bossEnergy = 0
+  // The gale is over. Left set, a stale uid told the raid AI and the balance
+  // harness that some instance was still the thing to run at for the rest of the
+  // pull — and once that uid was reused by a later hazard, they ran at that.
+  if (ph.windToCysts) w.galeTargetUid = -1
   if (ph.levelEntitiesOnExit) {
     // The weaker one is healed up to match the healthier. Uneven damage is a
     // reset rather than a meter problem, and this is the moment it is thrown
@@ -3173,7 +4008,13 @@ export function step(w: World, input: Input, dtMs: number) {
     mx /= m; my /= m
     // Airborne from a knockback: you drift, you do not steer. This is what
     // makes Sszorak's wind dangerous rather than an inconvenience.
-    const speed = w.player.aloft > 0 ? PLAYER_SPEED * 0.25 : PLAYER_SPEED
+    //
+    // The Tempest slow is on top of that, and the tactic file says exactly why
+    // it matters: "the slow is the lethal part, because it strands you in the
+    // wind". A vortex costs you almost nothing in damage and nearly everything
+    // in the next mechanic.
+    const slowed = w.player.slowMs > 0 ? 0.7 : 1
+    const speed = (w.player.aloft > 0 ? PLAYER_SPEED * 0.25 : PLAYER_SPEED) * slowed
     w.player.pos.x += mx * speed * dt
     w.player.pos.y += my * speed * dt
   }
@@ -3207,6 +4048,71 @@ export function step(w: World, input: Input, dtMs: number) {
     if (def_scored(w, inst.def) && !inst.def.collective) recordFailure(w, inst.def)
     killPlayer(w, inst.def.name)
     return
+  }
+
+  // ── the flurry, the groups and the gales ──
+  //
+  // Everything Sszorak needs that is not a resolve moment. A boss declaring none
+  // of these mechanics never touches any of it.
+
+  // Mutilated Gash runs down on its own, and which group is still carrying one
+  // is what decides where the next Mutilate has to go. So the clock is not
+  // bookkeeping — it IS the rota.
+  if (w.player.gashMs > 0) {
+    w.player.gashMs -= dtMs
+    if (w.player.gashMs <= 0) { w.player.gash = 0; w.player.gashMs = 0 }
+  }
+  if (w.player.slowMs > 0) w.player.slowMs -= dtMs
+  for (const a of w.allies) {
+    if (a.gashMs <= 0) continue
+    a.gashMs -= dtMs
+    if (a.gashMs <= 0) { a.gash = 0; a.gashMs = 0 }
+  }
+  for (let g = 0; g < w.groupGashMs.length; g++) {
+    if (w.groupGashMs[g] > 0) w.groupGashMs[g] = Math.max(0, w.groupGashMs[g] - dtMs)
+  }
+  if (hasGroups(w)) {
+    // Recomputed only when the mark it is standing on has actually been fouled.
+    // Re-derived every tick instead, the two marks twitched a yard here and
+    // there as pools landed and expired, and twenty raiders plus a tank spent
+    // the fight chasing a target that would not hold still — the stacks never
+    // settled, and the cone found whoever happened to be mid-stride.
+    w.groupMarks = [baseMark(0), baseMark(1)]
+    // Whichever group is clean. Never a free choice while one of them is still
+    // carrying a Gash, which is the entire mechanic — the cone has to find the
+    // crowd the last one missed. With both clean it simply stays where it was,
+    // so the rota reads as alternating rather than as a coin flip.
+    w.calledGroup = w.groupGashMs[0] > 0 ? 1 : w.groupGashMs[1] > 0 ? 0 : w.calledGroup
+  }
+
+  // The gales. A wind pushes the whole raid at one cyst at a time; reaching it
+  // bursts it, and the burst throws everybody back toward the middle — which is
+  // the only way across this stage and the reason the cysts had to land on a
+  // compass point in the first place.
+  if (phase?.windToCysts) {
+    const target = liveCysts(w)[0]
+    w.galeTargetUid = target ? target.uid : -1
+    if (target) {
+      const len = Math.hypot(target.pos.x, target.pos.y) || 1
+      const dir = { x: target.pos.x / len, y: target.pos.y / len }
+      const carry = GALE_SPEED * dt
+      w.player.pos.x += dir.x * carry
+      w.player.pos.y += dir.y * carry
+      for (const a of w.allies) {
+        if (!a.alive) continue
+        a.pos.x += dir.x * carry
+        a.pos.y += dir.y * carry
+      }
+      // Anybody at all. The burst reaches the whole raid regardless of where
+      // they were standing, so it does not matter whose body sets it off — and
+      // a stage that could only be cleared by the player walking onto a four
+      // yard glob in a crosswind would be a coin flip rather than a mechanic.
+      const reach = (target.def.shape?.kind === 'circle' ? target.def.shape.radius : 4) + 2.5
+      if (dist(target.pos, w.player.pos) <= reach ||
+          w.allies.some(a => a.alive && dist(target.pos, a.pos) <= reach)) {
+        burstCyst(w, target)
+      }
+    }
   }
 
   // ── the orbs ──
@@ -3332,6 +4238,9 @@ export function step(w: World, input: Input, dtMs: number) {
       }
       u.targetId = 0
       w.overStackMs = 0
+      // Every swap driver's clock, not just whichever one was ticking. A taunt
+      // answers all of them at once — you are holding the boss now.
+      for (const k of Object.keys(w.overStackBy)) w.overStackBy[k] = 0
     }
     if (ab === 'dispel') {
       // Clear the nearest debuffed ally — the healer's actual job.
@@ -3378,8 +4287,14 @@ export function step(w: World, input: Input, dtMs: number) {
   // The boss stacks its debuff on whoever holds it; the off-tank taunts before
   // it turns lethal. That is only YOUR job when you are the tank — otherwise the
   // two AI tanks swap between themselves and it is never scored against you.
-  const swapDef = w.boss.mechanics.find(m => m.rule.type === 'tankSwap')
-  if (swapDef && swapDef.rule.type === 'tankSwap') {
+  //
+  // EVERY tankSwap mechanic, not the first one declared. Sszorak has two and the
+  // ability data names them as a pair — Corroding Venom stacking on every melee
+  // landing, and Ravage's +300% on everyone the cone strikes — so a single
+  // `.find` served whichever happened to be written first and the other never
+  // fired at all. Each keeps its own over-threshold clock in `overStackBy`.
+  for (const swapDef of w.boss.mechanics) {
+    if (swapDef.rule.type !== 'tankSwap') continue
     // The swap belongs to whichever entity casts it, not to "the boss".
     const unit = bossUnitFor(w, swapDef.from)
     const tank = currentTank(w, unit)
@@ -3403,8 +4318,14 @@ export function step(w: World, input: Input, dtMs: number) {
       return other
     }
     const freeTank = handOff
+    // Its own clock. Two swap drivers sharing one counter meant a Ravage
+    // landing reset the Corroding Venom timer and vice versa, so whichever
+    // fired second could never reach its own threshold. `overStackMs` is kept
+    // as the mirror of whatever is currently over, for the HUD and the taunt.
+    const over = () => w.overStackBy[swapDef.id] ?? 0
     if (tank.stacks >= swapDef.rule.maxStacks) {
-      w.overStackMs += dtMs
+      w.overStackBy[swapDef.id] = over() + dtMs
+      w.overStackMs = over()
       if (tank.isPlayer) {
         // YOU are holding it and your stacks are up. Taunting off you is the
         // co-tank's job, and a competent co-tank does it — so this is not your
@@ -3414,27 +4335,32 @@ export function step(w: World, input: Input, dtMs: number) {
         // never taunted proactively and only ever took the boss after you had
         // already been marked down for holding too long. That taught a swap
         // partnership that does not exist.
-        if (w.overStackMs > CO_TANK_REACTION_MS) {
+        if (over() > CO_TANK_REACTION_MS) {
           const other = freeTank()
-          if (other) { unit.targetId = other.id; w.overStackMs = 0 }
+          if (other) { unit.targetId = other.id; w.overStackBy[swapDef.id] = 0; w.overStackMs = 0 }
         }
       } else if (!playerIsTank) {
         // Two AI tanks: they handle it between themselves, quickly.
-        if (w.overStackMs > 800) {
+        if (over() > 800) {
           const other = freeTank()
-          if (other) { unit.targetId = other.id; w.overStackMs = 0 }
+          if (other) { unit.targetId = other.id; w.overStackBy[swapDef.id] = 0; w.overStackMs = 0 }
         }
-      } else if (w.overStackMs > SWAP_GRACE_MS) {
+      } else if (over() > SWAP_GRACE_MS) {
         // The co-tank is holding it, over the threshold, and you have not
         // taunted. This is the one tank-swap failure that is actually yours.
         recordFailure(w, swapDef)
+        w.overStackBy[swapDef.id] = 0
         w.overStackMs = 0
         unit.targetId = 0
       }
     } else {
-      w.overStackMs = 0
+      w.overStackBy[swapDef.id] = 0
     }
-    // Stacks fall off anyone not currently holding something.
+  }
+  // Stacks fall off anyone not currently holding something. Outside the loop
+  // above: with two swap drivers it ran twice a tick and stacks bled off at
+  // double rate, so a threshold nobody could reach quietly stopped the swaps.
+  if (w.boss.mechanics.some(m => m.rule.type === 'tankSwap')) {
     for (const a of w.allies) {
       if (a.stacks > 0 && !w.bosses.some(b => b.targetId === a.id)) {
         a.stacks = Math.max(0, a.stacks - 0.35 * dt)
@@ -3477,8 +4403,14 @@ export function step(w: World, input: Input, dtMs: number) {
     // an entity with an unresolved shape of its own anchored to it is standing
     // still to deliver it, and a boss that walked out from under its own
     // telegraph would make every frontal a lie.
+    //
+    // Unless the cast follows him. A frontal that re-anchors to its caster every
+    // tick cannot be walked out from under, so there is nothing to protect — and
+    // Sszorak's opening premise is that he chases the tanks, which he cannot do
+    // if five back-to-back casts pin him for the whole Apex Predator flurry.
     const rooted = w.instances.some(i =>
-      !i.resolved && i.fromId === b.def.id && i.def.origin === 'boss' && i.def.telegraphMs > 0)
+      !i.resolved && i.fromId === b.def.id && i.def.origin === 'boss'
+      && i.def.telegraphMs > 0 && !i.def.mobileCaster)
 
     if (phase?.entitiesConverge) {
       // The intermission: they walk at each other, or — with only one entity on
@@ -3608,7 +4540,12 @@ export function step(w: World, input: Input, dtMs: number) {
   // is fed by events only — ten per scripted Ignition, five more for every Amani
   // that reached the water — so the bar reads backwards as a history of the pull
   // rather than as a clock.
-  if (w.boss.energyPerSec) {
+  //
+  // It stops while he is burrowed. The bar is what brings the Maelstrom on, so
+  // letting it keep climbing during the Maelstrom would mean a long intermission
+  // ends in an enrage — the fight punishing the raid for the length of its own
+  // set piece.
+  if (w.boss.energyPerSec && !phase?.windToCysts) {
     w.bossEnergy = Math.min(100, w.bossEnergy + w.boss.energyPerSec * dt)
   }
 
@@ -3719,6 +4656,11 @@ export function step(w: World, input: Input, dtMs: number) {
     // out of something it has glued to you, then fails you for not doing the
     // impossible. Real frontals fire where they were aimed and you sidestep.
     //
+    // `groupSoak` tracks for the same reason `faceAway` does: aiming it IS the
+    // tank's job. Mutilate has to be put on one stack group and then on the
+    // other, and a cone frozen at the bearing it spawned on would make that
+    // impossible for the one player who is supposed to decide it.
+    //
     // A fixated line is exempt from the re-anchoring. It belongs to the add that
     // cast it, not to the serpent whose `from` it inherits, and without this
     // guard every Corrosive Spit snapped out of the pocket onto Vexhul the tick
@@ -3729,7 +4671,8 @@ export function step(w: World, input: Input, dtMs: number) {
         && inst.aimedAt === undefined) {
       const src = bossUnitFor(w, inst.fromId)
       inst.pos = { ...src.pos }
-      if (inst.def.rule.type === 'faceAway') inst.angle = src.angle
+      const aimed = inst.def.rule.type === 'faceAway' || inst.def.rule.type === 'groupSoak'
+      if (aimed) inst.angle = src.angle
     }
     // A fixate line swings to follow the raider it marked, pivoting about the
     // add that is casting it. This is the SAME exemption the tank frontal above
@@ -3803,8 +4746,31 @@ export function step(w: World, input: Input, dtMs: number) {
     // is the same thing with no expiry: Blood Venom and Essence Rend pools
     // accumulate for the whole pull, so the encounter steadily eats its own
     // floor and gets harder because of where people stood ten minutes ago.
+    // A vortex slows whoever brushes it, and the slow is the fight's one dispel.
+    // Applied to the raid as well as to you: `Ally.debuff` is what a healer's
+    // dispel actually targets, so without this the healer's button had nothing
+    // on this boss to point at.
+    if (inst.resolved && inst.def.slowMs) {
+      if (isInside(inst, w.player.pos)) w.player.slowMs = Math.max(w.player.slowMs, inst.def.slowMs)
+      for (const a of w.allies) {
+        if (!a.alive || a.debuff || !isInside(inst, a.pos)) continue
+        a.debuff = inst.def.id
+        a.debuffMs = inst.def.slowMs
+      }
+    }
+
     if (inst.resolved && (inst.def.lingerMs || inst.def.permanent) && isInside(inst, w.player.pos)) {
-      if (inst.def.popsOnContact) {
+      if (inst.def.raidKnockYards) {
+        // A cyst you walked into. It bursts, and the burst throws the WHOLE
+        // raid — which is the mechanic, not an inconvenience. During the gales
+        // that is the answer and nobody is blamed for it; the rest of the time
+        // it is a raid-wide relocation nobody asked for, and it costs you the
+        // cyst the Maelstrom was going to need.
+        if (!inst.answered) {
+          if (!phase?.windToCysts && def_scored(w, inst.def)) recordFailure(w, inst.def)
+          burstCyst(w, inst)
+        }
+      } else if (inst.def.popsOnContact) {
         // "pops on contact for damage and a 30% slow" — one hit, then it is
         // gone. Modelling it as a persistent field instead made it the leading
         // cause of death in playtesting, which is not what the fight does.

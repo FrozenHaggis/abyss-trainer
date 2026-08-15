@@ -1,4 +1,5 @@
-import type { BossDef, Instance, Role, Side, Vec } from './types'
+import type { BossDef, Compass, Instance, Role, Side, Vec } from './types'
+import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
@@ -166,15 +167,57 @@ function drawLabel(
   ctx.textBaseline = 'alphabetic'
 }
 
-function ruleColour(inst: Instance): string {
+function ruleColour(inst: Instance, w?: World): string {
   switch (inst.def.rule.type) {
     case 'beInside': return GREEN
     case 'collect': return GREEN
     case 'carryOut': return VIOLET
     case 'press': return VIOLET
     case 'survive': return VIOLET
+    case 'windPair': return VIOLET
+    /**
+     * The one telegraph in the raid whose VERB depends on who is reading it.
+     *
+     * Mutilate is a soak for the group it is called on and a death sentence for
+     * the group that already has a Gash, and both are looking at the same cone.
+     * Colour encodes the verb everywhere else in this file, so it encodes the
+     * verb here too — green when it is your turn to get in, red when standing in
+     * it would put a second stack on you. Painting it one colour for everybody
+     * would be the one case where the palette lies.
+     */
+    case 'groupSoak':
+      return w && w.player.group === w.calledGroup && w.player.gash <= 0 ? GREEN : RED
     default: return RED
   }
+}
+
+/** Arrowhead of length `len` at (x, y), pointing along `ang`. */
+function drawArrow(
+  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number,
+  len: number, colour: string, alpha = 1,
+) {
+  const dx = Math.cos(ang)
+  const dy = Math.sin(ang)
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.strokeStyle = `rgba(${colour}, 0.98)`
+  ctx.lineWidth = 3
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  ctx.moveTo(x - dx * len * 0.5, y - dy * len * 0.5)
+  ctx.lineTo(x + dx * len * 0.5, y + dy * len * 0.5)
+  ctx.stroke()
+  const hx = x + dx * len * 0.5
+  const hy = y + dy * len * 0.5
+  const wing = len * 0.32
+  ctx.beginPath()
+  ctx.moveTo(hx, hy)
+  ctx.lineTo(hx - dx * wing - dy * wing * 0.7, hy - dy * wing + dx * wing * 0.7)
+  ctx.moveTo(hx, hy)
+  ctx.lineTo(hx - dx * wing + dy * wing * 0.7, hy - dy * wing - dx * wing * 0.7)
+  ctx.stroke()
+  ctx.restore()
+  ctx.lineWidth = 1
 }
 
 /** 0 at spawn, 1 at resolve — telegraphs fill as they approach. */
@@ -443,6 +486,84 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     pathArena(ctx, cam, w.boss, r); ctx.stroke()
   }
 
+  // ── the clock face ──
+  //
+  // Drawn whenever the fight keys anything to a compass point, which on Sszorak
+  // is where a Viscous Cyst has to end up: a gale only ever comes from one of
+  // the four quarters, so "north-ish" is an instruction a carrier can follow and
+  // "forty-one yards out on a bearing of 312" is not. Four ticks and four
+  // numerals at the rim, dim — this is furniture, not a telegraph — and the
+  // quarter that already has a glob on it is lit so the raid can see which winds
+  // the Maelstrom still has left to give them.
+  const clockKeyed = w.boss.mechanics.some(m => m.clockDrop || m.raidKnockYards)
+  if (clockKeyed) {
+    const cysts = w.instances.filter(i => i.def.raidKnockYards && i.resolved && !i.answered)
+    const face: [Compass, string][] = [['N', '12'], ['E', '3'], ['S', '6'], ['W', '9']]
+    for (const [c, numeral] of face) {
+      const dir = COMPASS[c]
+      const taken = cysts.some(i =>
+        i.pos.x * dir.x + i.pos.y * dir.y > Math.hypot(i.pos.x, i.pos.y) * 0.85)
+      const inner = toPx(cam, { x: dir.x * w.boss.arenaRadius * 0.9, y: dir.y * w.boss.arenaRadius * 0.9 })
+      const outer = toPx(cam, { x: dir.x * w.boss.arenaRadius, y: dir.y * w.boss.arenaRadius })
+      ctx.beginPath()
+      ctx.moveTo(inner.x, inner.y)
+      ctx.lineTo(outer.x, outer.y)
+      ctx.strokeStyle = `rgba(${taken ? VIOLET : BONE}, ${taken ? 0.85 : 0.28})`
+      ctx.lineWidth = taken ? 3 : 2
+      ctx.stroke()
+      ctx.lineWidth = 1
+      const lp = toPx(cam, { x: dir.x * w.boss.arenaRadius * 0.83, y: dir.y * w.boss.arenaRadius * 0.83 })
+      drawLabel(ctx, numeral, lp.x, lp.y, taken ? VIOLET : BONE, 11, taken ? 0.95 : 0.45)
+    }
+  }
+
+  // ── the two stack marks ──
+  //
+  // Where each half of the raid stands so one Mutilate cone can take one of them
+  // whole and miss the other entirely. IDENTITY first — which half am I — so
+  // they wear the side palette rather than the verb palette and are drawn as
+  // thin unfilled rings, under the same discipline as the split-raid bubbles.
+  //
+  // The CALLED one carries a second, brighter ring, because "whose turn is it"
+  // is the only question this mechanic asks and it changes every cast. A raider
+  // who can read it off the floor never has to work out whether the cone coming
+  // at them is a soak or a death.
+  if (w.groupMarks.length) {
+    w.groupMarks.forEach((mark, g) => {
+      const called = g === w.calledGroup
+      const yours = g === w.player.group
+      const col = g === 0 ? SIDE_GREEN : SIDE_RED
+      const p = toPx(cam, mark)
+      const rr = 7.5 * cam.scale
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2)
+      ctx.setLineDash([9, 7])
+      ctx.strokeStyle = `rgba(${col}, ${called ? 0.75 : 0.3})`
+      ctx.lineWidth = called ? 3 : 1.5
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+      if (called) {
+        // A second ring just outside, pulsing. Never filled: a filled shape in
+        // this palette means a telegraph is landing there.
+        ctx.beginPath(); ctx.arc(p.x, p.y, rr + 5, 0, Math.PI * 2)
+        ctx.strokeStyle = `rgba(${col}, ${0.3 + 0.35 * pulse})`
+        ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1
+      }
+      drawLabel(
+        ctx,
+        `GROUP ${g === 0 ? 'A' : 'B'}${yours ? ' · YOURS' : ''}${called ? ' · CALLED' : ''}`,
+        p.x, p.y - rr - 10, col, 11, called || yours ? 0.95 : 0.5,
+      )
+      // How long this group's Gash has left. It is the whole reason the rota
+      // alternates, and a countdown says "you cannot take another one yet" far
+      // better than a raider discovering it by dying.
+      const left = w.groupGashMs[g] ?? 0
+      if (left > 0) {
+        drawLabel(ctx, `GASH ${(left / 1000).toFixed(0)}s`, p.x, p.y + rr + 12, RED, 11, 0.9)
+      }
+    })
+  }
+
   // ── the three sections ──
   // Vashnik's room is ONE open floor with an altar in each corner. Nothing walls
   // the sections off in the real room, so nothing walls them off here: each altar
@@ -605,6 +726,28 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.stroke()
     ctx.restore()
     ctx.setLineDash([])
+    // A hazard that is still MOVING keeps spinning after it lands.
+    //
+    // The spinner used to live only in the active-telegraph pass, so a Tempest
+    // vortex span while it was a warning and then went perfectly still the
+    // instant it became dangerous — nine roaming things drawn as nine puddles,
+    // with nothing on screen to say they were still coming at you.
+    if (inst.def.driftSpeed && inst.def.shape.kind === 'circle') {
+      const dp = toPx(cam, inst.pos)
+      const dr = inst.def.shape.radius * cam.scale
+      ctx.save()
+      ctx.translate(dp.x, dp.y)
+      ctx.rotate((w.elapsedMs / 380) % (Math.PI * 2))
+      ctx.strokeStyle = `rgba(${RED}, ${0.8 * dying})`
+      ctx.lineWidth = 2
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath()
+        ctx.arc(0, 0, dr * 0.62, (i / 3) * Math.PI * 2, (i / 3) * Math.PI * 2 + 1.1)
+        ctx.stroke()
+      }
+      ctx.restore()
+      ctx.lineWidth = 1
+    }
   }
 
   // ── corpses ──
@@ -671,7 +814,7 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (inst.resolved || !inst.def.shape) continue
     if (inst.def.rule.type === 'collect') continue   // drawn above as pickups
     if (inst.def.rule.type === 'lethalGround') continue // drawn above as a hole
-    const col = ruleColour(inst)
+    const col = ruleColour(inst, w)
     const t = progress(inst)
     pathShape(ctx, cam, inst)
     ctx.fillStyle = `rgba(${col}, ${0.10 + t * 0.28})`
@@ -728,7 +871,7 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     pathShape(ctx, cam, inst, 1 + 0.35 * (1 - f))
     ctx.fillStyle = `rgba(255, 255, 255, ${0.30 * f})`
     ctx.fill()
-    ctx.strokeStyle = `rgba(${ruleColour(inst)}, ${0.9 * f})`
+    ctx.strokeStyle = `rgba(${ruleColour(inst, w)}, ${0.9 * f})`
     ctx.lineWidth = 3 * f + 1
     ctx.stroke()
     ctx.lineWidth = 1
@@ -1125,6 +1268,12 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.lineWidth = 1
   }
 
+  // A live Mutilated Gash. The next cone that catches you kills, so it is drawn
+  // on you rather than left in a debuff list nobody reads mid-flurry.
+  if (w.player.gash > 0) {
+    drawLabel(ctx, `GASH — STAY OUT`, pp.x, pp.y + 30, RED, 12, 0.75 + 0.25 * pulse)
+  }
+
   // Standing in range of both golems. This is the split raid's characteristic
   // mistake — both Marks stack, forever, and the healers pay for it for the rest
   // of the pull — and it is invisible from inside it, because being in range of
@@ -1144,6 +1293,116 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     drawOrbs(ctx, p.x, p.y - 19, a.green)
   }
   if (w.player.marked) drawOrbs(ctx, pp.x, pp.y - 26, w.player.green, true)
+
+  // ── Raging Crosswinds ──
+  //
+  // Last, over everything, for the same reason the orbs are: while this is up it
+  // is the only thing on screen worth looking at. You are hunting the raider
+  // whose arrow points back at yours, and one obscured by a vortex is one you
+  // cannot find.
+  //
+  // Every raider's bearing is drawn, not just yours. Reading somebody else's
+  // arrow IS the mechanic — this is the same call the orbs make, and it is why
+  // the raid has to be on the floor during a spread rather than faded out.
+  if (w.windUp || w.player.wind) {
+    for (const a of w.allies) {
+      if (!a.alive || !a.wind || a.presence < 0.03) continue
+      const p = toPx(cam, a.pos)
+      const ang = Math.atan2(COMPASS[a.wind].y, COMPASS[a.wind].x)
+      drawArrow(ctx, p.x, p.y - 20, ang, 20, VIOLET, 0.9 * a.presence)
+    }
+    if (w.player.wind) {
+      const dir = COMPASS[w.player.wind]
+      const ang = Math.atan2(dir.y, dir.x)
+      drawArrow(ctx, pp.x, pp.y - 28, ang, 28, LIME)
+      drawLabel(ctx, `BLOWN ${w.player.wind}`, pp.x, pp.y - 46, LIME, 11, 0.95)
+
+      // The lane you are about to travel, and whether anybody is standing in it.
+      //
+      // Drawn as the actual test the engine runs rather than as a hint: the pair
+      // of rails is the tolerance, the length is the reach, and it turns green
+      // the instant a body with the opposite arrow is inside it. Without this,
+      // "line up" is an instruction with no way to check your own answer — you
+      // find out whether you were on the line by falling off the platform.
+      const want = OPPOSITE[w.player.wind]
+      const mate = w.allies.find(a => {
+        if (!a.alive || a.wind !== want) return false
+        const dx = a.pos.x - w.player.pos.x
+        const dy = a.pos.y - w.player.pos.y
+        const along = dx * dir.x + dy * dir.y
+        const across = Math.abs(dx * -dir.y + dy * dir.x)
+        return along > 0 && along <= 26 && across <= 6
+      })
+      const col = mate ? GREEN : RED
+      ctx.save()
+      ctx.setLineDash([6, 6])
+      ctx.lineDashOffset = -(w.elapsedMs / 40) % 12
+      ctx.strokeStyle = `rgba(${col}, ${mate ? 0.75 : 0.4 + 0.3 * pulse})`
+      ctx.lineWidth = 2
+      for (const side of [-1, 1]) {
+        const ox = -dir.y * 6 * side * cam.scale
+        const oy = dir.x * 6 * side * cam.scale
+        ctx.beginPath()
+        ctx.moveTo(pp.x + ox, pp.y + oy)
+        ctx.lineTo(pp.x + dir.x * 26 * cam.scale + ox, pp.y + dir.y * 26 * cam.scale + oy)
+        ctx.stroke()
+      }
+      ctx.restore()
+      ctx.lineWidth = 1
+      if (mate) {
+        const mp = toPx(cam, mate.pos)
+        ctx.beginPath()
+        ctx.moveTo(pp.x, pp.y); ctx.lineTo(mp.x, mp.y)
+        ctx.strokeStyle = `rgba(${GREEN}, 0.9)`; ctx.lineWidth = 3; ctx.stroke()
+        ctx.lineWidth = 1
+        drawLabel(ctx, 'LINED UP', (pp.x + mp.x) / 2, (pp.y + mp.y) / 2 - 14, GREEN, 11, 0.95)
+      }
+    }
+  }
+
+  // ── the gales ──
+  //
+  // A wind has no shape to draw, so it is drawn as what it does: streaks running
+  // the way it is pushing, and a ring on the glob at the end of it. Both are
+  // necessary. Without the streaks the stage is a mysterious loss of control;
+  // without the ring the one thing that ends it is a four-yard circle somewhere
+  // out at the rim, indistinguishable from every other puddle on the floor.
+  const galeTarget = w.instances.find(i => i.uid === w.galeTargetUid)
+  if (galeTarget) {
+    const len = Math.hypot(galeTarget.pos.x, galeTarget.pos.y) || 1
+    const dir = { x: galeTarget.pos.x / len, y: galeTarget.pos.y / len }
+    ctx.save()
+    pathArena(ctx, cam, w.boss)
+    ctx.clip()
+    ctx.strokeStyle = `rgba(${VIOLET}, 0.32)`
+    ctx.lineWidth = 2
+    const span = arenaReach(w.boss) * cam.scale
+    const drift = ((w.elapsedMs / 8) % 60)
+    for (let i = -14; i <= 14; i++) {
+      // Laid across the wind and swept along it, so the whole floor visibly
+      // moves one way.
+      const ox = -dir.y * i * 9 * cam.scale
+      const oy = dir.x * i * 9 * cam.scale
+      for (let k = -2; k <= 2; k++) {
+        const t = k * 60 + drift
+        const sx = cam.cx + ox + dir.x * (t - span)
+        const sy = cam.cy + oy + dir.y * (t - span)
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(sx + dir.x * 34, sy + dir.y * 34)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+    ctx.lineWidth = 1
+
+    const gp = toPx(cam, galeTarget.pos)
+    const gr = (galeTarget.def.shape?.kind === 'circle' ? galeTarget.def.shape.radius : 4) * cam.scale
+    ctx.beginPath(); ctx.arc(gp.x, gp.y, gr + 8 + 4 * pulse, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${GREEN}, ${0.6 + 0.35 * pulse})`
+    ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
+    drawLabel(ctx, 'RIDE IT IN', gp.x, gp.y - gr - 20, GREEN, 12, 0.95)
+  }
 
   ctx.restore()
 }

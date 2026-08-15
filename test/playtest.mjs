@@ -15,7 +15,9 @@ import { BOSSES } from '../.playtest/registry.mjs'
 // Fixed seeds, so the clear count is reproducible and a regression cannot hide
 // inside run-to-run noise. Several seeds rather than one, so a single unlucky
 // spawn sequence does not masquerade as a balance problem.
-const SEEDS = [1337, 2024, 90210]
+// SEED= runs one of them alone, so a single bad cell can be looked at rather
+// than averaged away.
+const SEEDS = process.env.SEED ? [Number(process.env.SEED)] : [1337, 2024, 90210]
 
 /** The eight headings WASD can produce, normalised. */
 const S = Math.SQRT1_2
@@ -72,6 +74,15 @@ function play(boss, role, smart, seed, side = 'green') {
   // thing that measures it.
   const markDefs = boss.mechanics.filter(m => m.proximityStack)
   const pairDef = boss.mechanics.find(m => m.rule.type === 'pairUp')
+  const windDef = boss.mechanics.find(m => m.rule.type === 'windPair')
+  const soakDef = boss.mechanics.find(m => m.rule.type === 'groupSoak')
+  // A swap driver that trips on EVERY cast. Ravage is the only one in the raid:
+  // one application is already too many, so an off-tank who does not taunt eats
+  // a recorded failure every single flurry.
+  const swapEveryCast = boss.mechanics.some(m =>
+    m.rule.type === 'tankSwap' && m.rule.maxStacks <= 1)
+  const COMPASS = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } }
+  const OPPOSITE = { N: 'S', S: 'N', E: 'W', W: 'E' }
   let ticks = 0
   while (w.player.alive && !w.killed && w.elapsedMs / 1000 < boss.pullLengthSec && ticks < 40000) {
     if (smart) {
@@ -85,8 +96,13 @@ function play(boss, role, smart, seed, side = 'green') {
       // are assignments given to other people. Letting the bot help with them
       // was worth thirty separation failures a pull.
       const anchoredTank = !!w.bosses?.find(b => b.targetId === 0)?.def.tankedApart
+      // Where a tank aiming a frontal has to be standing, filled in below.
+      let tankAnchor = null
       for (const i of w.instances) {
         if (!i.def.shape || i.def.rule.type !== 'avoid') continue
+        // The glob a gale is aimed at is the way OUT of the stage, not a puddle.
+        // Fleeing it is how the raid gets blown off the far rim.
+        if (i.uid === w.galeTargetUid) continue
         // A one-shot outranks everything else on screen. A player who knows the
         // fight drops whatever they are doing for it, so the bot must too —
         // otherwise the clear rate measures the bot's indifference to lethality
@@ -179,6 +195,7 @@ function play(boss, role, smart, seed, side = 'green') {
       // it dies to accumulated ground it has been standing in for a minute.
       for (const i of w.instances) {
         if (!i.def.permanent || !i.def.shape || i.def.rule.type !== 'avoid') continue
+        if (i.uid === w.galeTargetUid) continue
         const f = awayFrom(w.player.pos.x, w.player.pos.y, i.pos.x, i.pos.y, i.uid)
         const keep = (i.def.shape.radius ?? 8) + 4
         if (f.d < keep) { tx += f.x * (keep - f.d) * 3.5; ty += f.y * (keep - f.d) * 3.5 }
@@ -279,6 +296,181 @@ function play(boss, role, smart, seed, side = 'green') {
         }
       }
 
+      // ── the two stack groups ──
+      //
+      // A cone that has to find one group and miss the other asks the bot for
+      // the one thing a flee-everything bot cannot do: stand in a telegraph on
+      // purpose, on exactly half the casts. Without this it fled both Mutilates,
+      // the soak went unsplit twice a flurry, and the raid bar emptied — which
+      // measures the bot's reflexes rather than whether the fight is survivable.
+      if (soakDef) {
+        for (const i of w.instances) {
+          if (i.resolved || i.def.rule.type !== 'groupSoak') continue
+          const called = w.player.group === w.calledGroup && w.player.gash <= 0
+          const dx = i.pos.x - w.player.pos.x, dy = i.pos.y - w.player.pos.y
+          const d = Math.hypot(dx, dy) || 1
+          if (called) {
+            // Into the body of the cone rather than at its apex, which is the
+            // boss. Aiming at `pos` walks you into melee and out the far side.
+            const half = ((i.def.shape?.arcDeg ?? 60) * Math.PI) / 360
+            const reach = (i.def.shape?.radius ?? 20) * 0.55
+            const px = i.pos.x + Math.cos(i.angle) * reach
+            const py = i.pos.y + Math.sin(i.angle) * reach
+            const pd = Math.hypot(px - w.player.pos.x, py - w.player.pos.y) || 1
+            tx += ((px - w.player.pos.x) / pd) * 26
+            ty += ((py - w.player.pos.y) / pd) * 26
+            void half
+          } else {
+            // Your group is already carrying a Gash. A second one kills, so this
+            // cone is as lethal to you as any hole in the floor.
+            const f = awayFrom(w.player.pos.x, w.player.pos.y, i.pos.x, i.pos.y, i.uid)
+            const keep = (i.def.shape?.radius ?? 20) + 5
+            if (d < keep) { tx += f.x * 30; ty += f.y * 30 }
+          }
+        }
+      }
+
+      // ── aiming the boss, as the tank ──
+      //
+      // Two opposite jobs out of one face, under two seconds apart: Ravage must
+      // point away from everybody and Mutilate must point straight at one of the
+      // two stacks. The boss faces whoever holds him, so both are answered with
+      // your feet — you aim for whichever cone lands FIRST. Without this the bot
+      // held a fixed spot and swept the raid with four Ravages a pull while
+      // never once putting a Mutilate on a group.
+      const heldByMe = w.bosses?.find(b => b.targetId === 0)
+      // Only on a fight that actually runs the two-group rota. Applied to every
+      // boss with a tank cone it cost Nek'zali two clears out of three: her tank
+      // has one job — hold her still, away from the Well — and a rule written
+      // for a fight where the cone has somewhere it must point sent them walking
+      // to a mark that fight does not have.
+      if (heldByMe && soakDef) {
+        let next = null
+        for (const i of w.instances) {
+          if (i.resolved || i.fromId !== heldByMe.def.id) continue
+          if (i.def.rule.type !== 'faceAway' && i.def.rule.type !== 'groupSoak') continue
+          if (!next || i.timer < next.timer) next = i
+        }
+        let sx = null, sy = null
+        if (next && next.def.rule.type === 'faceAway') {
+          // Directly opposite the raid, so the cone sweeps empty floor.
+          let rx = 0, ry = 0, n = 0
+          for (const a of w.allies) { if (a.alive) { rx += a.pos.x; ry += a.pos.y; n++ } }
+          if (n) {
+            // Directly opposite the raid FROM THE MIDDLE OF THE ROOM. Measured
+            // from him instead, it walks off the platform: he follows you away
+            // from the raid, which moves the answer further out every tick.
+            const d = Math.hypot(rx / n, ry / n) || 1
+            sx = (-(rx / n) / d) * 22
+            sy = (-(ry / n) / d) * 22
+          }
+        } else if (w.groupMarks?.length) {
+          // Stand ON the called group's mark. He faces his tank, so being in the
+          // middle of the stack is what puts the cone on the stack — and unlike
+          // a spot measured from him, it cannot walk away with him.
+          const gm = w.groupMarks[w.calledGroup % w.groupMarks.length]
+          sx = gm.x
+          sy = gm.y
+        }
+        if (sx !== null) {
+          const d = Math.hypot(sx - w.player.pos.x, sy - w.player.pos.y)
+          if (d > 1.5) { tx += ((sx - w.player.pos.x) / d) * 20; ty += ((sy - w.player.pos.y) / d) * 20 }
+          tankAnchor = { x: sx, y: sy, d }
+        }
+      }
+
+      // ── stand somewhere on purpose ──
+      //
+      // Between mechanics the bot had NO force acting on it at all, so it simply
+      // stopped wherever the last one left it — which on Sszorak meant three
+      // yards from the rim for twelve seconds, until Raging Crosswinds came
+      // round and posted it into the abyss. It was not making a mistake; it had
+      // nowhere it was trying to be. A real raider stands on their mark, and so
+      // does the raid AI this bot is supposed to be a stand-in for.
+      //
+      // Deliberately weak: it loses to every telegraph, every soak and every
+      // debuff. It only decides where you idle.
+      if (w.groupMarks?.length) {
+        const gm = w.groupMarks[w.player.group % w.groupMarks.length]
+        const d = Math.hypot(gm.x - w.player.pos.x, gm.y - w.player.pos.y)
+        if (d > 4) {
+          tx += ((gm.x - w.player.pos.x) / d) * 5
+          ty += ((gm.y - w.player.pos.y) / d) * 5
+        }
+      }
+
+      // ── the wind ──
+      //
+      // Line up with the raider whose arrow points back at yours, on their axis,
+      // on the side they will be thrown from. Anything else is a 22-yard throw
+      // and, on a 56-yard floor, usually the abyss.
+      if (windDef && w.player.wind) {
+        const dir = COMPASS[w.player.wind]
+        const want = OPPOSITE[w.player.wind]
+        let mate = w.allies.find(a => a.id === w.windPartnerId && a.alive && a.wind === want)
+        if (!mate) {
+          let md = Infinity
+          for (const a of w.allies) {
+            if (!a.alive || a.wind !== want) continue
+            const d = Math.hypot(a.pos.x - w.player.pos.x, a.pos.y - w.player.pos.y)
+            if (d < md) { md = d; mate = a }
+          }
+        }
+        if (mate) {
+          // Stand a comfortable way back down your own axis from them, so the
+          // throw carries you together rather than past each other. Across the
+          // axis first: being on their line matters more than the distance.
+          const gx = mate.pos.x - dir.x * 12
+          const gy = mate.pos.y - dir.y * 12
+          const d = Math.hypot(gx - w.player.pos.x, gy - w.player.pos.y) || 1
+          tx += ((gx - w.player.pos.x) / d) * 40
+          ty += ((gy - w.player.pos.y) / d) * 40
+        } else {
+          // Nobody to meet: get to the middle so the throw crosses the floor
+          // instead of leaving it.
+          const r = Math.hypot(w.player.pos.x, w.player.pos.y) || 1
+          tx -= (w.player.pos.x / r) * 20
+          ty -= (w.player.pos.y / r) * 20
+        }
+      }
+
+      // ── the gales ──
+      //
+      // Ride the wind into the glob. The tactic file's own Good line is "raid
+      // moves WITH the wind, stays off the edge", and a bot that treated the
+      // cyst as ground to avoid was blown straight past it and off the far rim —
+      // which is precisely the mistake the stage exists to punish.
+      const gale = w.instances.find(i => i.uid === w.galeTargetUid)
+      if (gale) {
+        const d = Math.hypot(gale.pos.x - w.player.pos.x, gale.pos.y - w.player.pos.y) || 1
+        tx += ((gale.pos.x - w.player.pos.x) / d) * 50
+        ty += ((gale.pos.y - w.player.pos.y) / d) * 50
+      }
+
+      // ── a tank aiming a cone is leashed to their mark ──
+      //
+      // Summed forces cannot say "never", and nine Tempest vortices spiralling
+      // out of a boss standing next to you say "run" nine times at once. The bot
+      // obeyed, the boss followed it, and the pair walked from the mark out to
+      // fifty-two yards on a fifty-six yard floor — with the cone pointing at
+      // open ground the whole way and both Mutilates landing on nobody.
+      //
+      // So it is a constraint rather than a preference, exactly like the arena
+      // edge below: past the leash, going back is the only heading considered.
+      // Sidestepping a vortex is still allowed. Leaving the mark is not.
+      // Unless they are standing in something. A leash, not a clamp: a real tank
+      // steps off their mark to survive and walks back, and a hard constraint
+      // that outranked "get out of the acid" killed them at twenty-four seconds
+      // holding perfect position.
+      const standingInIt = w.instances.some(i =>
+        i.resolved && i.def.shape?.kind === 'circle' && (i.def.lingerMs || i.def.permanent)
+        && i.def.rule.type === 'avoid' && !i.def.raidKnockYards
+        && Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y) < i.def.shape.radius)
+      if (tankAnchor && tankAnchor.d > 8 && !standingInIt) {
+        tx = (tankAnchor.x - w.player.pos.x) / tankAnchor.d
+        ty = (tankAnchor.y - w.player.pos.y) / tankAnchor.d
+      }
+
       // ── resolve the desired direction against hard constraints ──
       //
       // Summed forces cannot express "never", only "strongly prefer", and every
@@ -366,6 +558,28 @@ function play(boss, role, smart, seed, side = 'green') {
       // Kick on sight when an add is winding up, otherwise tick over.
       const casting = w.adds.some(a => a.alive && a.def.job === 'kick' && a.castMs >= 0 && !a.kicked)
       if (casting) input.pressed.push('interrupt')
+      // Take the swap when the fight asks for it. The bot never pressed taunt at
+      // all, which on a boss whose swap driver trips on every single cast meant
+      // it ate a recorded failure every flurry for a button it was holding.
+      //
+      // Only where the swap trips every cast, and never while carrying.
+      //
+      // Pressing it on every fight with a tank debuff cost Nek'zali two clears
+      // out of three: her tank took her back every cycle and then had no window
+      // to walk a Slithering Flame anywhere, and a boss the bot used to kill
+      // stopped being winnable at all. Where the threshold is a real stack count
+      // the co-tank AI already trades correctly on its own — the button only has
+      // to be pressed where not pressing it is an automatic failure.
+      if (swapEveryCast && !carrying && w.prompt?.verb === 'TAUNT') input.pressed.push('taunt')
+      // Press the buttons a competent player presses.
+      //
+      // The bot had a ninety-second defensive and a raid cooldown on its bar for
+      // the whole project and never touched either, which is not a careful
+      // player being measured — it is a careless one wearing the label. A tank
+      // eating two Ravages a flurry with an unused defensive is not evidence
+      // that the flurry is too hard.
+      if (w.player.health < 0.55 && !w.player.cooldowns.defensive) input.pressed.push('defensive')
+      if (w.raidHealth < 0.5 && !w.player.cooldowns.raidcd) input.pressed.push('raidcd')
       if (w.elapsedMs % 900 < TICK_MS) input.pressed.push('dispel', 'interrupt')
     }
     step(w, input, TICK_MS)
@@ -382,6 +596,8 @@ function play(boss, role, smart, seed, side = 'green') {
         + ` raid=${w.raidHealth.toFixed(2)} pos=(${w.player.pos.x.toFixed(0)},${w.player.pos.y.toFixed(0)})`
         + ` phase=${w.phaseIndex ?? '-'} bossHp=${w.bossHp.toFixed(2)}`
         + ` marks=${JSON.stringify(w.player.marks ?? {})}`
+        + (w.player.wind ? ` wind=${w.player.wind} mate=${w.windPartnerId}` : '')
+        + (w.galeTargetUid >= 0 ? ` gale=${w.galeTargetUid}` : '')
         + (inPool.length ? ` STANDING-IN:${inPool.map(i => i.def.id).join(',')}` : ''))
     }
   }
@@ -391,15 +607,23 @@ function play(boss, role, smart, seed, side = 'green') {
 const pad = (s, n) => String(s).padEnd(n)
 let clears = 0, expected = 0
 
+// BOSS= and ROLE= narrow the sweep to one cell. Tuning a single fight meant
+// waiting out twenty-six others every time, which is long enough that you stop
+// re-running it and start guessing.
+const ONLY_BOSS = process.env.BOSS
+const ONLY_ROLE = process.env.ROLE
+
 for (const [label, smart] of [['careless', false], ['competent', true]]) {
   console.log(`\n── ${label} player ──`)
   for (const boss of BOSSES) {
+    if (ONLY_BOSS && boss.key !== ONLY_BOSS) continue
     // A split fight is two different fights. Running only one half would leave
     // the other completely unmeasured, which is exactly how a boss "passes"
     // while half its content is unplayable.
     const sides = boss.sided ? ['green', 'red'] : [null]
     for (const side of sides) {
       for (const role of ['tank', 'healer', 'dps']) {
+        if (ONLY_ROLE && role !== ONLY_ROLE) continue
         // Run every seed and report the median-ish outcome: cleared if it cleared
         // on most seeds, which is the question we actually care about.
         const runs = SEEDS.map(sd => play(boss, role, smart, sd, side ?? 'green'))

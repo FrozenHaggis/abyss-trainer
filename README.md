@@ -68,6 +68,14 @@ data. Tests run on every build and every deploy:
 - **which mechanics kill outright** is read from `category: "Deadly"` in the
   ability data, not chosen for balance — the same categorisation RaidLens uses
   to attribute a death to a mechanic
+- a **window marker** — an ability the data says produces no events — can never
+  be something you fail. Apex Predator deals out five real abilities and is
+  scored on none of them
+- a **spread must be survivable only by answering it**: an unpaired Raging
+  Crosswinds knock has to leave the platform from anywhere, or standing in the
+  middle ignoring the fight's headline mechanic is a valid strategy. It was
+- one **group-soak cone cannot cover both stack groups**, or the alternating
+  rota is something no tank could play correctly
 - a missed soak never kills you personally; an unsoaked hit lands on the raid
 - a contact hazard cannot kill on the frame it spawns
 - on multi-boss fights, **every entity and its npcId** must match
@@ -102,7 +110,21 @@ the clock.
 Check balance changes against this rather than by eye. It has caught an annulus
 being fled outward off the platform, pools detonating on the carrier who dropped
 them, a tank dying to a dispel they cannot cast, shots expiring before they could
-reach the boss, and adds accumulating faster than any player could clear them.
+reach the boss, adds accumulating faster than any player could clear them, and a
+tank and the boss chasing each other to the wall because the tank's mark was
+measured from a boss that walks after its tank.
+
+`BOSS=`, `ROLE=` and `SEED=` narrow it to one cell, which matters once a fight is
+long enough that a full sweep is a coffee break. `FAILS=1` breaks the count down
+by mechanic and `TRACE=1` prints a pull second by second — a single large number
+tells you a fight is going wrong, and only the breakdown tells you whether that
+is difficulty or a defect.
+
+The bot is a measuring instrument, so what it cannot do is a blind spot in the
+measurement rather than a fact about the fight. It could not press taunt, a
+defensive or a raid cooldown at all until Sszorak needed all three, and until
+then every number this harness produced was a careless player wearing a careful
+label.
 
 ## Known gaps
 
@@ -123,8 +145,20 @@ Recorded honestly rather than quietly left out.
 - **Frostfire Volley's element pairing** (opposing Fire/Frost patches detonate on
   contact) is folded into a generic Fire Patch entry. It is a polarity mechanic
   and the engine has no polarity primitive.
-- **Turbulent Gusts** (Sszorak) — being aloft is a movement state with no
-  mid-air collision. Two-body airborne physics, deliberately deferred.
+- **Sszorak inverts its tactic file twice, on purpose.** Both are stated in the
+  boss file rather than left to be found. Raging Crosswinds is authored so two
+  raiders thrown into each other CANCEL — the source's Good line is "drift back
+  to solid floor without touching anyone", and a mid-air collision is its Bad
+  line. And the Maelstrom's gales blow the raid INTO the Viscous Cysts, where the
+  source says to drop them "clear of the raid path and the next wind direction".
+  Both changes turn a mechanic you survive by luck into one you get right or
+  wrong on purpose, which is worth more in a trainer than fidelity here is.
+- **Sszorak's four wind bearings are a Heroic reading of Mythic data.** The
+  ability data has two direction debuffs at Heroic and two more that only ever
+  appeared on Mythic. The mechanic is keyed to the Heroic knockback itself
+  (`1285616`) and which of four bearings you are handed is a runtime detail, so
+  no Mythic spell id is referenced — but the real Heroic fight throws two ways,
+  not four.
 - **Mythic content is excluded on purpose.** This is a Heroic trainer and a test
   enforces it.
 

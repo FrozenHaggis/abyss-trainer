@@ -14,7 +14,7 @@ would make the trainer teach something the fight does not do.
 | Entombed Sentinels | Recurring cycle | — |
 | Vashnik the Malignant | Recurring cycle | **none — stated** |
 | The Lost Explorers | Council | **none** |
-| Sszorak | Recurring cycle | — |
+| Sszorak | Recurring cycle | 1 + intermission |
 | The Twin Fangs | Recurring cycle | **none — stated** (+ one end-state) |
 | The Coiled Altar | Linear | 3 + intermission |
 | Ula'tek | Linear | 3 |
@@ -116,6 +116,12 @@ Single target, no adds, nothing to kick.
 **What wipes raids here is falling off the platform.** `Falling` (spell 3) took
 **31 killing blows** in 6 Mythic PTR pulls, more than every boss ability
 combined.
+
+Authored as beats 1-2 in one stage and beat 3 as an intermission, cycling. That
+is a real structure rather than an invented one — the beats are the tactic file's
+own — but note what it is NOT: `Howling Maelstrom` (1285732) is a phase marker
+with no cast events, so the stage is detected through `Dig In` exactly as the
+ability data instructs, and nothing in the trainer lets you fail the marker.
 
 ### The Twin Fangs — fixed cadence, plus one end-state
 

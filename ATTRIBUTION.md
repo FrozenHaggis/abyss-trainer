@@ -24,29 +24,47 @@ No licence obligation.
 
 ---
 
-## Music — you supply the track
+## Music — one fixed track
 
-**Nothing is committed.** `public/music/*.mp3` is gitignored, so a published
-build never redistributes it. Drop an audio file at:
+The game plays a single track on every pull:
 
 ```
-public/music/pull.mp3
+public/music/boss-music.mp3
 ```
 
-It plays on loop when a pull starts and fades out at the end. If the file is
-absent the game runs silently — no errors, no missing-asset warnings.
+It loops while the pull runs, ducks under the voice callouts, and fades out at
+the end. There is no in-app picker — replace the file to change it.
 
-### About Guile's Theme
+| Track | Artist | Composition | Source |
+|---|---|---|---|
+| Guile's Theme (cover) | Mitch Murder | Yoko Shimomura — © Capcom | [SoundCloud](https://soundcloud.com/mitchmurder) |
 
-Guile's Theme is composed by Yoko Shimomura and owned by **Capcom**. It is not
-public domain, and downloading it from YouTube would breach both YouTube's terms
-and Capcom's copyright — so it is not included here and I did not rip it.
+The track **is committed**, so a clone and the deployed site both have it. Any
+*other* mp3 dropped into `public/music/` stays gitignored, so a personal copy of
+something else cannot be published by accident. If the file is absent the game
+runs silently — no errors, no missing-asset warnings.
 
-If you own it (Steam soundtrack, the *Street Fighter II* OST, a Bandcamp
-purchase), you are free to use your own copy locally: export it to
-`public/music/pull.mp3` and it works. That stays a personal-use copy on your own
-machine. The one thing to avoid is publishing the built site with it embedded —
-that is redistribution, and it is the part that gets a page taken down.
+### The licence position, stated plainly
+
+This is shipped as non-commercial fan use, not under a licence. Recording it
+honestly so nobody has to re-derive it later:
+
+- Guile's Theme is **Yoko Shimomura's composition, owned by Capcom**. It is not
+  public domain.
+- Mitch Murder's cover is tagged CC BY on SoundCloud, but that tag can only
+  cover *his recording*. Nobody except Capcom can license the composition
+  underneath, so the CC BY tag does not make the track redistributable.
+- Serving it from the deployed site is redistribution. Being free, non-profit
+  and a raid guide are mitigating facts, not a licence — they weigh in a fair
+  use argument, they do not settle one.
+- YouTube creators use this music routinely because Google holds blanket
+  licensing deals and Content ID lets rights holders claim the video instead of
+  suing. GitHub Pages has no equivalent, so the realistic outcome here is a
+  **DMCA takedown of the site**, not damages.
+
+That risk was weighed and accepted. If the page ever does get pulled, the fix is
+to swap in a clearable track from the list below — the file path is the only
+thing the code cares about, so it is a one-file change.
 
 ### Tracks you can ship
 

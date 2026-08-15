@@ -43,18 +43,15 @@ npm run playtest   # headless balance check, 8 bosses x 3 roles
 
 ## Music
 
-**Load your own on the title screen.** Pick any audio file from your PC and it
-plays on pull, ducks under the voice callouts, and fades at the end. The file is
-read straight into the browser via an object URL — it is **never uploaded**, so
-nothing is hosted or shared, and your own copy of a soundtrack works fine on the
-deployed site. Every raider loads their own; the choice is remembered per browser.
+**One fixed track.** `public/music/boss-music.mp3` plays on every pull, ducks
+under the voice callouts, and fades at the end. There is no picker and no
+runtime upload — the track is part of the fight, not a preference.
 
-**No music ships with the repo.** `public/music/*.mp3` is gitignored so a personal
-copy can never be published by accident. If you want a default track baked into
-the deployed site for everyone, it has to be one you may redistribute — see
-[ATTRIBUTION.md](ATTRIBUTION.md). Drop it at `public/music/pull.mp3`.
-
-Without either, the game runs silently — no errors, no missing-asset warnings.
+The track ships with the repo, so a clone and the deployed site both have it —
+credit and the licence position are in [ATTRIBUTION.md](ATTRIBUTION.md). Any
+*other* mp3 dropped into `public/music/` is still gitignored, so a personal copy
+cannot be published by accident. If the track is missing the game runs silently:
+no errors, no missing-asset warnings.
 
 ## Why the mechanics are trustworthy
 

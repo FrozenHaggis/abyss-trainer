@@ -1,19 +1,15 @@
 // Fight music.
 //
-// The app ships with NO audio file committed — `public/music/*.mp3` is
-// gitignored. Drop your own track at `public/music/pull.mp3` and it plays when a
-// pull starts; if the file is absent, everything works in silence.
+// One fixed track, `public/music/boss-music.mp3`, plays on every pull. There is
+// no picker: the track is part of the fight, not a preference. If the file is
+// absent the game runs in silence rather than erroring.
 //
 // See ATTRIBUTION.md.
 
 // Resolved against Vite's base URL: a project GitHub Pages site is served from
 // /<repo>/, so an absolute '/music/...' would look at the domain root and 404.
-const TRACK_URL = `${import.meta.env.BASE_URL}music/pull.mp3`
+const TRACK_URL = `${import.meta.env.BASE_URL}music/boss-music.mp3`
 const VOLUME = 0.45
-const TRACK_NAME_KEY = 'abyss-trainer.trackName'
-
-/** Object URL for a track the listener loaded from their own disk. */
-let customUrl: string | null = null
 
 let el: HTMLAudioElement | null = null
 let available: boolean | null = null
@@ -24,41 +20,9 @@ let ducked = false
 let duckRaf = 0
 const DUCK_VOLUME = 0.10
 
-/**
- * Point the player at a track on the listener's own machine.
- *
- * The file is read straight into an object URL and never leaves the browser —
- * nothing is uploaded and nothing is served to anyone else, so your own copy of
- * a commercial soundtrack works on the deployed site without redistributing it.
- * Each person supplies their own.
- */
-export function useLocalTrack(file: File): void {
-  stopMusic(0)
-  if (customUrl) URL.revokeObjectURL(customUrl)
-  customUrl = URL.createObjectURL(file)
-  try { localStorage.setItem(TRACK_NAME_KEY, file.name) } catch { /* private mode */ }
-  el = null
-  available = null
-  initMusic()
-}
-
-/** The remembered track name, purely so the UI can show what is loaded. */
-export function localTrackName(): string | null {
-  try { return localStorage.getItem(TRACK_NAME_KEY) } catch { return null }
-}
-
-export function clearLocalTrack(): void {
-  stopMusic(0)
-  if (customUrl) URL.revokeObjectURL(customUrl)
-  customUrl = null
-  try { localStorage.removeItem(TRACK_NAME_KEY) } catch { /* ignore */ }
-  el = null
-  available = null
-}
-
 export function initMusic(): void {
   if (el || available === false) return
-  const a = new Audio(customUrl ?? TRACK_URL)
+  const a = new Audio(TRACK_URL)
   a.loop = true
   a.volume = VOLUME
   a.preload = 'auto'

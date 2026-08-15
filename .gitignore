@@ -2,8 +2,12 @@ node_modules
 dist
 .playtest
 
-# Personal music copy — kept local so a published build never redistributes it.
+# The fight track is committed so the deployed site has music. It is a cover of
+# a Capcom composition, shipped as non-commercial fan use with the takedown risk
+# accepted knowingly — see ATTRIBUTION.md. Any other mp3 dropped in here stays
+# local.
 public/music/*.mp3
+!public/music/boss-music.mp3
 
 # scratch bundles from ad-hoc engine probes
 .scratch/

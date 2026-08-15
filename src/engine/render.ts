@@ -1033,7 +1033,49 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
         ctx.strokeStyle = 'rgba(248, 81, 73, 0.95)'; ctx.lineWidth = 3; ctx.stroke()
         ctx.lineWidth = 1
       }
+
+      // So does one winding up a fixated cast. Without this the only warning is
+      // the frontal itself, and by then the marked player has 5 seconds to
+      // solve a problem they could have been walking away from already.
+      if (d.casts && add.castMs > 0) {
+        const t = 1 - add.castMs / (d.casts.everySec * 1000)
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, R + 6, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2)
+        ctx.strokeStyle = 'rgba(210, 153, 34, 0.9)'; ctx.lineWidth = 3; ctx.stroke()
+        ctx.lineWidth = 1
+      }
     }
+  }
+
+  // ── fixate tethers ──
+  //
+  // A thin line from each spawn to the raider it has marked. The frontal shows
+  // WHERE the line will go; this shows WHOSE it is, which is the thing a raid
+  // has to sort out in the two seconds before the first cast — three marks in a
+  // twenty-man raid is invisible otherwise, and the marked players are the only
+  // people who can fix it.
+  for (const add of w.adds) {
+    if (!add.alive || !add.def.fixates || add.fixate === -2) continue
+    const tgt = add.fixate === -1
+      ? (w.player.alive ? w.player.pos : null)
+      : (w.allies.find(a => a.id === add.fixate && a.alive)?.pos ?? null)
+    if (!tgt) continue
+    const a = toPx(cam, add.pos)
+    const b = toPx(cam, tgt)
+    // Yours is drawn brighter and solid. Somebody else's is a hint; your own is
+    // an instruction.
+    const yours = add.fixate === -1
+    ctx.setLineDash(yours ? [] : [5, 5])
+    ctx.strokeStyle = yours ? 'rgba(210, 153, 34, 0.85)' : 'rgba(210, 153, 34, 0.35)'
+    ctx.lineWidth = yours ? 2 : 1
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke()
+    ctx.setLineDash([]); ctx.lineWidth = 1
+    // The mark itself, sitting on the raider carrying it.
+    ctx.beginPath(); ctx.arc(b.x, b.y, yours ? 15 : 11, 0, Math.PI * 2)
+    ctx.strokeStyle = yours ? 'rgba(210, 153, 34, 0.95)' : 'rgba(210, 153, 34, 0.45)'
+    ctx.lineWidth = yours ? 2 : 1
+    ctx.stroke()
+    ctx.lineWidth = 1
   }
 
   // ── your shots ──

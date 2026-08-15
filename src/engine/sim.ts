@@ -113,6 +113,15 @@ export interface Add {
   /** The current cast was interrupted. */
   kicked: boolean
   alive: boolean
+  /**
+   * Who this add has fixated: an `Ally.id`, -1 for the player, -2 for nobody.
+   *
+   * Picked once when it surfaces and kept for life — that is what makes it a
+   * fixate rather than a re-roll. Three Spawn of Vexhul therefore hold three
+   * DIFFERENT raiders, because each one excludes the targets its siblings
+   * already took.
+   */
+  fixate: number
 }
 
 /** A shot in flight. The boss only dies from these. */
@@ -1486,6 +1495,32 @@ function resolveInstance(w: World, inst: Instance) {
       break
     }
 
+    case 'aimAway': {
+      // One cast, two entirely different jobs, decided by whether it marked you.
+      if (inst.carriedByPlayer) {
+        // Yours to aim. The line runs from the pocket through you and out the
+        // far side, so the question is never "am I standing in it" — you always
+        // are — but "what else is behind me". Judged against where the raid
+        // actually is, the same reference `faceAway` uses, because a raid that
+        // has spread for something else has moved the answer.
+        const raid = raidAnchor(w)
+        if (isInside(inst, raid)) {
+          if (scored) recordFailure(w, def)
+          w.raidHealth -= 0.11
+        }
+        // Deliberately no damage to the marked player. They were chosen, and
+        // this project does not bill people for being chosen — the carrier of a
+        // Coiling Ichor is "never at fault" for the same reason. What they are
+        // answerable for is where they pointed it, which is the check above.
+      } else if (inside) {
+        // Everyone else: an ordinary frontal, scored exactly like `avoid`.
+        if (scored) recordFailure(w, def)
+        if (def.lethal) killPlayer(w, def.name)
+        else hurt(w, (def.damage ?? 0.3) * empowerment(w, def), def.name)
+      }
+      break
+    }
+
     case 'press':
       if (!inst.answered) {
         if (scored) recordFailure(w, def)
@@ -1623,6 +1658,15 @@ function resolveInstance(w: World, inst: Instance) {
       w.raidHealth -= 0.09
       w.shake = Math.min(1, w.shake + 0.5)
     }
+  }
+
+  // A cast whose whole point is what it leaves standing on the floor. The
+  // summon ignores the concurrency cap on purpose: the cap governs the trash
+  // timer, and a scripted cast that silently declined to summon would leave the
+  // raid reading a 3-second telegraph that did nothing.
+  if (def.summons) {
+    const kind = w.boss.adds?.find(a => a.id === def.summons!.addId)
+    if (kind) spawnAdds(w, kind, def.summons.count ?? kind.count)
   }
 
   if (def.spawns) {
@@ -2471,6 +2515,19 @@ function computePrompt(w: World): Prompt | null {
           consider({ verb: 'POINT IT AWAY', mechanic: def.name, urgency: t }, 2)
         }
         break
+      case 'aimAway':
+        if (inst.carriedByPlayer) {
+          // Only nags while the line is actually crossing the raid. Told to
+          // "point it away" from the moment it lands, a marked player who has
+          // already walked it somewhere sensible would be shouted at for doing
+          // the right thing, and would learn to tune the prompt out.
+          if (isInside(inst, raidAnchor(w))) {
+            consider({ verb: 'POINT IT AWAY', mechanic: def.name, urgency: t }, 1)
+          }
+        } else if (inside) {
+          consider({ verb: 'MOVE OUT', mechanic: def.name, urgency: t }, 3)
+        }
+        break
       default:
         break
     }
@@ -2497,6 +2554,72 @@ export function unlockedCount(w: World): number {
   return Math.max(1, Math.min(activeLoop(w).length, n))
 }
 
+/** How long after surfacing a fixating add starts its first cast. */
+const FIXATE_FIRST_CAST_MS = 1800
+
+/**
+ * Add ids some mechanic summons, and which the trash timer must therefore skip.
+ *
+ * Exported so the honesty tests can assert the link both ways round: that every
+ * `summons` names an add that exists, and that a summoned add is not also being
+ * dealt out on the wave timer behind the summoning cast's back.
+ */
+export function summonedIds(boss: BossDef): Set<string> {
+  const out = new Set<string>()
+  for (const m of boss.mechanics) if (m.summons) out.add(m.summons.addId)
+  return out
+}
+
+/**
+ * Which raider an add fixates on.
+ *
+ * "Three random non-tank players" — with two constraints the word "random" does
+ * not carry on its own. The three spawns must hold three DIFFERENT raiders, so
+ * whoever a sibling already took is off the table; and the player is taken
+ * first whenever they are eligible, because this is a trainer and watching an
+ * ally kite a line teaches nothing. A tank is never eligible: they are welded to
+ * a serpent 19 yards away, and a fixate would ask them to choose between their
+ * boss and the mechanic, which the real fight never does.
+ *
+ * Returns -1 for the player, an `Ally.id`, or -2 when there is nobody left.
+ */
+function pickFixate(w: World, self: Add): number {
+  const taken = new Set(w.adds.filter(a => a.alive && a !== self).map(a => a.fixate))
+  if (w.player.alive && w.player.role !== 'tank' && !taken.has(-1)) return -1
+  const pool = w.allies.filter(a => a.alive && a.role !== 'tank' && !taken.has(a.id))
+  if (!pool.length) return -2
+  return pool[Math.floor(rnd() * pool.length)].id
+}
+
+/** Where a fixate target is standing right now, or null if they are gone. */
+function fixatePos(w: World, id: number): Vec | null {
+  if (id === -1) return w.player.alive ? w.player.pos : null
+  const a = w.allies.find(x => x.id === id && x.alive)
+  return a ? a.pos : null
+}
+
+/**
+ * Fire an add's fixated cast: anchored on the add, aimed through its target.
+ *
+ * The instance keeps `aimedAt`, so the line goes on tracking that raider for the
+ * whole telegraph. That is the mechanic — the marked player re-points it by
+ * walking — and it is why this cannot go through the ordinary `origin` path,
+ * which would either glue the shape to the boss or roll a random bearing.
+ */
+function fireFixated(w: World, add: Add, defId: string) {
+  const def = w.boss.mechanics.find(m => m.id === defId)
+  if (!def) return
+  const tgt = fixatePos(w, add.fixate)
+  if (!tgt) return
+  const ang = Math.atan2(tgt.y - add.pos.y, tgt.x - add.pos.x)
+  spawn(w, def, { ...add.pos }, ang)
+  const inst = w.instances[w.instances.length - 1]
+  if (!inst) return
+  inst.aimedAt = add.fixate
+  // The marked player owns this line whoever else is standing in it.
+  inst.carriedByPlayer = add.fixate === -1
+}
+
 /**
  * Spawn a wave of one add type.
  *
@@ -2511,6 +2634,11 @@ export function unlockedCount(w: World): number {
  */
 function spawnAdds(w: World, def: AddDef, count = def.count, empower = 1, at?: Vec) {
   const r = def.spawnRadius ?? w.boss.arenaRadius * 0.72
+  // An add with a home comes out of it every time. The Spawn of Vexhul surface
+  // in the venom pocket at the mouth of the platform, and that fixed point is
+  // half of what makes the frontals readable: the raid knows where every line
+  // will start before a single one is cast.
+  at = at ?? def.spawnAt
   // An add that walks at the middle starts at the wall, so the raid has the
   // whole room to stop it in.
   const ph = activePhase(w)
@@ -2542,9 +2670,13 @@ function spawnAdds(w: World, def: AddDef, count = def.count, empower = 1, at?: V
       hp: Math.max(1, Math.round(def.hp * empower)),
       shield: Math.round((def.shieldHp ?? 0) * empower),
       fuse: def.fuseSec * 1000,
-      castMs: -1,
+      // A fixating add winds up its first cast almost immediately — the beat is
+      // there to let you find the marker on yourself, not to give you a free
+      // one. Everything after it comes on the def's own cycle.
+      castMs: def.casts ? FIXATE_FIRST_CAST_MS : -1,
       kicked: false,
       alive: true,
+      fixate: -2,
     })
   }
   if (!w.seen.has(def.id)) {
@@ -2698,6 +2830,23 @@ function stepAdds(w: World, dtMs: number, dt: number) {
       }
     }
 
+    // A fixating add locks onto a raider and spits at them until it dies.
+    //
+    // Retargeted only when its mark is gone — a fixate that re-rolled every
+    // cast would be three lines wandering the raid at random, and the reason
+    // the mechanic is survivable at all is that each marked player knows the
+    // line is theirs and stays responsible for it.
+    if (d.casts) {
+      if (add.fixate === -2 || !fixatePos(w, add.fixate)) add.fixate = pickFixate(w, add)
+      if (add.fixate !== -2) {
+        add.castMs -= dtMs
+        if (add.castMs <= 0) {
+          fireFixated(w, add, d.casts.defId)
+          add.castMs = d.casts.everySec * 1000
+        }
+      }
+    }
+
     if (d.job === 'kick') {
       // Casts on a cycle. Miss the kick and the cast lands.
       if (add.castMs < 0) {
@@ -2745,7 +2894,12 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // Set-piece adds are never dealt out as trash. The Echoes of Jawae belong to
     // the intermission; cycling them into the Stage One rotation gave the fight
     // two enormous tanked adds it was never supposed to have.
-    const list = w.boss.adds.filter(a => !a.phaseOnly)
+    // Summoned adds are never dealt out as trash either. The Spawn of Vexhul
+    // arrive because Venomous Emergence was cast, and a wave timer handing out
+    // three more would put fixate frontals on the raid with no cast to read
+    // them off. Derived from the mechanic list rather than flagged on the add,
+    // so wiring up a summon cannot forget to switch the wave off.
+    const list = w.boss.adds.filter(a => !a.phaseOnly && !summonedIds(w.boss).has(a.id))
     // Never more than a handful on the field. A wave landing on top of a wave
     // you have not cleared is a wipe you cannot play out of, and it teaches
     // nothing except that the trainer is unfair.
@@ -2815,9 +2969,13 @@ function raiseAdd(w: World, def: AddDef, at: Vec) {
     hp: def.hp,
     shield: def.shieldHp ?? 0,
     fuse: def.fuseSec * 1000,
-    castMs: -1,
+    castMs: def.casts ? FIXATE_FIRST_CAST_MS : -1,
     kicked: false,
     alive: true,
+    // One that got back up picks a fresh mark. It is a new body as far as the
+    // raid is concerned, and inheriting a corpse's target would silently hand
+    // it to whoever the dead one happened to be chasing.
+    fixate: -2,
   })
 }
 
@@ -3528,10 +3686,27 @@ export function step(w: World, input: Input, dtMs: number) {
     // so a tracking avoid-cone follows you forever: the game tells you to move
     // out of something it has glued to you, then fails you for not doing the
     // impossible. Real frontals fire where they were aimed and you sidestep.
-    if (!inst.resolved && inst.def.origin === 'boss' && inst.def.shape?.kind !== 'circle') {
+    //
+    // A fixated line is exempt from the re-anchoring. It belongs to the add that
+    // cast it, not to the serpent whose `from` it inherits, and without this
+    // guard every Corrosive Spit snapped out of the pocket onto Vexhul the tick
+    // after it was cast — the geometry still worked, so nothing failed, but the
+    // one thing the mechanic teaches (the lines all come from the pocket, so you
+    // can read them before they are cast) was quietly gone.
+    if (!inst.resolved && inst.def.origin === 'boss' && inst.def.shape?.kind !== 'circle'
+        && inst.aimedAt === undefined) {
       const src = bossUnitFor(w, inst.fromId)
       inst.pos = { ...src.pos }
       if (inst.def.rule.type === 'faceAway') inst.angle = src.angle
+    }
+    // A fixate line swings to follow the raider it marked, pivoting about the
+    // add that is casting it. This is the SAME exemption the tank frontal above
+    // gets, for the same reason: tracking is only fair when re-aiming the thing
+    // is the mechanic. The marked player moves and the line moves with them —
+    // that is the whole job — while everyone else reads it and steps off.
+    if (!inst.resolved && inst.aimedAt !== undefined) {
+      const tgt = fixatePos(w, inst.aimedAt)
+      if (tgt) inst.angle = Math.atan2(tgt.y - inst.pos.y, tgt.x - inst.pos.x)
     }
     // A carried debuff rides its carrier. Anchoring it where it landed meant the
     // marker stayed on the floor while you ran, and the pool then dropped where

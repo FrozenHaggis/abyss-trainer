@@ -73,6 +73,7 @@ No interrupt available. The clock is the mechanic.
 | Boss | Add | Clock |
 |---|---|---|
 | Twin Fangs | **Bloodcurdled Mass** | Bloody Expulsion — *"a permanent channel pulsing the raid every 4s and gaining +15% of its own damage per pulse — a soft enrage with no interrupt, so kill the add."* **12 killing blows on Heroic PTR.** |
+| Twin Fangs | **Spawn of Vexhul** | Corrosive Spit, repeating every 8s for as long as it lives. Three surface in the venom pocket per Venomous Emergence, each fixates a non-tank raider, and each fires a line from the pocket through its mark. Not a timer you race to a detonation — the clock is *how many more frontals the raid eats*, which is why *"killing them fast is the single biggest lever on raid-wide Eternal Venom income."* |
 | Ula'tek | **Blightscale Clutch** | *"The spawn inside grow in power while the clutch is unbroken — break it before gestation completes."* |
 | Ula'tek | Blightscale Spawn | **Boiling Venom** at 25–30s: +100% haste and damage |
 | Sentinels | Venom Coagulation | Not kickable, zero interrupts logged; *"cast count proxies add kill speed"* |

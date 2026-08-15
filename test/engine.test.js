@@ -78,3 +78,65 @@ test('a raid knockback throws the player across the room, not onto the boss', as
       'whose landing spot is fixed is not a knockback — it is a teleport, and it reads as one')
   }
 })
+
+// A tanking player with nothing to tank.
+//
+// `seatPlayerTank` was gated on `boss.sided`, and only one multi-entity fight in
+// the raid is sided. `makeAllies` builds a second AI tank only when the player
+// is NOT tanking, so on the other three the single AI tank took the primary and
+// every remaining entity was left on -1. A tank rolling the Twin Fangs opened
+// with `vexhul targetId=1, ithraz targetId=-1` — the player held nothing for the
+// whole pull, and Ithraz was held by nobody.
+//
+// That is invisible until you look for it, because nothing crashes: the fight
+// runs, the bar goes down, and every system keyed on `bosses[0].targetId === 0`
+// — the taunt prompt, `hud.tanking`, `faceAway`, the Twin Fangs melee leash —
+// silently addresses nobody. So the check is the crudest possible one, run at
+// t = 0 on every fight in the raid, because the defect was a whole role being
+// quietly absent rather than anything subtle about what it was doing.
+test('a tanking player holds an entity on tick one', async () => {
+  const { createWorld, seedRng, BOSSES } = await engine()
+
+  const twins = BOSSES.find(b => b.key === 'twinfangs')
+  assert.ok(twins && twins.entities?.length === 2, 'the Twin Fangs is no longer a two-serpent fight')
+
+  for (const boss of BOSSES) {
+    seedRng(7)
+    const w = createWorld(boss, 'tank', 'green')
+    // Which entities the fight asked to have a tank on: the primary, plus
+    // anything held apart from it. Mirrors `makeBosses`.
+    const wants = w.bosses.filter((b, i) => (i === 0 || b.def.tankedApart) && !b.def.untargetable)
+
+    if (w.bosses.length < 2) {
+      // Single-boss fights are deliberately untouched. The co-tank opens on the
+      // boss and the player TAUNTS it off them — that is the tank's first job
+      // here, and seating the player from the pull would delete the mechanic.
+      assert.equal(w.bosses[0].targetId > 0, true,
+        `${boss.key}: the co-tank should open holding the boss so the player has something ` +
+        'to taunt off them')
+      continue
+    }
+
+    assert.ok(w.bosses.some(b => b.targetId === 0),
+      `${boss.key}: a player who picked tank holds nothing on tick one — ` +
+      w.bosses.map(b => `${b.def.id}:${b.targetId}`).join(' '))
+    assert.equal(w.bosses[0].targetId === 0 || !!w.boss.sided, true,
+      `${boss.key}: the player holds something other than the primary on a fight with no sides`)
+
+    // And nobody is holding two at once. Two tanks, two hands: if the displaced
+    // ally is handed an entity they are already on, one of them is untanked and
+    // the other is being walked to two places.
+    const holders = w.bosses.filter(b => b.targetId !== -1).map(b => b.targetId)
+    assert.equal(new Set(holders).size, holders.length,
+      `${boss.key}: one tank is holding two entities — ` +
+      w.bosses.map(b => `${b.def.id}:${b.targetId}`).join(' '))
+
+    // Every entity the fight wanted tanked is tanked, up to the two tanks that
+    // exist. This is the half that catches the opposite mistake: seating the
+    // player by orphaning somebody else.
+    const tanked = wants.filter(b => b.targetId !== -1).length
+    assert.equal(tanked, Math.min(2, wants.length),
+      `${boss.key}: ${wants.length} entities want a tank and ${tanked} have one — ` +
+      w.bosses.map(b => `${b.def.id}:${b.targetId}`).join(' '))
+  }
+})

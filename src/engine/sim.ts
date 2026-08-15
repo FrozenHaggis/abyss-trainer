@@ -640,19 +640,36 @@ function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
 }
 
 /**
- * On a split fight, a tanking player holds their OWN side's entity from the pull.
+ * On a multi-entity fight, a tanking player holds an entity from the pull.
  *
- * Otherwise the assignment is arbitrary: a green-side tank could open holding
- * the red golem, which puts them permanently in the wrong half of the room —
- * their group's mechanics fire at them across the arena, and dragging their
- * golem back to where they are supposed to stand walks the pair together. That
- * is a fight you cannot play rather than one you are playing badly, and it is
- * why one side's tank failed the separation twelve times more often than the
- * other's.
+ * On a split fight it is their OWN side's entity. Otherwise the assignment is
+ * arbitrary: a green-side tank could open holding the red golem, which puts
+ * them permanently in the wrong half of the room — their group's mechanics fire
+ * at them across the arena, and dragging their golem back to where they are
+ * supposed to stand walks the pair together. That is a fight you cannot play
+ * rather than one you are playing badly, and it is why one side's tank failed
+ * the separation twelve times more often than the other's.
+ *
+ * The `sided` test used to be the gate on the whole function, and on a
+ * multi-entity fight that is NOT sided it meant a tanking player held nothing
+ * at all, all pull. `makeAllies` only builds a second AI tank when the player is
+ * not tanking, so on the Twin Fangs `pickTank` hands Vexhul to the one AI tank
+ * and leaves Ithraz on -1: the player is a tank with no boss and Ithraz is a
+ * boss with no tank. Everything keyed on `bosses[0].targetId === 0` — the taunt
+ * prompt, `hud.tanking`, `faceAway`, the melee leash the Twin Fangs is about to
+ * grow — is dead for that player. There is no side to match on, so the primary
+ * is theirs.
+ *
+ * Scoped to `bosses.length > 1` on purpose. On a single-boss fight the co-tank
+ * opens holding the boss and the player TAUNTS it off them — that is the tank's
+ * first job and there is a test for it. Seating the player from tick one there
+ * would delete the mechanic rather than fix a bug.
  */
 function seatPlayerTank(w: World) {
-  if (!w.boss.sided || w.player.role !== 'tank') return
-  const ours = w.bosses.find(b => b.def.side === w.player.side)
+  if (w.player.role !== 'tank') return
+  const ours = w.boss.sided
+    ? w.bosses.find(b => b.def.side === w.player.side)
+    : w.bosses.length > 1 ? w.bosses[0] : undefined
   if (!ours) return
   const displaced = ours.targetId
   ours.targetId = 0
@@ -663,8 +680,18 @@ function seatPlayerTank(w: World) {
   // simply left idle and the red golem stayed untanked all pull, walking
   // wherever it liked. Hand them the first entity that wants a tank and has
   // none; only fall back to a swap if everything is already held.
+  //
+  // "Wants a tank" is `makeBosses`' own test, not merely "is untanked". Several
+  // fights carry entities that are deliberately never held — the Hex Lord, two
+  // of the four Explorers — and handing one of them the displaced ally would
+  // start it walking after a tank it was authored to ignore. If nothing on the
+  // floor wants them, the displaced ally simply has no boss, which is the same
+  // position the player was in a line ago and is the honest state of a fight
+  // with two tanks and one tankable entity.
   if (displaced <= 0) return
-  const orphan = w.bosses.find(b => b !== ours && b.targetId === -1 && !b.def.untargetable)
+  const wantsTank = (b: BossUnit) =>
+    !b.def.untargetable && (b.def.tankedApart || b === w.bosses[0])
+  const orphan = w.bosses.find(b => b !== ours && b.targetId === -1 && wantsTank(b))
   if (orphan) { orphan.targetId = displaced; return }
   const other = w.bosses.find(b => b !== ours && b.targetId === 0)
   if (other) other.targetId = displaced
@@ -1067,6 +1094,48 @@ function nearestOnSegment(p: Vec, a: Vec, b: Vec): Vec {
 }
 
 /**
+ * The nearest point on the rim to `p`, and how far away it is.
+ *
+ * Lifted verbatim out of `clampToArena`, which walked the polygon inline. It is
+ * pulled out because "how close to the edge is this?" is a question three other
+ * things want to ask without moving anything — a carry-out that has to be
+ * dropped AT the rim, a sweep that has to prove a drop spot exists, a hazard
+ * deciding whether it has left the floor — and none of them want the clamp's
+ * side effect of returning a different point.
+ *
+ * `yards` is unsigned: it is the distance to the boundary, not a signed depth,
+ * so a point just outside the floor reads the same as one just inside. Callers
+ * that care about the difference already have `inArena`.
+ */
+export function nearestEdge(boss: BossDef, p: Vec): { at: Vec; yards: number } {
+  const poly = polyOf(boss)
+  // A round arena has no vertices to walk: the nearest rim point is straight
+  // out along the bearing. `clampToArena` never reaches this — it handles the
+  // circle case and returns before asking — but `edgeDistance` is asked about
+  // every floor in the tier, and six of the eight are circles.
+  if (!poly) {
+    const r = lenOf(p) || 1
+    return {
+      at: { x: (p.x / r) * boss.arenaRadius, y: (p.y / r) * boss.arenaRadius },
+      yards: Math.abs(boss.arenaRadius - lenOf(p)),
+    }
+  }
+  let at: Vec = poly[0]
+  let yards = Infinity
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const q = nearestOnSegment(p, poly[j], poly[i])
+    const d = dist(p, q)
+    if (d < yards) { yards = d; at = q }
+  }
+  return { at, yards }
+}
+
+/** How far `p` is from the nearest rim. The half of `nearestEdge` most callers want. */
+export function edgeDistance(boss: BossDef, p: Vec): number {
+  return nearestEdge(boss, p).yards
+}
+
+/**
  * The same point when it is comfortably on the floor, otherwise the nearest spot
  * `inset` yards inside the edge. Used everywhere something is placed rather than
  * judged — spawn scatter, ally stations, where a boss may be dragged.
@@ -1078,13 +1147,7 @@ export function clampToArena(boss: BossDef, p: Vec, inset = 0): Vec {
     const max = Math.max(1, boss.arenaRadius - inset)
     return r > max ? { x: (p.x / r) * max, y: (p.y / r) * max } : { ...p }
   }
-  let best: Vec = poly[0]
-  let bd = Infinity
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const q = nearestOnSegment(p, poly[j], poly[i])
-    const d = dist(p, q)
-    if (d < bd) { bd = d; best = q }
-  }
+  const { at: best, yards: bd } = nearestEdge(boss, p)
   if (inArena(boss, p) && bd >= inset) return { ...p }
   // Step in from the edge toward the middle of the room. Every floor in this
   // tier is convex, so "toward the centre" is always further inside.
@@ -1354,6 +1417,84 @@ function hurt(w: World, amount: number, cause: string) {
   }
 }
 
+/**
+ * Somewhere on the floor that matters — where a rolled ('random') hazard lands.
+ *
+ * Floor AoE lands where the raid is, not uniformly across the map.
+ *
+ * This used to scatter over the whole arena, and once the radii were measured
+ * from real logs — 58 yards on Vashnik against the 42 it was being played at —
+ * the floor area nearly doubled and a 5-yard circle stopped reaching anybody.
+ * You could stand still and never be touched, which is not a mechanic, it is
+ * scenery.
+ *
+ * Anchoring on a raider and jittering keeps it dodgeable (you always have
+ * somewhere to go) while guaranteeing it is somewhere that matters.
+ *
+ * Lifted out of `spawn`'s `default:` case unchanged, including the order it
+ * draws from `rnd()`, because a second caller needs it: the `count` fan in
+ * `fire` had no floor-aware fallback and used the CASTER's position instead.
+ * On a boss standing off the platform that is a point in the acid, and every
+ * copy in the fan then clamps to the nearest rim — which is not a fan, it is a
+ * pile on the edge nearest the boss.
+ */
+function floorAnchor(w: World, def: MechanicDef): Vec {
+  const group = sideAllies(w, def.side).filter(a => def.roles.includes(a.role))
+  const mine = def_scored(w, def)
+  const anchor = (mine && rnd() < 0.4) || !group.length
+    ? w.player.pos
+    : group[Math.floor(rnd() * group.length)].pos
+  const jitter = (w.boss.arenaRadius * 0.16) + 6
+  const a = rnd() * Math.PI * 2
+  const r = rnd() * jitter
+  let pos = { x: anchor.x + Math.cos(a) * r, y: anchor.y + Math.sin(a) * r }
+  // Never outside the floor — and on an octagon "outside" is not a radius.
+  pos = clampToArena(w.boss, pos, w.boss.arenaRadius * 0.08)
+  // A side's floor mechanic lands on that side's floor. Not a preference.
+  if (def.side) pos = confineToSide(w, def.side, pos)
+  return pos
+}
+
+/**
+ * `n` points fanned across an arc in front of a caster, each pulled onto the floor.
+ *
+ * Different placement mechanism from the `count` fan in `fire`, and deliberately
+ * kept apart from it: the fan puts a whole ring AROUND a point and re-rolls its
+ * spin every cast, which is right for globs flung in every direction and wrong
+ * for a sequence of pools laid down in front of a boss. This one is a bounded
+ * arc, centred on a bearing the caller chose, with the endpoints included — so
+ * `arcDeg` is the angle the whole spread subtends, and the first and last point
+ * are exactly that far apart in bearing.
+ *
+ * Every point goes through `clampToArena`, which means a caster standing off the
+ * floor (both serpents are coiled in the acid) still lays its arc ON the floor.
+ * The clamp is not shape-preserving, so the post-clamp spacing is not the
+ * pre-clamp spacing and the caller has to measure the real gaps rather than
+ * trust the arithmetic — whether three pools can be covered from one spot is
+ * decided by those clamped positions, not by `ringYards`.
+ *
+ * No caller yet. It lands with the other extractions so the mechanic that wants
+ * it arrives as a boss-file change rather than as an engine change plus a boss
+ * file change in one unreviewable commit.
+ */
+export function arcOnFloor(
+  boss: BossDef, from: Vec, facing: number, n: number,
+  ringYards: number, arcDeg: number, inset = 2,
+): Vec[] {
+  const span = (arcDeg * Math.PI) / 180
+  const out: Vec[] = []
+  for (let i = 0; i < n; i++) {
+    // One point sits on the bearing itself rather than off to one side of it.
+    const t = n === 1 ? 0 : i / (n - 1) - 0.5
+    const a = facing + t * span
+    out.push(clampToArena(
+      boss,
+      { x: from.x + Math.cos(a) * ringYards, y: from.y + Math.sin(a) * ringYards },
+      inset))
+  }
+  return out
+}
+
 function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
   // Whichever entity casts this. On a two-boss fight a frontal has to come out
   // of the boss that actually casts it, or "get behind Ithraz" means nothing.
@@ -1391,29 +1532,7 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       pos = arenaEdge(w.boss, rnd() * Math.PI * 2)
       break
     }
-    default: {
-      // Floor AoE lands where the raid is, not uniformly across the map.
-      //
-      // This used to scatter over the whole arena, and once the radii were
-      // measured from real logs — 58 yards on Vashnik against the 42 it was
-      // being played at — the floor area nearly doubled and a 5-yard circle
-      // stopped reaching anybody. You could stand still and never be touched,
-      // which is not a mechanic, it is scenery.
-      //
-      // Anchoring on a raider and jittering keeps it dodgeable (you always have
-      // somewhere to go) while guaranteeing it is somewhere that matters.
-      const anchor = (mine && rnd() < 0.4) || !group.length
-        ? w.player.pos
-        : group[Math.floor(rnd() * group.length)].pos
-      const jitter = (w.boss.arenaRadius * 0.16) + 6
-      const a = rnd() * Math.PI * 2
-      const r = rnd() * jitter
-      pos = { x: anchor.x + Math.cos(a) * r, y: anchor.y + Math.sin(a) * r }
-      // Never outside the floor — and on an octagon "outside" is not a radius.
-      pos = clampToArena(w.boss, pos, w.boss.arenaRadius * 0.08)
-      // A side's floor mechanic lands on that side's floor. Not a preference.
-      if (def.side) pos = confineToSide(w, def.side, pos)
-    }
+    default: pos = floorAnchor(w, def)
   }
   // Furniture sits in the middle of the room and stays there: the Soulcoil Well
   // is not aimed at anybody, it is where the room is.
@@ -1541,7 +1660,18 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
    */
   if (def.count && def.count > 1 && def.rule.type !== 'collect') {
     const src = bossUnitFor(w, def.from)
-    const base = at ?? (def.origin === 'boss' ? src.pos : def.origin === 'player' ? w.player.pos : src.pos)
+    // Where the ring is centred. The last arm used to be `src.pos` as well —
+    // "if it is not off the boss and not off the player, put it on the boss
+    // anyway" — which is only harmless while every caster stands on the floor.
+    // Both Twin Fangs serpents are coiled in the acid three yards off the top
+    // edge, so a rolled fan centred on one of them is a ring in the venom, and
+    // `clampToArena` then drags every copy onto the nearest floor: the tanks'
+    // ledge, all of it, in a heap, on top of the two people who are not allowed
+    // to leave. A rolled origin should roll a place on the FLOOR, which is
+    // exactly what `floorAnchor` is.
+    const base = at ?? (def.origin === 'boss' ? src.pos
+      : def.origin === 'player' ? w.player.pos
+      : floorAnchor(w, def))
     // A whole-turn offset per cast, so the spokes are not in the same place
     // twice and the gaps between them have to be read rather than remembered.
     const spin = rnd() * Math.PI * 2
@@ -4004,6 +4134,65 @@ function phaseComplete(w: World, ph: PhaseDef): boolean {
   return false
 }
 
+/**
+ * The two tanks trade entities.
+ *
+ * Group assignments do not change, so each golem goes back to its own side and
+ * the tank now holding it follows it there — which is why the entities are put
+ * back on their stations rather than left in the middle where they met.
+ *
+ * Lifted out of `exitPhase` because the trade is not really a property of a
+ * stage ending. On the Sentinels it happens to be, because Vitriolic Stasis is
+ * where the swap is called; on the Twin Fangs the swap is the reward for a
+ * clean set of Stone Breaker soaks and fires in the middle of a rotation, with
+ * no stage boundary anywhere near it. One trade, two triggers.
+ */
+function tradeTanks(w: World) {
+  const held = w.bosses.filter(b => b.targetId !== -1)
+  if (held.length !== 2) return
+  const t = held[0].targetId
+  held[0].targetId = held[1].targetId
+  held[1].targetId = t
+  // The stations trade too, so each golem's home is now its NEW tank's end
+  // of the room. "The tanks swap bosses and drag them over to their side" —
+  // the tanks do not cross, the golems do, and each group follows its own
+  // golem to the far end. Swapping the holders but leaving the stations put
+  // every golem on the opposite side from the tank holding it: the golem
+  // walked toward its tank, the tank walked toward the old station, and the
+  // pair met in the middle and stayed linked for the rest of the pull.
+  const s = held[0].station
+  held[0].station = held[1].station
+  held[1].station = s
+  // A tank's side follows the golem they now hold.
+  //
+  // Without this a tank holds one golem while their group parks at the
+  // other, so the side-parking pass drags them back toward their group and
+  // the golem they are holding comes with them. Both tanks did that at once
+  // and the pair settled 28 yards apart, linked, with neither tank able to
+  // pull out — they were each obeying two instructions that pointed in
+  // opposite directions.
+  for (const b of held) {
+    if (b.targetId <= 0 || !b.def.side) continue
+    const holder = w.allies.find(a => a.id === b.targetId)
+    if (holder) holder.side = b.def.side
+  }
+  // And the player keeps their own group's golem regardless — their side is
+  // a choice they made before the pull, not something a swap takes off them.
+  //
+  // READ THIS BEFORE CALLING `tradeTanks` FROM A FIGHT THAT IS NOT `sided`.
+  // On a sided fight this line re-asserts a CHOICE — the player's side — and
+  // the golem it hands them is the one that just came to their side, so the
+  // trade stands. With no side to match on, `seatPlayerTank` seats the player
+  // on `bosses[0]` instead, which is precisely the entity the trade just took
+  // off them: it hands it straight back and gives the displaced ally the other
+  // one, and the swap is undone in the same tick it happened. A mid-fight tank
+  // swap on an unsided fight has to suppress this or re-seat around it.
+  seatPlayerTank(w)
+  // Deliberately NOT teleported. They are dragged, and the dragging is the
+  // mechanic — a grace window covers the seconds it takes so nobody is scored
+  // for a separation the fight itself just closed.
+}
+
 /** Wind a stage up and hand the fight to the next one. */
 function exitPhase(w: World, ph: PhaseDef) {
   if (ph.endsAtFullEnergy) w.bossEnergy = 0
@@ -4021,47 +4210,7 @@ function exitPhase(w: World, ph: PhaseDef) {
       for (const b of live) b.hp = hi
     }
   }
-  if (ph.swapEntitiesOnExit) {
-    // The tanks trade. Group assignments do not change, so each golem goes back
-    // to its own side and the tank now holding it follows it there — which is
-    // why the entities are put back on their stations rather than left in the
-    // middle where they met.
-    const held = w.bosses.filter(b => b.targetId !== -1)
-    if (held.length === 2) {
-      const t = held[0].targetId
-      held[0].targetId = held[1].targetId
-      held[1].targetId = t
-      // The stations trade too, so each golem's home is now its NEW tank's end
-      // of the room. "The tanks swap bosses and drag them over to their side" —
-      // the tanks do not cross, the golems do, and each group follows its own
-      // golem to the far end. Swapping the holders but leaving the stations put
-      // every golem on the opposite side from the tank holding it: the golem
-      // walked toward its tank, the tank walked toward the old station, and the
-      // pair met in the middle and stayed linked for the rest of the pull.
-      const s = held[0].station
-      held[0].station = held[1].station
-      held[1].station = s
-      // A tank's side follows the golem they now hold.
-      //
-      // Without this a tank holds one golem while their group parks at the
-      // other, so the side-parking pass drags them back toward their group and
-      // the golem they are holding comes with them. Both tanks did that at once
-      // and the pair settled 28 yards apart, linked, with neither tank able to
-      // pull out — they were each obeying two instructions that pointed in
-      // opposite directions.
-      for (const b of held) {
-        if (b.targetId <= 0 || !b.def.side) continue
-        const holder = w.allies.find(a => a.id === b.targetId)
-        if (holder) holder.side = b.def.side
-      }
-      // And the player keeps their own group's golem regardless — their side is
-      // a choice they made before the pull, not something a swap takes off them.
-      seatPlayerTank(w)
-    }
-    // Deliberately NOT teleported. They are dragged, and the dragging is the
-    // mechanic — a grace window covers the seconds it takes so nobody is scored
-    // for a separation the fight itself just closed.
-  }
+  if (ph.swapEntitiesOnExit) tradeTanks(w)
   if (ph.resurrectCorpsesAs) {
     const def = w.boss.adds?.find(a => a.id === ph.resurrectCorpsesAs)
     for (const c of w.corpses) {

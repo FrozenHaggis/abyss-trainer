@@ -108,10 +108,16 @@ reach the boss, and adds accumulating faster than any player could clear them.
 
 Recorded honestly rather than quietly left out.
 
-- **Arena shapes are still circles.** The sizes are measured (below) but Twin
-  Fangs (corner/axis 1.19) and Coiled Altar (1.27) sit between a circle (1.00)
-  and a square (1.41) — probably octagonal. Drawn as circles until live logs
-  settle it.
+- **Most arena shapes are still circles.** The sizes are measured; the shapes
+  mostly are not. Coiled Altar's corner/axis of 1.27 sits between a circle (1.00)
+  and a square (1.41) and is probably octagonal — drawn as a circle until live
+  logs settle it. Twin Fangs is now the exception: its 1.19 is a wedge, authored
+  from the encounter's own room, with a pocket of venom bitten out of the bottom
+  edge that the Spawn of Vexhul surface in. That floor is concave — the first in
+  the tier — and two things broke on it that had been correct everywhere else:
+  the playtest bot's lookahead sampled only the far end of a step and walked
+  straight over the hole, and the hard-coded start position was inside it. Both
+  are fixed, and both now have tests.
 - **Ula'tek's arena is unknown.** Zero logs across 625 PTR reports; it was never
   publicly tested. Its radius is a placeholder.
 - **Frostfire Volley's element pairing** (opposing Fire/Frost patches detonate on

@@ -303,6 +303,20 @@ function play(boss, role, smart, seed, side = 'green') {
         for (const [dx, dy] of DIRS) {
           const nx = w.player.pos.x + dx * LOOK
           const ny = w.player.pos.y + dy * LOOK
+          // Sample the whole step, not just where it ends.
+          //
+          // Checking only the far end quietly assumes the floor is convex: if
+          // both ends are on it, so is everything between. Every room in this
+          // tier was convex until the Twin Fangs' wedge grew a venom pocket
+          // bitten out of its bottom edge, and then the bot began certifying
+          // headings that stepped clean over the hole and died on the far side
+          // of ground it had just verified. Half-yard steps because the gap can
+          // be narrower than a yard near its inner edge.
+          let crosses = false
+          for (let s = 0.5; s < LOOK; s += 0.5) {
+            if (!onFloor(boss, w.player.pos.x + dx * s, w.player.pos.y + dy * s)) { crosses = true; break }
+          }
+          if (crosses) continue
           if (!onFloor(boss, nx, ny)) continue
           let bad = false
           for (const i of w.instances) {

@@ -411,6 +411,29 @@ export interface World {
    * every delivery landed on empty floor.
    */
   carriers: Record<number, number>
+  /**
+   * The pickups being held back for the player, by instance uid.
+   *
+   * A `collect` mechanic reserves one for you so it is always personally
+   * consequential, and that reservation used to be "all but the LAST one in the
+   * array", recomputed from scratch every tick. Three things were wrong with
+   * that, and the fight this was written for breaks on all three:
+   *
+   * - It held one back whether or not the mechanic was ever the player's. A
+   *   TANK on the Twin Fangs is not on the globule rota — `globule.roles` is
+   *   dps and healer — so the raid was forbidden from clearing the last one and
+   *   a globule ruptured on everybody every single Caustic Deluge, ten times a
+   *   rotation, with nobody in the room allowed to stop it.
+   * - It carried no identity. As raiders swept globules the array shrank, "the
+   *   last one" became a different globule, and everybody re-targeted mid-run:
+   *   the raid dithered across the floor instead of clearing it.
+   * - Nothing stopped a raider simply walking over the reserved one on their way
+   *   somewhere else, which handed the player's stack to an ally and left the
+   *   player with nothing to do.
+   *
+   * So the reservation is a uid, made once and kept until that instance is gone.
+   */
+  reservedPickups: Set<number>
 
   // ── the fountains ────────────────────────────────────────────────────────
   /** One per `boss.altars`, in the order the boss file lists them. Empty elsewhere. */
@@ -1030,6 +1053,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     pairMs: 0,
     pairFired: false,
     carriers: {},
+    reservedPickups: new Set(),
     // Seeded from the boss file, in its own order, so "the red one" means the
     // same thing to the engine, the renderer and the raid calling the fight.
     altars: (boss.altars ?? []).map(def => ({
@@ -2854,6 +2878,66 @@ function threatAt(inst: Instance, x: number, y: number): number {
   }
 }
 
+/** Every pickup still on the floor and still worth walking to. */
+function livePickups(w: World): Instance[] {
+  return w.instances.filter(i =>
+    !i.resolved && !i.answered && i.def.rule.type === 'collect')
+}
+
+/**
+ * Hold one pickup back for the player — per side, by uid, and only when the
+ * mechanic is actually theirs.
+ *
+ * See `World.reservedPickups` for the three defects this replaces. The shape of
+ * the answer is worth spelling out here:
+ *
+ * - **Per side, still.** Toxic Droplets belong to the green group and the red
+ *   group must never be sent across the room to sweep one, so the reservation is
+ *   made inside each side's own pile exactly as the claim list always was.
+ * - **`def_scored`, not merely `roles`.** A green player is no more on the red
+ *   side's rota than a tank is on the globule rota, and the engine already has
+ *   one predicate that answers both halves of that question at once.
+ * - **The one nearest you.** Array order picked an arbitrary instance, and since
+ *   the array shrinks as the raid sweeps, it picked a DIFFERENT arbitrary
+ *   instance every tick. Nearest-at-the-moment-of-reservation is stable
+ *   afterwards — the uid is remembered, not re-derived — and it is the globule
+ *   the player was already closest to, which is the one they would have gone
+ *   for.
+ *
+ * Called from the top of `allyThink`, which runs before the scheduler. A pickup
+ * that spawns this tick therefore has no reservation until the next one, ~17ms
+ * later; that is harmless, because a brand-new pickup has nothing to protect yet
+ * and if a raider does eat it the next tick simply reserves another.
+ */
+function reservePickups(w: World) {
+  // Nothing is held back for a corpse. Without this the reservation outlives the
+  // player and the globule under it could never be cleared by anybody.
+  if (!w.player.alive) {
+    w.reservedPickups.clear()
+    return
+  }
+  const live = livePickups(w)
+  const uids = new Set(live.map(i => i.uid))
+  for (const uid of w.reservedPickups) if (!uids.has(uid)) w.reservedPickups.delete(uid)
+
+  for (const side of [undefined, 'green', 'red'] as (Side | undefined)[]) {
+    const of = live.filter(i => i.def.side === side)
+    if (!of.length) continue
+    // Not the player's job — so the raid clears all of them. A tank on the Twin
+    // Fangs used to watch one globule rupture on the raid every Deluge because
+    // the engine was saving it for somebody who was never coming.
+    if (!of.some(i => def_scored(w, i.def))) continue
+    if (of.some(i => w.reservedPickups.has(i.uid))) continue
+    let pick = of[0]
+    let bd = dist(pick.pos, w.player.pos)
+    for (const i of of) {
+      const d = dist(i.pos, w.player.pos)
+      if (d < bd) { bd = d; pick = i }
+    }
+    w.reservedPickups.add(pick.uid)
+  }
+}
+
 /**
  * Ally AI. Assignment-based rather than emergent: each ally is handed one
  * destination per tick and walks to it. Emergent flocking looks clever and
@@ -2891,20 +2975,59 @@ function allyThink(w: World) {
     soaks.push({ inst, slots: Math.max(1, (inst.def.soakers ?? 4) - 1), taken: 0 })
   }
 
-  // Pickups. Raiders run over all but one of them; the last is yours, so a
-  // collect mechanic is always personally consequential without being scripted.
+  // Pickups. Raiders run over all but the one being held back for the player,
+  // so a collect mechanic is always personally consequential without being
+  // scripted — and when it is not the player's mechanic at all, the raid clears
+  // the floor completely. `reservePickups` owns that decision; everything below
+  // is only who walks to what.
+  reservePickups(w)
+  const claimable = livePickups(w).filter(i => !w.reservedPickups.has(i.uid))
+
+  // Who sweeps, and in what order they get to pick.
   //
-  // Counted per side, not across the raid: Toxic Droplets belong to the green
-  // group, and a red raider crossing the room to sweep one would be playing a
-  // fight nobody runs.
-  const pickups = w.instances.filter(i =>
-    !i.resolved && !i.answered && i.def.rule.type === 'collect')
-  const claimable: Instance[] = []
-  for (const side of [undefined, 'green', 'red'] as (Side | undefined)[]) {
-    const of = pickups.filter(i => i.def.side === side)
-    claimable.push(...of.slice(0, Math.max(0, of.length - 1)))
+  // LOWEST STACK FIRST. The Twin Fangs boss file has said all along that "low
+  // stack players soak globules", and until now that line was decoration: the
+  // rota was array order, so the raider closest to dying of Eternal Venom was as
+  // likely to be sent onto a globule as the one carrying none. Eating one costs
+  // a stack, the stack is uncapped and lethal, and the raid loses that body and
+  // its share of the next rota when somebody tips over — so the order the raid
+  // picks in IS the mechanic, not flavour on top of it.
+  //
+  // Ties broken by who is nearest the work, then by id so a pull is
+  // reproducible. On every other fight in the raid nobody carries a counter, so
+  // the venom term is a constant, every sweeper ties, and this degrades to
+  // "nearest first" — which is a straight improvement on array order there too.
+  //
+  // Then each sweeper in that order takes the nearest pickup nobody has claimed,
+  // still filtered to their own side. Greedy rather than optimal, deliberately:
+  // a real raid calls "closest one, go", and an assignment that minimised total
+  // travel would send raiders past each other in a way no room ever looks like.
+  const claimedBy = new Map<number, Instance>()
+  if (claimable.length) {
+    const nearestWork = new Map<number, number>()
+    const sweepers = w.allies.filter(a => a.alive && a.role !== 'tank')
+    for (const a of sweepers) {
+      nearestWork.set(a.id, Math.min(...claimable.map(p => dist(p.pos, a.pos))))
+    }
+    sweepers.sort((x, y) =>
+      (x.venom - y.venom) ||
+      (nearestWork.get(x.id)! - nearestWork.get(y.id)!) ||
+      (x.id - y.id))
+    const taken = new Set<number>()
+    for (const a of sweepers) {
+      let best: Instance | null = null
+      let bd = Infinity
+      for (const p of claimable) {
+        if (taken.has(p.uid)) continue
+        if (p.def.side && p.def.side !== a.side) continue
+        const d = dist(p.pos, a.pos)
+        if (d < bd) { bd = d; best = p }
+      }
+      if (!best) continue
+      taken.add(best.uid)
+      claimedBy.set(a.id, best)
+    }
   }
-  const claimed = new Set<number>()
 
   // Corpse duty. While an intermission that would raise the bodies is running,
   // the raid stands on them so the flames have something to land on — all but
@@ -2998,15 +3121,13 @@ function allyThink(w: World) {
       a.want.y = p.pos.y - Math.sin(p.angle) * 7
     }
 
-    // 3. Go and eat a globule if one is unclaimed. Tanks stay on the boss.
-    if (a.role !== 'tank') {
-      const p = claimable.find(i =>
-        !claimed.has(i.uid) && (!i.def.side || i.def.side === a.side))
-      if (p) {
-        claimed.add(p.uid)
-        a.want.x = p.pos.x
-        a.want.y = p.pos.y
-      }
+    // 3. Go and eat the globule this raider was given. Tanks stay on the boss,
+    //    and the assignment was made above rather than here so the whole raid's
+    //    stack counts could be weighed against each other in one place.
+    const sweep = claimedBy.get(a.id)
+    if (sweep) {
+      a.want.x = sweep.pos.x
+      a.want.y = sweep.pos.y
     }
 
     // 3a. Stand on a corpse, if one is going unburned.
@@ -5258,7 +5379,13 @@ export function step(w: World, input: Input, dtMs: number) {
       const r = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 2.5
       let eater: Ally | null = null
       let touched = dist(inst.pos, w.player.pos) <= r
-      if (!touched) {
+      // A pickup held back for the player is the player's alone. Without this
+      // the reservation only governed where the raid was SENT, and any raider
+      // whose path home happened to cross it swept it anyway — so the globule
+      // saved for the player quietly went to somebody else, taking the stack
+      // that was meant to be theirs and leaving them with nothing to do. The
+      // rota is the fight; a rota the raid can trip over by accident is not one.
+      if (!touched && !w.reservedPickups.has(inst.uid)) {
         // The NEAREST raider standing on it, so two bodies arriving on the same
         // frame settle it the same way every time instead of by array order.
         let bd = r

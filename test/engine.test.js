@@ -309,3 +309,229 @@ test('a player who does nothing dies of the counter, and the death names it', as
   assert.equal(r.failures.some(f => f.mechanicId === venom.id), false,
     'the counter recorded a failure against the player — it is unavoidable damage')
 })
+
+// ── the pickup rota ──────────────────────────────────────────────────────────
+
+/**
+ * A world with nothing in it but the pickups you fire by hand.
+ *
+ * The rota is an ordering question — who is sent where, and which one is left
+ * alone — and on a live pull the answer is buried under a loop, an energy bar,
+ * three adds and an ambient tick all moving the same bodies. Stripped down like
+ * this, every raider who walks anywhere walked there because of a pickup, and
+ * the only thing left that can take the raid bar down is a pickup nobody reached.
+ */
+async function pickupBench(bossKey, role, side, seed) {
+  const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === bossKey)
+  const def = boss.mechanics.find(m => m.rule.type === 'collect')
+  assert.ok(def, `${bossKey} no longer has a collect mechanic — this check would be vacuous`)
+
+  seedRng(seed)
+  const w = createWorld(boss, role, side)
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const input = NO_INPUT()
+  step(w, input, TICK_MS)
+  fire(w, def.id)
+  // Only the unresolved ones. A pickup that somebody was already standing on
+  // when it landed is answered and retired inside a single tick, so "still on
+  // the floor" and "still in the array" are different questions.
+  const live = () => w.instances.filter(i => i.def.id === def.id && !i.resolved)
+  assert.equal(live().length, def.rule.count, 'the pickups were not all put on the floor')
+  return { w, def, input, step, TICK_MS, live }
+}
+
+// Fix (a): the reservation used to be unconditional.
+//
+// `allyThink` held back "all but the last" pickup on every fight for every
+// player, and never asked whether the mechanic was the player's at all. Caustic
+// Globule is `roles: ['dps','healer']` — tanks are welded to a serpent and are
+// not on the soak rota — so a player who rolled tank was saved a globule they
+// were never going to eat, the raid was forbidden from touching it, and it
+// ruptured on everybody. Ten globules a rotation, three rotations a pull, and
+// nothing anyone in the room could have done about a single one of them.
+test('nothing is saved for a tank who is not on the soak rota', async () => {
+  const { w, input, step, TICK_MS, live } = await pickupBench('twinfangs', 'tank', 'green', 21)
+
+  step(w, input, TICK_MS)
+  assert.equal(w.reservedPickups.size, 0,
+    'a globule is being held back for a tank, who is not on the globule rota — the raid ' +
+    'is not allowed to clear it and it will rupture on them')
+
+  // Past the 10s fuse, so every one of them has been either swept or lost.
+  for (let i = 0; i < 60 * 12 && live().length; i++) step(w, input, TICK_MS)
+  assert.equal(live().length, 0, 'a globule is still sitting on the floor past its own fuse')
+
+  // A rupture is the only thing in this world that can touch the raid bar, and
+  // the watermark remembers it even though the bar regenerates. Counting
+  // instances instead would prove nothing: swept and ruptured both leave the
+  // array.
+  assert.equal(w.raidHealthLow, 1,
+    'a globule ruptured on a raid that was free to clear every one of them — the bar fell ' +
+    `to ${w.raidHealthLow}`)
+})
+
+// Fix (b) and (c): the one that IS saved has an identity, and the raid respects it.
+//
+// The old reservation was a slice of an array recomputed every tick, so as the
+// raid swept, "the last one" became a different globule and everybody
+// re-targeted — and because the contact check in the instance loop asked only
+// whether ANY raider was standing on a pickup, a raider walking home over the
+// reserved one ate it anyway. Both defects end the same way: the player's
+// globule is gone before they reach it.
+test('a dps is saved exactly one globule, always the same one, and no raider takes it', async () => {
+  const { w, input, step, TICK_MS, live } = await pickupBench('twinfangs', 'dps', 'green', 21)
+
+  // Parked on real floor and left there, so anything that happens to the
+  // reserved globule was the raid's doing and not the player's.
+  const park = { x: 0, y: -8 }
+  const stay = () => { w.player.pos = { ...park } }
+
+  stay()
+  step(w, input, TICK_MS)
+  assert.equal(w.reservedPickups.size, 1,
+    'the fight stopped saving the player a globule — a collect mechanic the player has no ' +
+    'stake in teaches nothing')
+  const mine = [...w.reservedPickups][0]
+  const inst = w.instances.find(x => x.uid === mine)
+  assert.ok(inst && Math.hypot(inst.pos.x - park.x, inst.pos.y - park.y) > 4,
+    'the reserved globule landed under the parked player, so the raid was never given the ' +
+    'chance to take it and this check would be vacuous')
+
+  let sawTheRestGo = false
+  for (let i = 0; i < 60 * 9 && !inst.resolved; i++) {
+    stay()
+    step(w, input, TICK_MS)
+    // (c) Identity. If this moves, the raid is re-deciding who sweeps what every
+    // frame, which is what dithering looks like from the inside.
+    assert.deepEqual([...w.reservedPickups], [mine],
+      'the reservation moved to a different globule mid-run')
+    // (b) Nobody else may have it. The stack is meant to be the player's price
+    // for their own soak; handed to an ally, the player is left with no job and
+    // the ally with a stack they did not need.
+    assert.equal(inst.answered, false,
+      'a raider swept the globule that was being held back for the player')
+    if (!live().some(i => i.uid !== mine)) sawTheRestGo = true
+  }
+
+  // Two guards, both needed. The raid did finish the globules it WAS allowed to
+  // have — so "nobody took the reserved one" is not passing because the raid
+  // stood still — and it finished them by sweeping rather than by letting them
+  // rupture.
+  assert.ok(sawTheRestGo,
+    'the raid never cleared the globules it was allowed to have, so leaving the reserved ' +
+    'one alone proves nothing')
+  assert.equal(w.raidHealthLow, 1, 'the raid let a globule rupture rather than sweeping it')
+})
+
+// The Good line, made true.
+//
+// `twinfangs.ts` has said from the first draft that "low-stack players soak
+// globules", and until now that was decoration: the sweep order was whatever
+// order `w.allies` happened to be in, so the raider closest to dying of Eternal
+// Venom was as likely to be sent onto a globule as the one carrying none. The
+// stack is uncapped and lethal, eating a globule costs one, and the raid loses
+// a body and its share of the next rota when somebody tips over — so who picks
+// first is not flavour, it is the mechanic.
+test('the raiders with the fewest stacks are the ones sent onto the globules', async () => {
+  const { edgeDistance, inArena } = await engine()
+  const { w, input, step, TICK_MS, live } = await pickupBench('twinfangs', 'tank', 'green', 5)
+  const arena = w.boss.arenaRadius
+  // The two yards of idle sway `allyThink` finishes with, and the inset it then
+  // tidies every destination back inside. A spot further from the edge than the
+  // sum of the two cannot be dragged anywhere by either.
+  const SWAY = 2.4
+  const MARGIN = arena * 0.1 + SWAY
+
+  // The globules are MOVED before anybody is asked to go and get one.
+  //
+  // Where a `collect` scatters them is a ring drawn round the arena centre, and
+  // on this floor that ring lands more or less on top of the raid's own
+  // formation — so most of them are eaten on the tick they spawn by whoever
+  // happened to be standing there, which is a real behaviour but says nothing
+  // about the rota. Put them on empty floor and the only way anybody reaches one
+  // is by being sent.
+  const CLEAR = 7
+  const spots = []
+  for (let x = -22; x <= 22 && spots.length < live().length; x += 0.5) {
+    for (let y = -18; y <= 22 && spots.length < live().length; y += 0.5) {
+      const p = { x, y }
+      if (!inArena(w.boss, p) || edgeDistance(w.boss, p) < MARGIN) continue
+      const clearOf = (q) => Math.hypot(q.x - x, q.y - y) > CLEAR
+      if (!w.allies.every(a => clearOf(a.pos) && clearOf(a.want))) continue
+      if (!spots.every(clearOf)) continue
+      spots.push(p)
+    }
+  }
+  assert.equal(spots.length, live().length,
+    'could not find empty floor for every globule — the raid is standing everywhere')
+  live().forEach((i, n) => { i.pos = { ...spots[n] } })
+
+  // A tank player, so nothing is reserved and every globule is the raid's.
+  const sweepers = w.allies.filter(a => a.alive && a.role !== 'tank')
+  assert.ok(sweepers.length > spots.length,
+    'there are no more sweepers than globules, so any order at all would send the same ' +
+    'bodies and this check would be vacuous')
+
+  // Stacks handed out so that the heaviest raiders are also the ones standing
+  // closest to the work. Nearest-first alone would then pick exactly the wrong
+  // people, which is what makes the ordering visible at all.
+  const nearest = (a) => Math.min(...spots.map(p => Math.hypot(p.x - a.pos.x, p.y - a.pos.y)))
+  const byNear = [...sweepers].sort((x, y) => nearest(x) - nearest(y))
+  byNear.forEach((a, i) => { a.venom = byNear.length - i })
+
+  step(w, input, TICK_MS)
+
+  // Matched with slack, because `allyThink` finishes with a couple of yards of
+  // idle sway on every destination so a raider at station never looks switched
+  // off. The spots above are seven yards clear of everybody, so two yards of
+  // wobble cannot make a formation position look like an assignment.
+  const at = (a) => spots.find(p => Math.hypot(p.x - a.want.x, p.y - a.want.y) < SWAY)
+  const sent = sweepers.filter(a => at(a))
+  assert.equal(sent.length, spots.length, 'not every globule was assigned to somebody')
+  assert.equal(new Set(sent.map(a => spots.indexOf(at(a)))).size, spots.length,
+    'two raiders were sent to the same globule')
+
+  const worst = Math.max(...sent.map(a => a.venom))
+  const idle = sweepers.filter(a => !at(a))
+  const bestIdle = Math.min(...idle.map(a => a.venom))
+  assert.ok(worst < bestIdle,
+    `a raider on ${worst} stacks was sent onto a globule while one on ${bestIdle} was left ` +
+    'standing — the sweep order is not lowest-stack-first')
+})
+
+// The blast radius, pinned.
+//
+// Two other fights use `collect` and one of them is side-tagged: Toxic Droplets
+// belong to Breath's half of the room, and a red raider crossing to sweep one is
+// playing a fight nobody runs. So the reservation is made inside each side's own
+// pile rather than across the raid, and the gate that decides whether to make
+// one at all is `def_scored` — which asks about the player's SIDE as well as
+// their role. A green player is therefore saved a green droplet; a red player is
+// saved nothing, because none of this is theirs. Getting that wrong in either
+// direction is invisible on the Twin Fangs, which has no sides at all.
+test('a side-tagged pickup is only ever reserved for the side that owns it', async () => {
+  for (const [side, want] of [['green', 1], ['red', 0]]) {
+    const { w, def, input, step, TICK_MS, live } = await pickupBench('sentinels', 'dps', side, 9)
+    assert.equal(def.side, 'green', 'Toxic Droplets are no longer side-tagged')
+
+    step(w, input, TICK_MS)
+    assert.equal(w.reservedPickups.size, want,
+      `a ${side} player had ${w.reservedPickups.size} droplets held back for them, not ${want}`)
+
+    const held = [...w.reservedPickups].map(u => w.instances.find(i => i.uid === u))
+    // Stopped a second short of the 16s fuse, so nothing here has erupted yet.
+    for (let ms = 0; ms + TICK_MS < def.telegraphMs - 1000; ms += TICK_MS) {
+      step(w, input, TICK_MS)
+      for (const i of held) {
+        assert.equal(i.answered, false,
+          'a raider swept the droplet that was being held back for the player')
+      }
+    }
+    assert.equal(live().length >= want, true, 'the reserved droplet erupted early')
+  }
+})

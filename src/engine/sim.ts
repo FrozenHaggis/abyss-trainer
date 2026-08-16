@@ -5110,7 +5110,13 @@ function computePrompt(w: World): Prompt | null {
       consider({ verb: 'BLOCK IT', mechanic: d.name, urgency: t }, 1)
     } else if (d.job === 'kill') {
       const t = 1 - add.fuse / Math.max(1, d.fuseSec * 1000)
-      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL IT', mechanic: d.name, urgency: t }, 2)
+      // "KILL ADDS", not "KILL IT". The prompt is spoken as well as drawn, and
+      // every browser's speech synthesis reads a two-letter capitalised word as
+      // an initialism — "KILL IT" comes out as "kill I.T.", which is both wrong
+      // and the kind of wrong that makes a player stop trusting the callout.
+      // Naming the thing is better English for a raid callout anyway: nobody
+      // shouts "kill it" at a room that can see three of them.
+      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL ADDS', mechanic: d.name, urgency: t }, 2)
     } else if (d.job === 'leave') {
       if (dist(add.pos, w.player.pos) < 9) {
         consider({ verb: 'DO NOT TOUCH', mechanic: d.name, urgency: 0.5 }, 2)

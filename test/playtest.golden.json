@@ -475,17 +475,28 @@
   "competent/twinfangs/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Killed one serpent far ahead of the other — Uncoiled Wrath",
+    "outcome": "Eternal Venom — 10 stacks",
     "failures": {
-      "Caustic Deluge": 2,
-      "Corrosive Spit": 2,
-      "Uncoiled Wrath": 1
+      "Caustic Deluge": 3,
+      "Corrosive Spit": 4,
+      "Vile Flood": 1
     }
   },
   "competent/twinfangs/healer": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Eternal Venom — 10 stacks",
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Caustic Deluge": 1,
+      "Coiling Ichor": 2,
+      "Congealed Gore": 1,
+      "Vile Flood": 2
+    }
+  },
+  "competent/twinfangs/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
       "Caustic Deluge": 1,
       "Coiling Ichor": 1,
@@ -493,45 +504,36 @@
       "Vile Flood": 1
     }
   },
-  "competent/twinfangs/dps": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Killed one serpent far ahead of the other — Uncoiled Wrath",
-    "failures": {
-      "Caustic Deluge": 1,
-      "Coiling Ichor": 1,
-      "Congealed Gore": 1,
-      "Uncoiled Wrath": 1
-    }
-  },
   "competent/coiledaltar/tank": {
-    "wins": 0,
+    "wins": 1,
     "cleared": false,
-    "outcome": "Health pools drifted apart — killing one berserks the other",
+    "outcome": "enrage",
     "failures": {
-      "Coalesced Venom": 1,
-      "Deathguard & Soulbound": 1
+      "Coalesced Venom": 2,
+      "Spiteful Soulcoiler": 1,
+      "Widow's Kiss": 1
     }
   },
   "competent/coiledaltar/healer": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Health pools drifted apart — killing one berserks the other",
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
-      "Coalesced Venom": 2,
-      "Deathguard & Soulbound": 1,
+      "Coalesced Venom": 4,
+      "Eternal Nightfall": 1,
       "Spiteful Soulcoiler": 1,
       "Venomfang": 1,
       "Widow's Kiss": 1
     }
   },
   "competent/coiledaltar/dps": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Health pools drifted apart — killing one berserks the other",
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
-      "Coalesced Venom": 1,
-      "Deathguard & Soulbound": 1
+      "Coalesced Venom": 2,
+      "Spiteful Soulcoiler": 1,
+      "Widow's Kiss": 1
     }
   },
   "competent/ulatek/tank": {

@@ -1054,6 +1054,29 @@ function play(boss, role, smart, seed, side = 'green') {
         if (toLeak < td) { td = toLeak; target = a }
       }
       input.firing = true
+      // ── two bosses that have to die together ──
+      //
+      // With no add worth shooting the bot aimed nowhere, and the engine then
+      // aims at whichever entity is NEAREST — which makes the target choice a
+      // side effect of where the tank's feet are. On a fight whose entities hold
+      // separate health pools that dumps everything into the closer one, the two
+      // bars drift apart, and the instant one dies the other is still at 40-90%
+      // with no sync window able to close it.
+      //
+      // It measured Twin Fangs and Coiled Altar as impossible for that reason
+      // alone: both failed on their own syncKill, "killed one far ahead of the
+      // other", which is exactly the mistake a competent raid does not make. A
+      // raid told to kill two things together watches both bars and feeds the
+      // one that is ahead, so the bot does too — aim at the HEALTHIEST live
+      // entity and let the lower bar wait for it.
+      //
+      // Only where the fight asks for it. Every other multi-entity boss is happy
+      // to be killed in whatever order, and nearest-target models a real raid
+      // better there.
+      if (!target && boss.mechanics.some(m => m.rule.type === 'syncKill')) {
+        const live = (w.bosses ?? []).filter(b => b.alive && !b.def.untargetable)
+        if (live.length > 1) target = { pos: live.reduce((a, b) => (b.hp > a.hp ? b : a)).pos }
+      }
       input.aim = target ? { x: target.pos.x, y: target.pos.y } : null
 
       // ── evening out a council ──

@@ -492,6 +492,25 @@ export interface BossEntityDef {
   /** Where it stands, in yards from the arena centre. */
   start: Vec
   /**
+   * Paint everything this entity casts in one colour, whatever the mechanic is.
+   *
+   * Normally colour in this trainer encodes the VERB — green means get in, red
+   * means stay out — and that is the right default, because it is the thing a
+   * raider has to decide in the second they have.
+   *
+   * The Twin Fangs override it, on the raid leader's instruction, because the
+   * fight already teaches a different reading and the raid has learned it:
+   * everything Vexhul does is green and everything Ithraz does is red, and
+   * GREEN MEANS IT GIVES YOU ETERNAL VENOM. On a fight whose whole economy is a
+   * stack counter, "will this cost me a stack" is a more useful thing to know at
+   * a glance than "should I stand in it", and the second question is answered by
+   * the prompt and the panel anyway.
+   *
+   * Set this only where a fight really does colour-code by caster. It costs the
+   * verb palette, and two mechanics pay for it — see ruleColour.
+   */
+  hue?: 'green' | 'red'
+  /**
    * Held by its own tank, away from the others.
    *
    * Set this ONLY where a source states it. Twin Fangs is the one confirmed

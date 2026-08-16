@@ -122,6 +122,17 @@ const GALE_BRACE_MS = 5000
  * what being thrown by an exploding glob of venom ought to look like.
  */
 const CYST_KNOCK_MS = 650
+/**
+ * How long a `knockbackYards` push carries the player, in ms.
+ *
+ * Shorter than the cyst's because it is a shove rather than a launch: ten yards
+ * over this is about 22 yd/s, roughly twice a sprint, which reads as being
+ * knocked back rather than as flying. What matters is that it reads as MOTION at
+ * all — Stone Breaker used to set the landing position outright, and an instant
+ * reposition does not look like being thrown away from Ithraz, it looks like a
+ * teleport. That was the exact complaint the cyst burst had already fixed once.
+ */
+const PUSH_KNOCK_MS = 450
 /** How long a raider is aloft after a Crosswinds knock, in ms. */
 const WIND_ALOFT_MS = 1500
 
@@ -497,6 +508,20 @@ export interface World {
    * venom by then, and the debrief has somewhere to grow into.
    */
   soakRunClean: boolean
+  /**
+   * Bumped every time a channel opens. Identity, not a count — it exists so a
+   * thing that may happen once per channel can tell one channel from the next.
+   */
+  channelEpoch: number
+  /**
+   * The channel in which the player last paid for a globule soak.
+   *
+   * Caustic Deluge puts ten globules on a small floor and the player is charged
+   * for the ones they touch, so a correct route was costing six stacks against a
+   * spec that asks for one. Equal to `channelEpoch` means this Deluge has
+   * already taken its stack and the rest are cleared for free.
+   */
+  venomSoakEpoch: number
   /** How many times each mechanic that splits the raid in half has been cast. */
   altCount: Record<string, number>
   /** Helical Toxins: the sum a pair has to reach between them. */
@@ -1344,6 +1369,9 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     seqPending: null,
     sweepCasts: {},
     soakRunClean: true,
+    // Start apart, so the first globule of the first channel is chargeable.
+    channelEpoch: 1,
+    venomSoakEpoch: 0,
     altCount: {},
     pairTarget: 0,
     pairPartnerId: -1,
@@ -3416,9 +3444,29 @@ function resolveInstance(w: World, inst: Instance) {
               hurt(w, def.damage ?? 0.25, def.name)
             }
           }
-          w.player.pos.x = landing.x
-          w.player.pos.y = landing.y
-          w.player.aloft = 1200
+          // THE PLAYER TRAVELS. `landing` is where the push puts them, and this
+          // carries them there over PUSH_KNOCK_MS instead of moving them there
+          // between one frame and the next. Setting the position outright made
+          // Stone Breaker read as a teleport rather than as ten yards of shove
+          // away from Ithraz — the same complaint, and the same fix, as the
+          // Viscous Cyst burst above.
+          //
+          // `safe` is the inverse of `offPlatform`: an ordinary push is caught
+          // by the rim, and Stone Breaker's is not — the flight is allowed to
+          // finish in the venom, and the floor check at the top of step() turns
+          // that into the fall with the room's own death text. `landing` has
+          // already been clamped back onto the floor above in the case where the
+          // rim does catch you, so travelling to it is right either way.
+          const fly = PUSH_KNOCK_MS / 1000
+          w.player.knock = {
+            vx: (landing.x - w.player.pos.x) / fly,
+            vy: (landing.y - w.player.pos.y) / fly,
+            ms: PUSH_KNOCK_MS,
+            safe: !def.offPlatform,
+          }
+          // Airborne for the flight and a beat past it, so the landing is a
+          // moment you can see rather than a frame you miss.
+          w.player.aloft = Math.max(w.player.aloft, PUSH_KNOCK_MS + 300)
           w.shake = 1
         }
         // The raid goes too.
@@ -3978,6 +4026,11 @@ function resolveInstance(w: World, inst: Instance) {
     for (let i = 0; i < ch.count; i++) {
       w.queue.push({ id: ch.defId, atMs: w.elapsedMs + i * ch.everyMs, at: at?.[i] })
     }
+    // A new channel: a new soak allowance for the player. See the globule
+    // pickup in step() — one Caustic Deluge can only ever cost them one stack,
+    // however many of its ten globules they end up walking over.
+    w.channelEpoch++
+
     // The channel stacks the tank it is channelling into, once, as it opens.
     //
     // Caustic Deluge is the Twin Fangs' swap driver and Envenomed is what it
@@ -5760,7 +5813,13 @@ function computePrompt(w: World): Prompt | null {
       consider({ verb: 'BLOCK IT', mechanic: d.name, urgency: t }, 1)
     } else if (d.job === 'kill') {
       const t = 1 - add.fuse / Math.max(1, d.fuseSec * 1000)
-      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL IT', mechanic: d.name, urgency: t }, 2)
+      // "KILL ADDS", not "KILL IT". The prompt is spoken as well as drawn, and
+      // every browser's speech synthesis reads a two-letter capitalised word as
+      // an initialism — "KILL IT" comes out as "kill I.T.", which is both wrong
+      // and the kind of wrong that makes a player stop trusting the callout.
+      // Naming the thing is better English for a raid callout anyway: nobody
+      // shouts "kill it" at a room that can see three of them.
+      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL ADDS', mechanic: d.name, urgency: t }, 2)
     } else if (d.job === 'leave') {
       if (dist(add.pos, w.player.pos) < 9) {
         consider({ verb: 'DO NOT TOUCH', mechanic: d.name, urgency: 0.5 }, 2)
@@ -8136,7 +8195,35 @@ export function step(w: World, input: Input, dtMs: number) {
       if (touched) {
         inst.answered = true
         inst.timer = 0
-        giveVenom(w, eater, inst.def.applies?.soak ?? 0)
+        // ── one soak stack per channel, for the player ──
+        //
+        // "The player needs to soak one and this gives them 1 stack. The rest of
+        // the non tank AI players needs to soak the rest." Measured against that
+        // intent, the fight was charging six: ten globules land in a small wedge,
+        // three to six of them inside a globule radius of a body that was already
+        // standing there, and every one the player crossed on their way anywhere
+        // took another stack. A competent healer reached the lethal ten at 82
+        // seconds having played the mechanic correctly.
+        //
+        // So the SOAK is capped at one per channel. The globule is still cleared
+        // — walking over it still spares the raid the rupture, which is the whole
+        // point of the pickup — it simply cannot cost the player a second stack
+        // in the same Caustic Deluge. Everything else that applies venom is
+        // untouched: waves, splashes, spit, the beam and Emergence all still bill
+        // every time, because those are things you failed to dodge rather than a
+        // job you were sent to do.
+        //
+        // Allies are not capped and do not need to be: the sweeper rota hands
+        // them roughly one apiece, and `giveVenom` on an ally is what makes the
+        // lowest-stack-first ordering mean anything.
+        const soak = inst.def.applies?.soak ?? 0
+        const mine = eater === null
+        if (soak > 0 && mine && w.venomSoakEpoch === w.channelEpoch) {
+          // Already paid this channel. Cleared, not charged.
+        } else {
+          if (soak > 0 && mine) w.venomSoakEpoch = w.channelEpoch
+          giveVenom(w, eater, soak)
+        }
       }
       // Opening the box is what reveals what it was hiding, and it drops where
       // it stood — whichever body opened it, ally or player. Two steps, find it

@@ -207,6 +207,27 @@ function drawLabel(
 function exhaustive(_never: never): void {}
 
 function ruleColour(inst: Instance, w?: World): string {
+  /**
+   * A fight that colour-codes by CASTER beats the verb palette.
+   *
+   * The Twin Fangs do: everything Vexhul casts is green, everything Ithraz casts
+   * is red, and the raid reads green as "this puts Eternal Venom on me". On a
+   * fight that is entirely a stack counter that is the more useful glance, so it
+   * wins — see BossEntityDef.hue.
+   *
+   * TWO MECHANICS PAY FOR IT, and both are Ithraz's, and both are places you are
+   * supposed to STAND:
+   *   - Ravenous Feast, the only thing in the fight that gives a stack back
+   *   - a Stone Breaker slam, which the Ithraz tank has to walk
+   * Under the verb palette those were green when they wanted you and red when
+   * they did not. Under the caster palette they are red throughout, and the
+   * "get in" has to come from the prompt and the briefing instead. That is the
+   * raid leader's call, made knowingly; it is written here so the next person to
+   * wonder why the shed circle is red does not "fix" it.
+   */
+  const owner = w && inst.fromId ? bossUnitFor(w, inst.fromId).def.hue : undefined
+  if (owner) return owner === 'green' ? GREEN : RED
+
   switch (inst.def.rule.type) {
     case 'beInside': return GREEN
     case 'collect': return GREEN

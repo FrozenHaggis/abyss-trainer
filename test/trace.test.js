@@ -404,6 +404,14 @@ for (const [key, dir] of present) {
   test(`${key}: every phase and cross-reference id resolves`, () => {
     const mechanics = new Set(mechanicDefs(key).map(m => m.id))
     const adds = new Set(addIds(key))
+    // A THIRD namespace. `empoweredOnly` and `unlockedByDeathOf` name bodies,
+    // not mechanics, and a typo in either is silent in the worst possible way:
+    // the gate in fire() never opens, so the mechanic simply never fires and the
+    // fight looks like it is working. Six of the Explorers' most interesting
+    // abilities hang off these two fields.
+    const entitiesLit = literalAfter(codeOf(key), 'entities')
+    const entities = new Set(
+      (entitiesLit ? objectsIn(entitiesLit) : []).map(e => strField(e, 'id')).filter(Boolean))
     const refs = []          // [where, id, which namespace it must live in]
 
     for (const p of phaseDefs(key)) {
@@ -452,11 +460,34 @@ for (const [key, dir] of present) {
       }
       const dotId = strField(m.ruleLiteral, 'dotId')
       if (dotId) refs.push([`${m.id} dotId`, dotId, mechanics, 'mechanic'])
+      // The Lost Explorers' new rule literals. Each of these is a plain string
+      // pointing at another mechanic: the two cure pools and the detonation a
+      // polarity attributes its death to, and the raid cost a feed pays.
+      for (const f of ['firePoolId', 'frostPoolId', 'deathId', 'costId']) {
+        const v = strField(m.ruleLiteral, f)
+        if (v) refs.push([`${m.id} ${f}`, v, mechanics, 'mechanic'])
+      }
+      // `hides: { defId: '…' }` — what a junk box was concealing. Read off the
+      // hides literal specifically rather than off the whole block, or a
+      // `spawns: { defId }` on the same mechanic would be attributed to it.
+      const hides = literalAfter(m.blk, 'hides')
+      const hidden = hides && strField(hides, 'defId')
+      if (hidden) refs.push([`${m.id} hides`, hidden, mechanics, 'mechanic'])
+      // And the two ENTITY gates.
+      const emp = strField(m.blk, 'empoweredOnly')
+      if (emp) refs.push([`${m.id} empoweredOnly`, emp, entities, 'entity'])
+      const unlocked = literalAfter(m.blk, 'unlockedByDeathOf')
+      if (unlocked) {
+        for (const id of stringsIn(unlocked)) {
+          refs.push([`${m.id} unlockedByDeathOf`, id, entities, 'entity'])
+        }
+      }
     }
 
+    const NOUN = { add: 'an add', entity: 'an entity', mechanic: 'a mechanic' }
     for (const [where, id, known, kind] of refs) {
       assert.ok(known.has(id),
-        `${where} references '${id}', which is not ${kind === 'add' ? 'an add' : 'a mechanic'} on this boss`)
+        `${where} references '${id}', which is not ${NOUN[kind]} on this boss`)
     }
   })
 
@@ -508,7 +539,12 @@ for (const [key, dir] of present) {
     // A second Mutilated Gash and an unpaired Crosswinds both end the pull on
     // the spot, so both owe the debrief a sentence for the same reason a hole in
     // the floor and a wrong orb collision do.
-    const KILLS_OUTRIGHT = ['lethalGround', 'pairUp', 'stackingDot', 'windPair']
+    // `wave` joins them. Blast Wave is the deadliest ID in the Explorers' data —
+    // 18 killing blows on the Mythic PTR sample — and it ends the pull on the
+    // spot for anyone still on the floor when it passes. A new Rule member that
+    // kills is invisible to this list until somebody decides about it, which is
+    // the whole reason the list is written out rather than derived.
+    const KILLS_OUTRIGHT = ['lethalGround', 'pairUp', 'stackingDot', 'windPair', 'wave']
     for (const m of mechanicDefs(key)) {
       if (!KILLS_OUTRIGHT.includes(m.rule)) continue
       assert.notEqual(m.failText.trim(), '',
@@ -750,6 +786,85 @@ for (const [key, dir] of present) {
   })
 }
 
+// ── the four new primitives, guarded at the source ───────────────────────────
+//
+// Same shape as the pickup and soak guards below: slice sim.ts from the case
+// label to the next `break` and assert on what is and is not in it. These are
+// not stylistic. Each one is a rule this project has already broken once on some
+// other mechanic, transplanted onto the rule that could break it next.
+test('a rejected feed is free — no failure, no death', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'feed':")
+  assert.ok(i > 0, "sim.ts no longer handles 'feed'")
+  const body = sim.slice(i, sim.indexOf('break', i))
+  assert.ok(!/\b(recordFailure|killPlayer|hurt)\(/.test(body),
+    'a fish that expired, or a feed the boss refused, is being charged for. Walking a ' +
+    'fish into the wrong one of three bodies standing close together must not be an ' +
+    'unrecoverable wipe, and the bar already charges for the reset you did not get')
+
+  // And the delivery itself. A boss that has already eaten refuses the fish and
+  // you keep it — the empowerment must be gated, or three fish fed into one body
+  // would empower it three times and strand the other two.
+  const at = sim.indexOf('if (w.fishCarried) {')
+  assert.ok(at > 0, 'the feed block in step() is gone')
+  const block = sim.slice(at, at + 1400)
+  assert.match(block, /!u\.empowered/,
+    'the feed does not check whether its target has already eaten. Each boss empowers ' +
+    'once, and without the check a fish is consumed on a body that gains nothing')
+  assert.ok(!/\b(recordFailure|killPlayer)\(/.test(block),
+    'the feed block scores or kills. Assumption B is that a misclick costs you nothing ' +
+    'but the walk back')
+})
+
+test('touching a mushroom can never be a failure', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'launchPad':")
+  assert.ok(i > 0, "sim.ts no longer handles 'launchPad'")
+  assert.ok(!/\b(recordFailure|killPlayer|hurt)\(/.test(sim.slice(i, sim.indexOf('break', i))),
+    'a launchPad resolves into damage or a failure. The ability data calls the airborne ' +
+    'debuff the SUCCESS signal in as many words — running over a mushroom is the answer ' +
+    'to Blast Wave, not a mistake')
+
+  const at = sim.indexOf("if (inst.def.rule.type === 'launchPad'")
+  assert.ok(at > 0, 'the mushroom contact test in step() is gone')
+  assert.ok(!/\b(recordFailure|killPlayer|hurt)\(/.test(sim.slice(at, at + 700)),
+    'the mushroom contact test damages or scores whoever stepped on it')
+})
+
+test('an element pool is purely a cure and never a hazard', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'elementPool':")
+  assert.ok(i > 0, "sim.ts no longer handles 'elementPool'")
+  assert.ok(!/\b(recordFailure|killPlayer|hurt)\(/.test(sim.slice(i, sim.indexOf('break', i))),
+    'an elementPool resolves into harm. It is the only thing on this floor that is purely ' +
+    'good news, and a cure that also hurts cannot be told apart from the thing it cures')
+
+  // The positive half: the cure must actually be the OPPOSITE element. A pool
+  // that strips its own element makes every carrier self-clearing and deletes
+  // the trade that IS the mechanic.
+  const at = sim.indexOf("if (inst.def.rule.type === 'elementPool') {")
+  assert.ok(at > 0, 'the element-pool contact test in step() is gone')
+  const block = sim.slice(at, at + 900)
+  assert.match(block, /w\.player\.element !== el/,
+    'the cure does not check that the pool is the opposite element. Standing in your own ' +
+    'element must do nothing at all — trading ground with the other carrier is the mechanic')
+})
+
+test('a wave is escaped by being airborne and by nothing else', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const i = sim.indexOf("case 'wave':")
+  assert.ok(i > 0, "sim.ts no longer handles 'wave'")
+  const body = sim.slice(i, sim.indexOf('break', i))
+  assert.match(body, /w\.player\.aloft <= 0/,
+    'the wave no longer reads `aloft`. Being off the floor is the entire mechanic, and a ' +
+    'wave that lands on an airborne player is a telegraph with no answer at all')
+  // And the allies have to be seen playing it, or the raid stands in a front
+  // that kills the player and reports no losses.
+  assert.match(body, /a\.aloft <= 0/,
+    'the wave exempts the player but not the raid. A front that kills only you is not a ' +
+    'raid mechanic, and the bots have to be visibly answering it')
+})
+
 test('engine has no path from raidDamage to a recorded failure', () => {
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
   const idx = sim.indexOf("case 'raidDamage':")
@@ -884,7 +999,12 @@ test('no 300-yard raid-wide ability is scored as a player failure', () => {
     const wide = new Set(all.filter(s => /\b300\s*(yd|yard)/i.test(s.note ?? '')).map(s => s.spellId))
     for (const m of readBoss(key).mechanics) {
       if (!wide.has(m.spellId)) continue
-      assert.ok(['raidDamage', 'press', 'tankSwap', 'keepApart'].includes(m.rule),
+      // Kept in step with `SAFE` in invariants.test.js — the two lists check the
+      // same class from opposite ends, and a rule allowed by one and not the
+      // other is a decision that was only half taken. `wave` and `polarity` are
+      // absent from both: each of them genuinely can name a player.
+      assert.ok(['raidDamage', 'press', 'tankSwap', 'keepApart',
+        'launchPad', 'elementPool', 'feed'].includes(m.rule),
         `${key}/${m.id} (spell ${m.spellId}) is 300yd raid-wide but its rule is '${m.rule}' — ` +
         'that produces a failure leaderboard naming the entire raid every pull')
     }

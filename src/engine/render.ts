@@ -32,6 +32,28 @@ const SIDE_RED = '221, 66, 90'
 /** Add corpses. Neither a target nor a hazard, so neither red nor violet. */
 const BONE = '226, 219, 196'
 
+/**
+ * Frostfire Volley's two elements. IDENTITY again, and under the same
+ * discipline as the sides and the altars.
+ *
+ * It matters more here than anywhere else in this file, because both pools carry
+ * the SAME verb — green, run into the one you are not carrying. Painted in the
+ * verb palette the two would be indistinguishable from each other and a mechanic
+ * whose entire content is "which of these two is which" would become a coin
+ * flip. So a pool is drawn in its own element's colour, and green appears only
+ * as a ring around the one pool that is YOUR cure.
+ */
+const FIRE = '255, 138, 62'
+const FROST = '126, 196, 255'
+const elementColour = (e: 'fire' | 'frost') => (e === 'fire' ? FIRE : FROST)
+/** What the debuff is called on the raider carrying it, for the label. */
+const ELEMENT_NAME: Record<'fire' | 'frost', string> = {
+  fire: 'BURNING FLAMES',
+  frost: 'PIERCING FROST',
+}
+/** An empowered explorer. Gold, the file's existing "do not misread this" hue. */
+const GOLD = '210, 153, 34'
+
 const sideColour = (s: Side) => (s === 'red' ? SIDE_RED : SIDE_GREEN)
 
 /**
@@ -168,6 +190,22 @@ function drawLabel(
   ctx.textBaseline = 'alphabetic'
 }
 
+/**
+ * Compile-time exhaustiveness, deliberately inert at runtime.
+ *
+ * Every `Rule` variant has to be NAMED in the dispatch below rather than swept
+ * up by a `default`, because the default in this file is RED — "do not stand
+ * here" — and a new verb that quietly inherited it would paint a cure, a
+ * mushroom or a fish as a hazard. That is not hypothetical: the note a few
+ * lines down records this file having made exactly that mistake once already,
+ * and a type error is a cheaper way of catching the next one than a playtest.
+ *
+ * It does not throw. This runs inside the frame loop, and a renderer that took
+ * the whole fight down over a colour would be a worse failure than a wrong
+ * colour is.
+ */
+function exhaustive(_never: never): void {}
+
 function ruleColour(inst: Instance, w?: World): string {
   /**
    * A fight that colour-codes by CASTER beats the verb palette.
@@ -197,6 +235,15 @@ function ruleColour(inst: Instance, w?: World): string {
     case 'press': return VIOLET
     case 'survive': return VIOLET
     case 'windPair': return VIOLET
+    // The Lost Explorers' new verbs, named explicitly rather than left to fall
+    // through. `default: return RED` would paint a cure, a mushroom and a fish
+    // as "do not stand here" — which is the exact mistake the pickup pass below
+    // records this file having already made once.
+    case 'feed': return GREEN
+    case 'launchPad': return GREEN
+    case 'elementPool': return GREEN
+    case 'polarity': return RED
+    case 'wave': return RED
     /**
      * The one telegraph in the raid whose VERB depends on who is reading it.
      *
@@ -239,7 +286,35 @@ function ruleColour(inst: Instance, w?: World): string {
      */
     case 'shedStack':
       return inst.fed?.includes(-1) ? RED : GREEN
-    default: return RED
+    // Everything answered by not being on the ground it is drawn on, plus the
+    // rules that draw no shape of their own and only reach this function through
+    // one somebody else handed them. All red — but all named, so that adding a
+    // 30th verb fails the build here rather than inheriting "get out" from a
+    // `default` and being wrong in a way only a playtest would notice.
+    //
+    // `holdMelee` is in this list rather than green because the leash draws its
+    // OWN ring further down this file, in bone until the boundary is behind you.
+    // It reaches this function only if something ever hands it a telegraph, and
+    // red is what the `default` it replaces already returned for it.
+    case 'holdMelee':
+    case 'avoid':
+    case 'keepApart':
+    case 'lethalGround':
+    case 'pairUp':
+    case 'drainNearest':
+    case 'trail':
+    case 'burnWindow':
+    case 'syncKill':
+    case 'faceAway':
+    case 'aimAway':
+    case 'raidDamage':
+    case 'tankSwap':
+    case 'combo':
+    case 'stackingDot':
+      return RED
+    default:
+      exhaustive(inst.def.rule)
+      return RED
   }
 }
 
@@ -331,6 +406,35 @@ function pathShape(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance, k
       break
     }
   }
+}
+
+/**
+ * One lane of a fanned `line`, APPENDED to the current path instead of starting
+ * a new one.
+ *
+ * `pathShape` opens its own path, which is right for a telegraph drawn on its
+ * own and wrong for a fan. Three shells thrown off one anchor have to be filled
+ * as a single union or their alphas compound wherever they cross, and the place
+ * they cross is exactly the near field the player is standing in — see the fan
+ * pass below for why that is the whole legibility of the mechanic.
+ */
+function laneQuad(ctx: CanvasRenderingContext2D, cam: Camera, inst: Instance, k = 1) {
+  const s = inst.def.shape
+  if (s?.kind !== 'line') return
+  const p = toPx(cam, inst.pos)
+  const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
+  const hw = (s.width / 2) * k * cam.scale
+  const L = (inst.reach ?? s.length) * cam.scale
+  ctx.moveTo(p.x - sa * hw, p.y + ca * hw)
+  ctx.lineTo(p.x + ca * L - sa * hw, p.y + sa * L + ca * hw)
+  ctx.lineTo(p.x + ca * L + sa * hw, p.y + sa * L - ca * hw)
+  ctx.lineTo(p.x + sa * hw, p.y - ca * hw)
+  ctx.closePath()
+}
+
+/** Is this instance one lane of a fanned `line` rather than a shape on its own? */
+function isLane(inst: Instance): boolean {
+  return inst.def.fanDeg !== undefined && inst.def.shape?.kind === 'line'
 }
 
 /**
@@ -791,6 +895,15 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   for (const inst of w.instances) {
     if (!inst.resolved || !inst.def.shape) continue
     if (inst.def.rule.type === 'lethalGround') continue   // drawn above as a hole
+    // An element pool lingers for twenty seconds and would be caught by this
+    // pass, which paints everything red. It is a CURE, and the one thing this
+    // file must never do is tell a carrier to walk out of the only ground that
+    // saves them. Drawn in its own colours immediately below.
+    if (inst.def.rule.type === 'elementPool') continue
+    // A landed shell is still crossing the room. It is drawn with the rest of
+    // its fan below, as a lane, rather than as one more puddle that happens to
+    // be sliding — the whole point of the shape is which way it is going.
+    if (isLane(inst)) continue
     const permanent = !!inst.def.permanent
     if (!inst.def.lingerMs && !permanent) continue
     // Fade over the last second of its life so you can see it expiring — unless
@@ -838,6 +951,64 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       }
       ctx.restore()
       ctx.lineWidth = 1
+    }
+  }
+
+  // ── element pools ──
+  //
+  // The ground half of Frostfire Volley, and the only ground in the raid you are
+  // supposed to run INTO while it is on fire. Two things have to be legible at
+  // once and they are different questions:
+  //
+  //   what is it   — fire or frost, drawn in the element's own identity colour,
+  //                  because telling the two apart IS the mechanic;
+  //   what do I do — green, and only ever on the pool that cures what YOU are
+  //                  carrying, so the verb palette answers one raider's question
+  //                  rather than shouting the same thing about both.
+  //
+  // Filled low and rimmed solid, deliberately unlike a telegraph: nothing here
+  // is landing, the pool simply is, and it does no damage to anybody at all.
+  for (const inst of w.instances) {
+    if (inst.def.rule.type !== 'elementPool' || !inst.def.shape) continue
+    const el = inst.def.rule.element
+    const col = elementColour(el)
+    const p = toPx(cam, inst.pos)
+    const rr = (inst.def.shape.kind === 'circle' ? inst.def.shape.radius : 6) * cam.scale
+    // Fades over its last second the way every other timed pool does, so a
+    // carrier can tell a cure that is about to go out from one that is not.
+    const left = (inst.def.lingerMs ?? 0) + inst.timer
+    const dying = Math.max(0.3, Math.min(1, left / 1200))
+    const wash = ctx.createRadialGradient(p.x, p.y, rr * 0.2, p.x, p.y, rr)
+    wash.addColorStop(0, `rgba(${col}, ${0.30 * dying})`)
+    wash.addColorStop(1, `rgba(${col}, ${0.10 * dying})`)
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2)
+    ctx.fillStyle = wash; ctx.fill()
+    ctx.strokeStyle = `rgba(${col}, ${0.85 * dying})`
+    ctx.lineWidth = 2.5; ctx.stroke(); ctx.lineWidth = 1
+    // Fire licks outward, frost crystallises inward. Two shapes as well as two
+    // colours, because a raid is read at a glance and under a red telegraph
+    // orange and blue are closer than anybody would like.
+    ctx.strokeStyle = `rgba(${col}, ${0.75 * dying})`
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + (el === 'fire' ? (w.elapsedMs / 900) % (Math.PI * 2) : 0)
+      const inner = el === 'fire' ? rr * 0.45 : rr * 0.15
+      const outer = el === 'fire' ? rr * 0.8 + 3 * pulse : rr * 0.7
+      ctx.moveTo(p.x + Math.cos(a) * inner, p.y + Math.sin(a) * inner)
+      ctx.lineTo(p.x + Math.cos(a) * outer, p.y + Math.sin(a) * outer)
+    }
+    ctx.stroke()
+    ctx.lineWidth = 1
+    // YOUR cure. The green ring is the whole reason the pools are not green:
+    // it appears on exactly one of the two, and it means "this one, run at it".
+    if (w.player.element && w.player.element !== el) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr + 5 + 3 * pulse, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${GREEN}, ${0.55 + 0.4 * pulse})`
+      ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
+      drawLabel(ctx, 'YOUR CURE', p.x, p.y - rr - 14, GREEN, 11, 0.95)
+    } else {
+      drawLabel(ctx, el.toUpperCase(), p.x, p.y - rr - 12, col, 10, 0.6 * dying)
     }
   }
 
@@ -900,10 +1071,117 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     ctx.lineWidth = 1
   }
 
+  // ── the Disgusting Fish ──
+  //
+  // Drawn as its own thing rather than as one more pickup, and named on the
+  // floor, because the two look identical in the fiction and mean completely
+  // different things: a junk box is a chore on a ten-second clock, and the fish
+  // is the only object in the encounter that empties Mor'zahi's bar. A player who
+  // ran over it thinking it was another box would never learn that it was there.
+  //
+  // Deliberately NOT drawn on the box that hides it. Opening them is the
+  // mechanic — "find the fish" — and a renderer that marked the right box in
+  // advance would delete it.
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.answered || inst.def.rule.type !== 'feed') continue
+    const p = toPx(cam, inst.pos)
+    const r = (inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 3) * cam.scale
+    // A slow beacon rather than a contracting ring: the fish has a long life and
+    // nothing about it is a countdown you have to beat, it is a thing to go and
+    // get. Two rings breathing outward read as "come here".
+    for (const k of [0, 0.5]) {
+      const f = ((w.elapsedMs / 1300) + k) % 1
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * (1 + 1.6 * f), 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${GREEN}, ${0.55 * (1 - f)})`
+      ctx.lineWidth = 2.5; ctx.stroke(); ctx.lineWidth = 1
+    }
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${GREEN}, 0.7)`; ctx.fill()
+    ctx.strokeStyle = `rgba(${GREEN}, 1)`; ctx.lineWidth = 2.5; ctx.stroke()
+    ctx.lineWidth = 1
+    drawLabel(ctx, 'DISGUSTING FISH', p.x, p.y - r - 14, GREEN, 12, 0.95)
+  }
+
+  // ── bouncy mushrooms ──
+  //
+  // Green, because running over one is always correct play and can never be
+  // scored, but drawn as a stalk and a cap rather than as a glob so it does not
+  // read as a fourth kind of pickup. Nothing is collected here and nothing is
+  // cleared: the mushroom is a tool, and the only tool in this raid whose answer
+  // is vertical.
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.answered || inst.def.rule.type !== 'launchPad') continue
+    const p = toPx(cam, inst.pos)
+    const r = (inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 4) * cam.scale
+    // The footprint you have to touch. Dashed and faint — the contact test is
+    // generous and the cap is the thing to aim at.
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+    ctx.setLineDash([4, 5])
+    ctx.strokeStyle = `rgba(${GREEN}, 0.35)`
+    ctx.lineWidth = 1.5; ctx.stroke()
+    ctx.setLineDash([]); ctx.lineWidth = 1
+    // Stalk, then cap, then a bounce arrow over it — the arrow is the whole
+    // point of the object and without it a green dome is just scenery.
+    const stalk = r * 0.42
+    ctx.beginPath()
+    ctx.moveTo(p.x - stalk * 0.35, p.y + stalk)
+    ctx.lineTo(p.x + stalk * 0.35, p.y + stalk)
+    ctx.lineTo(p.x + stalk * 0.22, p.y - stalk * 0.2)
+    ctx.lineTo(p.x - stalk * 0.22, p.y - stalk * 0.2)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(236, 240, 220, 0.85)'; ctx.fill()
+    ctx.beginPath()
+    ctx.arc(p.x, p.y - stalk * 0.2, r * 0.55, Math.PI, 0)
+    ctx.closePath()
+    ctx.fillStyle = `rgba(${GREEN}, 0.8)`; ctx.fill()
+    ctx.strokeStyle = `rgba(${GREEN}, 1)`; ctx.lineWidth = 2; ctx.stroke()
+    ctx.lineWidth = 1
+    drawArrow(ctx, p.x, p.y - r * 0.55 - 14, -Math.PI / 2, 16, GREEN, 0.5 + 0.45 * pulse)
+  }
+
+  // ── the leap rota ──
+  //
+  // Mighty Thud takes three raiders in order of how close they were standing
+  // when Nama cast it, and the order is the mechanic: a queue you can read is a
+  // rota, three simultaneous circles would be a choice. The marks that have not
+  // landed yet are drawn on the bodies they are coming for, numbered, with the
+  // seconds until each one arrives — nobody can see a queue that lives in the
+  // engine, and the raider who is third has time to walk somewhere useful only
+  // if they know they are third.
+  for (let i = 0; i < w.leapQueue.length; i++) {
+    const L = w.leapQueue[i]
+    const at = L.raider < 0
+      ? (w.player.alive ? w.player.pos : null)
+      : (w.allies.find(a => a.id === L.raider && a.alive)?.pos ?? null)
+    if (!at) continue
+    const p = toPx(cam, at)
+    const mine = L.raider < 0
+    const wait = Math.max(0, L.atMs - w.elapsedMs)
+    const col = mine ? LIME : GREEN
+    ctx.beginPath(); ctx.arc(p.x, p.y, mine ? 20 : 15, 0, Math.PI * 2)
+    ctx.setLineDash([6, 6])
+    ctx.lineDashOffset = -(w.elapsedMs / 60) % 12
+    ctx.strokeStyle = `rgba(${col}, ${mine ? 0.85 : 0.45})`
+    ctx.lineWidth = mine ? 2.5 : 1.5
+    ctx.stroke()
+    ctx.setLineDash([]); ctx.lineWidth = 1
+    drawLabel(
+      ctx, `LEAP ${i + 1} · ${(wait / 1000).toFixed(1)}s`,
+      p.x, p.y - (mine ? 32 : 25), col, 11, mine ? 0.95 : 0.55,
+    )
+  }
+
   // ── active telegraphs ──
   for (const inst of w.instances) {
     if (inst.resolved || !inst.def.shape) continue
     if (inst.def.rule.type === 'collect') continue   // drawn above as pickups
+    // Each of these gets its own pass above: a fish beacon, a mushroom glyph and
+    // an element pool in its own colour. Left to the generic pass they would all
+    // be drawn as a filled shape with a contracting ring — the language this file
+    // reserves for "something is landing here" — which is wrong for all three.
+    if (inst.def.rule.type === 'feed') continue
+    if (inst.def.rule.type === 'launchPad') continue
+    if (inst.def.rule.type === 'elementPool') continue
     if (inst.def.rule.type === 'lethalGround') continue // drawn above as a hole
     // A wind marker belongs on the raiders, not on the floor. It spawns at the
     // player's feet and does not follow them, so drawn here it was a purple
@@ -912,6 +1190,10 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // nothing lands there. It is drawn as a ring on every affected raider at the
     // bottom of this file instead, which is what the mechanic actually is.
     if (inst.def.rule.type === 'windPair') continue
+    // A fanned `line` is drawn as a GROUP below. Left here it would be three
+    // translucent copies stacked on one anchor, compounding to a solid wedge
+    // over exactly the floor whose gaps the player has to read.
+    if (isLane(inst)) continue
     const col = ruleColour(inst, w)
     const t = progress(inst)
 
@@ -985,6 +1267,200 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
   }
 
+  // ── fanned lanes ──
+  //
+  // A `count` narrowed by `fanDeg` throws several copies of one shape out on
+  // neighbouring bearings. When that shape is a `line`, the mechanic is not a
+  // frontal you step out of — it is several travelling lanes with gaps between
+  // them, and the gaps are the whole answer. Shell Spin is the case: one shell
+  // straight down the middle and one off each shoulder, on its own thirty-second
+  // clock from the fifth second of the pull, which makes it the cast this fight
+  // is read by more often than any other. Three lanes that are not separable at
+  // a glance do not teach anything.
+  //
+  // The generic pass above cannot say it. Three translucent shapes sharing an
+  // anchor compound their alpha wherever they overlap, so the near field turns
+  // into one solid wedge and the boundary between one lane and the next — the
+  // only part of this a player can act on — is the exact thing that disappears.
+  //
+  // So a fan is drawn as a group: filled ONCE as a union, so no crossing is
+  // darker than any other stretch of it; then every lane railed with a dark
+  // gutter under a bright edge, so a boundary survives even where two of them
+  // cross; then chevrons down each axis, because these TRAVEL. A rectangle
+  // sitting still argues for stepping backwards, and backwards is along the
+  // lane.
+  const laneGroups = new Map<string, Instance[]>()
+  for (const inst of w.instances) {
+    if (!isLane(inst)) continue
+    // Split landed from live rather than lumping a mechanic together: two casts
+    // of the same fan can share the screen, one crossing the room while the
+    // next is winding up, and they have different things to say about time.
+    const key = `${inst.def.id}:${inst.resolved ? 'landed' : 'live'}`
+    const at = laneGroups.get(key)
+    if (at) at.push(inst); else laneGroups.set(key, [inst])
+  }
+  for (const group of laneGroups.values()) {
+    const lead = group[0]
+    const col = ruleColour(lead, w)
+    const t = progress(lead)
+    // A shell that has landed is still crossing the floor, so it fades over its
+    // last second the way every other timed hazard here does rather than
+    // blinking out mid-flight.
+    const left = (lead.def.lingerMs ?? 0) + lead.timer
+    const dying = lead.resolved ? Math.max(0.3, Math.min(1, left / 900)) : 1
+
+    ctx.save()
+    // Clipped to the floor. A lane is thrown outward and keeps going, and a
+    // rectangle running off into the void reads as floor that is not there.
+    pathArena(ctx, cam, w.boss)
+    ctx.clip()
+
+    ctx.beginPath()
+    for (const inst of group) laneQuad(ctx, cam, inst)
+    ctx.fillStyle = `rgba(${col}, ${(0.10 + 0.26 * t) * dying})`
+    ctx.fill()
+
+    for (const inst of group) {
+      ctx.beginPath(); laneQuad(ctx, cam, inst)
+      // The gutter: dark, wide, and drawn UNDER the rail. Two lanes crossing
+      // still have a line between them, which a coloured edge on its own cannot
+      // promise against floor already washed in the same colour.
+      ctx.strokeStyle = `rgba(6, 4, 14, ${0.7 * dying})`
+      ctx.lineWidth = 6
+      ctx.stroke()
+      ctx.strokeStyle = `rgba(${col}, ${(0.55 + 0.45 * t) * dying})`
+      ctx.lineWidth = 2.5
+      ctx.stroke()
+      // The contracting outline, the same language every other telegraph in
+      // this file uses for "when" — but narrowed hard. A lane's outline grows
+      // SIDEWAYS, and three of them at the usual reach would close the gaps
+      // this pass exists to keep open.
+      if (!inst.resolved && inst.def.telegraphMs > 400 && t < 0.995) {
+        ctx.beginPath(); laneQuad(ctx, cam, inst, 1 + 0.4 * (1 - t))
+        ctx.setLineDash([7, 6])
+        ctx.strokeStyle = `rgba(${col}, ${(0.18 + 0.42 * t) * dying})`
+        ctx.lineWidth = 2
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+    }
+
+    // Which way each one is going. Chevrons rather than a single arrow, because
+    // a lane is long and the player is reading it from wherever they happen to
+    // be standing in it.
+    ctx.strokeStyle = `rgba(${col}, ${(0.4 + 0.35 * pulse) * dying})`
+    ctx.lineWidth = 2.5
+    ctx.lineCap = 'round'
+    const march = (w.elapsedMs / 8) % 42
+    for (const inst of group) {
+      const s = inst.def.shape
+      if (s?.kind !== 'line') continue
+      const p = toPx(cam, inst.pos)
+      const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
+      const L = Math.max(1, (inst.reach ?? s.length) * cam.scale)
+      for (let k = 0; k * 42 < L; k++) {
+        const along = (k * 42 + march) % L
+        const bx = p.x + ca * along
+        const by = p.y + sa * along
+        ctx.beginPath()
+        ctx.moveTo(bx - ca * 8 - sa * 6, by - sa * 8 + ca * 6)
+        ctx.lineTo(bx, by)
+        ctx.lineTo(bx - ca * 8 + sa * 6, by - sa * 8 - ca * 6)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+    ctx.lineCap = 'butt'
+    ctx.lineWidth = 1
+
+    // Standing in one. Which lane you are in decides which way out is shorter,
+    // and the answer is always ACROSS — never back down the lane, which is
+    // where a player instinctively retreats and where the shell is already
+    // headed. Drawn as the arrow and not only said in words: there are three
+    // seconds of this and looking is faster than reading.
+    //
+    // Drawn after the clip is released so the plate is never cut in half by the
+    // arena edge, which is precisely where a lane pushes you.
+    if (!lead.resolved && w.player.alive) {
+      for (const inst of group) {
+        const s = inst.def.shape
+        if (s?.kind !== 'line') continue
+        const dx = w.player.pos.x - inst.pos.x
+        const dy = w.player.pos.y - inst.pos.y
+        const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
+        const along = dx * ca + dy * sa
+        const across = -dx * sa + dy * ca
+        const half = s.width / 2
+        if (along < 0 || along > (inst.reach ?? s.length) || Math.abs(across) > half) continue
+        // Out of the nearer side, perpendicular to the lane — the shortest exit
+        // rather than the prettiest one. The same projection the engine judges
+        // a `line` on, so the arrow and the hit cannot disagree.
+        const me = toPx(cam, w.player.pos)
+        const ang = inst.angle + (across >= 0 ? Math.PI / 2 : -Math.PI / 2)
+        const out = (half - Math.abs(across) + 2) * cam.scale
+        // Started clear of the body rather than through it. The player glyph is
+        // drawn over this pass, and an arrow buried under your own silhouette
+        // is a direction nobody can read.
+        drawArrow(
+          ctx, me.x + Math.cos(ang) * 22, me.y + Math.sin(ang) * 22, ang,
+          Math.max(28, out * 2), RED, 0.6 + 0.4 * pulse,
+        )
+        drawLabel(ctx, `${lead.def.name.toUpperCase()} — OUT SIDEWAYS`, me.x, me.y - 50, RED, 12, 0.95)
+        break
+      }
+    }
+  }
+
+  // ── Blast Wave ──
+  //
+  // The generic pass above already draws the front itself, which is right — it
+  // is a red shape landing on a piece of floor and that is what red filled
+  // shapes mean here. What it cannot say is the one thing that matters: this is
+  // the only telegraph in the raid you do not answer by moving. So the front
+  // gets chevrons running along its axis, so it reads as something sweeping
+  // rather than a rectangle sitting there, and it gets told in words.
+  //
+  // Held in the present tense while you are aloft, not removed. A wave that
+  // stopped being drawn the moment you were safe would take the lesson with it.
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.def.rule.type !== 'wave' || inst.def.shape?.kind !== 'line') continue
+    const p = toPx(cam, inst.pos)
+    const ca = Math.cos(inst.angle), sa = Math.sin(inst.angle)
+    const L = (inst.reach ?? inst.def.shape.length) * cam.scale
+    const hw = (inst.def.shape.width / 2) * cam.scale
+    const safe = w.player.aloft > 0
+    const col = safe ? GREEN : RED
+    ctx.save()
+    pathArena(ctx, cam, w.boss)
+    ctx.clip()
+    ctx.strokeStyle = `rgba(${col}, ${0.5 + 0.35 * pulse})`
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    const march = ((w.elapsedMs / 9) % 46)
+    for (let lane = -2; lane <= 2; lane++) {
+      const ox = -sa * (hw * lane * 0.42)
+      const oy = ca * (hw * lane * 0.42)
+      for (let k = 0; k < 6; k++) {
+        const along = (k * 46 + march) % Math.max(1, L)
+        const bx = p.x + ca * along + ox
+        const by = p.y + sa * along + oy
+        // A chevron pointing the way the front travels.
+        ctx.beginPath()
+        ctx.moveTo(bx - ca * 9 - sa * 7, by - sa * 9 + ca * 7)
+        ctx.lineTo(bx, by)
+        ctx.lineTo(bx - ca * 9 + sa * 7, by - sa * 9 - ca * 7)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+    ctx.lineCap = 'butt'
+    ctx.lineWidth = 1
+    drawLabel(
+      ctx, safe ? 'BLAST WAVE — IT PASSES UNDER YOU' : 'BLAST WAVE — GET AIRBORNE',
+      p.x + ca * L * 0.45, p.y + sa * L * 0.45 - hw - 14, col, 13, 0.95,
+    )
+  }
+
   // ── impact flash ──
   // A quarter-second bloom where something just landed, so a hit is an event
   // you see rather than a number that changed.
@@ -992,6 +1468,9 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (!inst.resolved || !inst.def.shape) continue
     // A hole in the floor did not "land"; it was always there.
     if (inst.def.rule.type === 'lethalGround') continue
+    // An element pool did not land either — it is dripped under a carrier every
+    // second or so, and a white bloom on each one would strobe the whole trade.
+    if (inst.def.rule.type === 'elementPool') continue
     const since = -inst.timer
     if (since > 260) continue
     const f = 1 - since / 260
@@ -1047,6 +1526,37 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   ctx.lineWidth = 2
   ctx.stroke()
   ctx.lineWidth = 1
+  // Element carriers get a rim in their element's own colour. Reading somebody
+  // else's element IS the mechanic — the cure you need is under the raider
+  // holding the opposite — so this is the same call the Toxins orbs and the
+  // Crosswinds arrows make: draw it on every body, not only on yours.
+  for (const el of ['fire', 'frost'] as const) {
+    ctx.beginPath()
+    let any = false
+    for (const a of w.allies) {
+      if (!a.alive || a.element !== el || a.presence < 0.03) continue
+      const p = toPx(cam, a.pos)
+      ctx.moveTo(p.x + 11, p.y)
+      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2)
+      any = true
+    }
+    if (!any) continue
+    ctx.strokeStyle = `rgba(${elementColour(el)}, 0.95)`
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+    ctx.lineWidth = 1
+  }
+  // The one holding YOUR cure is named, the way the Crosswinds partner is. The
+  // trade needs two bodies and the engine reserves a specific one, so hunting a
+  // second time for a raider the sim has already chosen would be a search
+  // problem rather than a mechanic.
+  if (w.player.element) {
+    const mate = w.allies.find(a => a.id === w.polarityPartnerId && a.alive && a.element && a.element !== w.player.element)
+    if (mate) {
+      const mp = toPx(cam, mate.pos)
+      drawLabel(ctx, 'TRADE WITH THEM', mp.x, mp.y - 24, GREEN, 11, 0.9 * Math.max(0.35, mate.presence))
+    }
+  }
 
   // ── the separation ──
   // On the Sentinels this IS the fight, so it is drawn continuously rather than
@@ -1057,16 +1567,23 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   //
   // Drawn before the entities so the line reads as ground between them.
   if (apartDef && apartMin !== undefined && w.bosses.length > 1) {
-    // The closest pair of live, targetable entities — the same pair the sim
+    // The WIDEST pair of live, targetable entities — the same pair the sim
     // measures, so the number on screen is the number being scored.
+    //
+    // "All of them within 30 yards" is literally "the widest pair is under 30",
+    // and on a three-body council the closest pair is the wrong number: two
+    // explorers standing on top of each other while the third is across the room
+    // link nothing, and a readout showing their gap would have called a fine
+    // pull broken all night. On the two-entity fights the widest pair and the
+    // closest pair are the same pair, so nothing there changes.
     const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
     let one: BossUnit | null = null
     let two: BossUnit | null = null
-    let closest = Infinity
+    let closest = 0
     for (let i = 0; i < live.length; i++) {
       for (let j = i + 1; j < live.length; j++) {
         const d = Math.hypot(live[i].pos.x - live[j].pos.x, live[i].pos.y - live[j].pos.y)
-        if (d < closest) { closest = d; one = live[i]; two = live[j] }
+        if (d > closest) { closest = d; one = live[i]; two = live[j] }
       }
     }
     if (one && two) {
@@ -1205,6 +1722,41 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
   }
 
+  // ── where the fish can go ──
+  //
+  // The fish has an address, and picking it is the whole decision. So while you
+  // are carrying one, a marching line runs from you to every boss that can still
+  // eat it — and to NONE of the ones that already have.
+  //
+  // That omission is the point. Feeding an explorer that has already been
+  // empowered is rejected and you keep the fish, which is a mercy rather than a
+  // punishment, but it costs you the seconds you spent walking there while the
+  // bar filled. Drawing the refusal before the walk rather than after it is what
+  // turns a rule you learn by wasting a reset into a choice you can see.
+  //
+  // Drawn before the entities, like the drink links above, so it reads as ground
+  // between you and them rather than as something happening to them.
+  if (w.fishCarried) {
+    const carrier = toPx(cam, w.player.pos)
+    for (const b of w.bosses) {
+      if (b.def.untargetable || !b.alive || b.empowered) continue
+      const bp = toPx(cam, b.pos)
+      ctx.save()
+      ctx.setLineDash([10, 7])
+      // Marching toward the boss, because that is the way you are taking it.
+      ctx.lineDashOffset = -(w.elapsedMs / 42) % 17
+      ctx.lineWidth = 2.5
+      ctx.strokeStyle = `rgba(${GREEN}, ${0.45 + 0.3 * pulse})`
+      ctx.beginPath(); ctx.moveTo(carrier.x, carrier.y); ctx.lineTo(bp.x, bp.y); ctx.stroke()
+      ctx.restore()
+      ctx.lineWidth = 1
+      drawLabel(
+        ctx, 'CAN EAT IT',
+        (carrier.x + bp.x) / 2, (carrier.y + bp.y) / 2, GREEN, 11, 0.85,
+      )
+    }
+  }
+
   // ── boss entities ──
   // Every entity is drawn and named. Four fights in this tier field two or more,
   // and a single dot in the middle made "the other one is casting" invisible.
@@ -1258,6 +1810,17 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
     ctx.shadowBlur = 0
 
+    // Fed a Disgusting Fish. Gold — the file's existing "read this carefully"
+    // hue, and deliberately not red or violet: nothing is wrong here, the raid
+    // chose it. But it is permanent, it cannot be undone, and it hands that
+    // explorer an extra ability for the rest of the pull, so it has to be
+    // readable from anywhere on the floor. It is also the answer to "have I
+    // already fed this one?", which is the question a fish is wasted on.
+    if (b.empowered && !b.def.untargetable && b.alive) {
+      drawShield(ctx, bp.x, bp.y, size * 0.8, w.elapsedMs, pulse, GOLD)
+      drawLabel(ctx, 'EMPOWERED', bp.x, bp.y - size * 0.65 - 12, GOLD, 11, 0.85 + 0.15 * pulse)
+    }
+
     // Facing pip — a tank needs to see which way it is pointed.
     ctx.beginPath()
     ctx.moveTo(bp.x, bp.y)
@@ -1280,7 +1843,10 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // Its own health. These fights do not share a pool, so one bar in the HUD
     // cannot show you that a pair is drifting apart — which is the whole
     // synchronised-kill problem.
-    if (multi) {
+    // An untargetable entity has no health to show. Mor'zahi cannot be shot at
+    // all — his bar is the energy bar in the HUD — and a full purple bar under
+    // him would promise a body the raid could bring down.
+    if (multi && !b.def.untargetable) {
       const bw = 44
       ctx.fillStyle = 'rgba(0,0,0,0.55)'
       ctx.fillRect(bp.x - bw / 2, bp.y + size * 0.65 + 2, bw, 4)
@@ -1440,12 +2006,49 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // Airborne: ringed, so it is obvious you have lost steering.
     ctx.beginPath(); ctx.arc(pp.x, pp.y, 18, 0, Math.PI * 2)
     ctx.strokeStyle = `rgba(${VIOLET}, 0.8)`; ctx.stroke()
+    // On the Explorers being airborne is not a loss of steering, it is the
+    // answer — the one state a Blast Wave passes under. A raider who reads the
+    // violet ring as "something has gone wrong" spends the three seconds that
+    // were saving them trying to get back down, so while a wave is live the ring
+    // is joined by the word and both go green.
+    const waveUp = w.instances.some(i => !i.resolved && i.def.rule.type === 'wave')
+    if (waveUp) {
+      ctx.beginPath(); ctx.arc(pp.x, pp.y, 22 + 3 * pulse, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${GREEN}, ${0.6 + 0.35 * pulse})`
+      ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
+    }
+    drawLabel(
+      ctx, waveUp ? 'SAFE — AIRBORNE' : `AIRBORNE ${(w.player.aloft / 1000).toFixed(1)}s`,
+      pp.x, pp.y - 34, waveUp ? GREEN : VIOLET, 12, 0.95,
+    )
   }
   // Carrying something you must take away from the group.
   if (Object.keys(w.player.carrying).length) {
     ctx.beginPath(); ctx.arc(pp.x, pp.y, 15, 0, Math.PI * 2)
     ctx.strokeStyle = `rgba(${VIOLET}, 0.95)`; ctx.lineWidth = 2; ctx.stroke()
     ctx.lineWidth = 1
+  }
+  // Carrying the Disgusting Fish. GREEN, not the carry violet: violet in this
+  // file means "get this away from people", and the fish is the opposite — a
+  // tool with an address, and the only thing in the fight that empties the bar.
+  if (w.fishCarried) {
+    ctx.beginPath(); ctx.arc(pp.x, pp.y, 16, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${GREEN}, ${0.7 + 0.3 * pulse})`
+    ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
+    drawLabel(ctx, 'FISH — FEED A BOSS', pp.x, pp.y + 30, GREEN, 12, 0.95)
+  }
+  // The element you are carrying, in the element's own colour, and named. Which
+  // one you have decides which pool cures you and there is no second chance to
+  // work it out — the next volley kills a carrier who still has one.
+  if (w.player.element) {
+    const col = elementColour(w.player.element)
+    ctx.beginPath(); ctx.arc(pp.x, pp.y, 19, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${col}, ${0.8 + 0.2 * pulse})`
+    ctx.lineWidth = 4; ctx.stroke(); ctx.lineWidth = 1
+    drawLabel(
+      ctx, `${ELEMENT_NAME[w.player.element]} — RUN INTO ${w.player.element === 'fire' ? 'FROST' : 'FIRE'}`,
+      pp.x, pp.y + (w.fishCarried ? 44 : 30), col, 12, 0.95,
+    )
   }
 
   // A live Mutilated Gash. The next cone that catches you kills, so it is drawn

@@ -286,6 +286,15 @@ export interface BossUnit {
    * seconds with neither tank able to pull them out.
    */
   station: Vec
+  /**
+   * Has eaten a fish. Once only, and it never wears off.
+   *
+   * Three Disgusting Fish exist in the whole encounter and each explorer may eat
+   * exactly one, so this is a record of a decision that cannot be taken back —
+   * which is why feeding one that has already eaten is refused rather than
+   * silently consuming the fish.
+   */
+  empowered: boolean
 }
 
 /**
@@ -355,6 +364,21 @@ export interface World {
   nextUid: number
   loopIndex: number
   loopTimerMs: number
+  /**
+   * When each `boss.timeline` entry fires next, in elapsed ms.
+   *
+   * Indexed to match `boss.timeline` rather than keyed by mechanic id, so a
+   * fight that ever puts one mechanic on two clocks gets two clocks instead of
+   * one that quietly overwrote the other.
+   *
+   * A finite value is a live appointment. `Infinity` means DORMANT: the entry
+   * has fired, has no `everySec` to bring it back, and is waiting on a
+   * `rearmOn` event — which is the whole of Throw Junk after the first one.
+   * Nothing else in the engine distinguishes "not yet" from "never again", and
+   * the difference is the difference between a countdown the HUD can show and a
+   * countdown it would be inventing.
+   */
+  timelineNextMs: number[]
   ambientTimerMs: number
   /** Screen-shake impulse, purely cosmetic. */
   shake: number
@@ -634,6 +658,68 @@ export interface World {
   /** ms the flurry runs until. The ordinary rotation stands down for it. */
   comboUntilMs: number
 
+  // ── the council, the fish and the elements ───────────────────────────────
+  /**
+   * Entity id the player's last connecting shot hit. The allies chip everything
+   * else.
+   *
+   * Empty string until the first hit, which drains nobody. A three-body council
+   * has no sides to park a group on, so this is the only honest answer to "which
+   * one is the raid NOT helping with" — the one you are pointing at.
+   */
+  focusId: string
+  /** Disgusting Fish found so far, 0..3. */
+  fishFound: number
+  /** Fish successfully fed. Never exceeds the number of live un-empowered bosses. */
+  fishSpent: number
+  /** The player is carrying a fish right now. */
+  fishCarried: boolean
+  /**
+   * Ally id carrying a fish right now, or -1 for nobody.
+   *
+   * Only ever set on a fight that declares `feedPriority`, and only after the
+   * fish has lain on the floor long enough for the player to have refused it.
+   * The player and the raid can never both be carrying: `fishCarried` is checked
+   * first everywhere the two meet.
+   */
+  fishAlly: number
+  /**
+   * Entity id -> elapsedMs at which it died.
+   *
+   * The timestamp, not a flag: the abilities an ally's death unlocks are the
+   * price of an unsynchronised kill, and they are supposed to get worse the
+   * longer the survivors stand there.
+   */
+  deadEntities: Record<string, number>
+  /**
+   * Ally reserved holding the opposite element to the player's, or -1.
+   *
+   * Reserved when the volley is dealt, exactly as the orb and wind partners are.
+   * "Nearest body with the other element" looks equivalent and is not: a puzzle
+   * whose only valid answer can wander off is not a puzzle.
+   */
+  polarityPartnerId: number
+  /**
+   * Mighty Thud's marks, in the order Nama will take them: nearest first.
+   *
+   * `raider` is an Ally id, or -1 for the player. Ordered once at the cast rather
+   * than re-sorted as he moves, so it is a rota the raid can read instead of a
+   * target swap nobody can predict.
+   */
+  leapQueue: { defId: string; raider: number; atMs: number }[]
+  /** One entity is below 10% and another is more than 10% above it. */
+  killSpreadWarning: boolean
+  /**
+   * ms until every element carrier drips their next pool.
+   *
+   * ONE shared cadence rather than a timer per carrier, and deliberately: the
+   * two carriers are meant to read as one mechanic laying two patches of ground
+   * at once, and independent clocks made a floor that filled up at no particular
+   * rhythm. It also sidesteps keying a per-body clock into `trailTimers`, which
+   * is a map of instance uids and would collide with them.
+   */
+  elementDripMs: number
+
   // ── the stack economy ─────────────────────────────────────────────────────
   /**
    * The highest the player's counter has reached, and the worst any one ally
@@ -667,6 +753,25 @@ export interface World {
    */
   venomFlash: { n: number; ms: number } | null
 }
+
+/**
+ * How long a Frostfire element marker sits on a body.
+ *
+ * The ability data calls both Burning Flames and Piercing Frost one-minute
+ * debuffs, and the encounter's own answer is that they last until the next
+ * volley — which arrives well inside a minute. So the clock is a backstop rather
+ * than the mechanic: what takes an element off you is the opposite pool.
+ */
+const ELEMENT_MS = 60000
+
+/**
+ * How often a carrier lays down a patch of their own element.
+ *
+ * Slow enough that a carrier walking to their partner leaves a readable trail
+ * rather than a solid stripe, fast enough that the two of them have something to
+ * trade within a couple of paces of the volley landing.
+ */
+const ELEMENT_DRIP_MS = 900
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
   tank: ['taunt', 'defensive', 'interrupt', 'burst'],
@@ -717,6 +822,7 @@ function makeAllies(playerRole: Role, playerSide: Side): Ally[] {
       // a raid that discovered that by luck of array order would read as the
       // trainer being broken rather than as a mechanic.
       group: i % 2, wind: null, windMate: -1, gash: 0, gashMs: 0, venom: 0,
+      element: null, elementMs: 0, aloft: 0,
     })
   })
   assignSides(out, playerRole, playerSide)
@@ -804,6 +910,7 @@ function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
       hp: 1,
       alive: true,
       station: { ...d.start },
+      empowered: false,
     }
   })
 }
@@ -1085,6 +1192,16 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string, side:
   w.boss = {
     ...boss,
     loop: caster ? [] : [mechanicId],
+    // A drill is one mechanic. Carrying the fight's timeline into it would leave
+    // Shell Spin and Blink Nova arriving on their own clocks over the top of
+    // whatever you came here to practise — the same reason `ambient` and the
+    // adds are stripped a few lines down.
+    timeline: undefined,
+    // And no raid backstop on the fish. In a pull a refused fish is finished by
+    // the raid so the bar can still be emptied; in a DRILL of the fish the whole
+    // session is the player's decision about where to walk it, and a raider
+    // taking it off the floor six seconds in would end the drill on their behalf.
+    feedPriority: undefined,
     introEverySec: 1,
     loopIntervalSec: Math.max(3.5, boss.loopIntervalSec * 0.7, repSec),
     atFullEnergy: undefined,
@@ -1113,6 +1230,31 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string, side:
     // decides you are.
     pullLengthSec: 3600,
   }
+  // ...and the appointments that went with it. `createWorld` built this list off
+  // the real fight a moment ago, and a stale entry would fire a mechanic the
+  // drill's own boss no longer lists.
+  w.timelineNextMs = []
+  // A fish the raid was already walking somewhere belongs to the pull that was
+  // abandoned, not to the drill that replaced it.
+  w.fishAlly = -1
+  /**
+   * Force the drilled mechanic's gates open.
+   *
+   * Six of the Lost Explorers' most interesting casts are gated on a state the
+   * pull has to reach: an explorer having eaten a fish, or one of the council
+   * having already fallen. A drill rewrites the loop to a single entry and
+   * nothing else, so those gates are shut for the whole session and the player
+   * stares at an empty room practising a mechanic that never fires.
+   *
+   * The drill IS the state. Grant it up front rather than asking the player to
+   * simulate a whole pull to reach the thing they came here to practise.
+   */
+  const d = boss.mechanics.find(m => m.id === mechanicId)
+  if (d?.empoweredOnly) {
+    const u = w.bosses.find(b => b.def.id === d.empoweredOnly)
+    if (u) u.empowered = true
+  }
+  if (d?.unlockedByDeathOf?.length) w.deadEntities[d.unlockedByDeathOf[0]] = 0
   /**
    * ...but a mechanic that only exists inside a stage keeps that stage's floor.
    *
@@ -1161,6 +1303,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
       // matters is that it never changes mid-pull, so "is this one mine?" stays
       // a question about the cone rather than about your own assignment.
       group: 0, wind: null, gash: 0, gashMs: 0, venom: 0, slowMs: 0, knock: null,
+      element: null, elementMs: 0,
     },
     instances: [],
     adds: [],
@@ -1187,6 +1330,9 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     nextUid: 1,
     loopIndex: 0,
     loopTimerMs: 0,
+    // Every entry armed for its own `startSec`. A timeline states its first cast
+    // outright, so there is nothing to stage and nothing to unlock.
+    timelineNextMs: (boss.timeline ?? []).map(t => t.startSec * 1000),
     ambientTimerMs: 0,
     shake: 0,
     playerStacks: 0,
@@ -1254,6 +1400,20 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     galeImmuneMs: 0,
     galeDir: { x: 0, y: 1 },
     comboUntilMs: 0,
+    // Every one of these is unconditional rather than optional, on every fight.
+    // The renderer sweeps all eight bosses and reads them without asking whose
+    // fight it is, and a field that only exists on one boss is a field that is
+    // `undefined` on seven.
+    focusId: '',
+    fishFound: 0,
+    fishSpent: 0,
+    fishCarried: false,
+    fishAlly: -1,
+    deadEntities: {},
+    polarityPartnerId: -1,
+    leapQueue: [],
+    killSpreadWarning: false,
+    elementDripMs: ELEMENT_DRIP_MS,
     venomPeak: 0,
     venomRaidPeak: 0,
     venomShed: 0,
@@ -2149,6 +2309,9 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
     carriedByPlayer:
       def.origin === 'player' ||
       (def.origin === 'targeted' && Math.hypot(pos.x - w.player.pos.x, pos.y - w.player.pos.y) < 0.01),
+    // Which box hides the fish is decided by the scatter in `fire`, once it can
+    // see the whole set. A single box has no way of knowing it is the one.
+    hidesFish: false,
   }
   /**
    * A beam that arcs starts where the boss file says, not at the player.
@@ -2230,6 +2393,42 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
   const def = w.boss.mechanics.find(m => m.id === id)
   if (!def) return
 
+  /**
+   * Three gates, all of them here rather than in the scheduler.
+   *
+   * The scheduler is only one of five places a mechanic can be fired from —
+   * `w.queue` holds channel and combo deferrals, a stage's `opensWith` fires
+   * directly, `spawns` chains children, and an altar drain fires by id — so a
+   * gate anywhere else would be a gate with four ways round it.
+   *
+   * A corpse casts nothing. `bossUnitFor` falls back to bosses[0] for an id it
+   * does not know, but a dead-but-present unit resolves perfectly normally and
+   * would keep its whole rotation running from wherever it fell.
+   *
+   * Scoped to fights that declare `unlockedByDeathOf` — today, only the Lost
+   * Explorers — and that scope is a balance decision rather than a squeamish
+   * one. Applied to every fight it silenced eleven of the Coiled Altar's
+   * thirteen mechanics the moment Zul'jan fell, which handed a CARELESS player
+   * a clear on all three roles: the fight went quiet at exactly the moment its
+   * own `syncKill` is supposed to be punishing you for killing one of a pair
+   * early, so the corpse's silence became the reward for the mistake. The
+   * Explorers are the only fight authored for that, because they are the only
+   * one where a death BUYS the survivors something — Relentless Escalation,
+   * Cataclysmic Invocation and Smashing Shovel are exactly the compensation the
+   * other fights have none of.
+   *
+   * Widening this is a real improvement and a real re-tune of the Coiled Altar
+   * and the Sentinels, in that order. It is not a one-line change and it is not
+   * this change.
+   *
+   * A closed gate costs one beat of the rotation and nothing else, which is
+   * harmless: the loop simply arrives at the next entry a few seconds later.
+   */
+  if (def.from && w.boss.mechanics.some(m => m.unlockedByDeathOf?.length)
+      && !bossUnitFor(w, def.from).alive) return
+  if (def.empoweredOnly && !w.bosses.some(b => b.def.id === def.empoweredOnly && b.empowered)) return
+  if (def.unlockedByDeathOf && !def.unlockedByDeathOf.some(e => e in w.deadEntities)) return
+
   // A mechanic that splits the raid in half hands the player the other half on
   // alternate casts. Hungering Pyre is the case: half the raid soaks it and the
   // other half is running a flame to the corpse pile, and a trainer that only
@@ -2261,6 +2460,29 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
 
   if (def.rule.type === 'windPair') {
     dealWinds(w, def)
+  }
+
+  /**
+   * Three leaps, one at a time, in order of who is standing closest.
+   *
+   * Mighty Thud: Nama marks three non-tanks and jumps to them starting with the
+   * nearest, then the next nearest, then the last. Ordered by distance at the
+   * moment he casts rather than re-sorted as he travels — that is what makes it
+   * a rota you can read off the floor instead of a target swap nobody can
+   * anticipate, and it is why this cannot be `count`, which fans its copies
+   * around the caster all at once.
+   */
+  if (def.leaps) {
+    const src = bossUnitFor(w, def.from)
+    const pool: { raider: number; d: number }[] = w.allies
+      .filter(a => a.alive && a.role !== 'tank')
+      .map(a => ({ raider: a.id, d: dist(a.pos, src.pos) }))
+    if (w.player.role !== 'tank') pool.push({ raider: -1, d: dist(w.player.pos, src.pos) })
+    pool.sort((x, y) => x.d - y.d)
+    for (let i = 0; i < Math.min(def.leaps.count, pool.length); i++) {
+      w.leapQueue.push({ defId: def.id, raider: pool[i].raider, atMs: w.elapsedMs + i * def.leaps.gapMs })
+    }
+    return
   }
 
   /**
@@ -2333,6 +2555,11 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
    *
    * Each copy is spawned on its own bearing and handed that bearing as its
    * angle, so a `radialDrift` hazard travels the way it was thrown.
+   *
+   * `fanDeg` narrows that to a wedge in FRONT of the caster. Shell Spin is three
+   * shells thrown forward — one down the middle and one off each shoulder — and
+   * a full turn would put one of them behind Nama, which is the one patch of
+   * floor the mechanic says is safe.
    */
   if (def.count && def.count > 1 && def.rule.type !== 'collect') {
     const src = bossUnitFor(w, def.from)
@@ -2348,12 +2575,26 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
     const base = at ?? (def.origin === 'boss' ? src.pos
       : def.origin === 'player' ? w.player.pos
       : floorAnchor(w, def))
+    const fan = def.fanDeg !== undefined ? (def.fanDeg * Math.PI) / 180 : null
     // A whole-turn offset per cast, so the spokes are not in the same place
     // twice and the gaps between them have to be read rather than remembered.
-    const spin = rnd() * Math.PI * 2
-    const ring = (def.shape?.kind === 'circle' ? def.shape.radius : 5) * 1.6
+    // A fan has nothing to randomise: where it points IS the mechanic, and the
+    // caster's own facing is what the player reads it off — which for a boss is
+    // maintained every tick against whoever is holding it.
+    const centre = fan === null ? rnd() * Math.PI * 2 : angle ?? src.angle
+    // A fanned cast spawns ON its origin. `isInside` measures a `line` FORWARD
+    // from its anchor, so pushing three lanes out along their own bearings first
+    // would leave a dead gap between the boss and the start of every one of
+    // them — a frontal you can stand inside by standing close enough.
+    const ring = fan === null ? (def.shape?.kind === 'circle' ? def.shape.radius : 5) * 1.6 : 0
     for (let i = 0; i < def.count; i++) {
-      const a = spin + (i / def.count) * Math.PI * 2
+      // A full circle divides by `count` — its first and last bearing would
+      // otherwise be the same spoke. A wedge divides by `count - 1`, so the
+      // copies land on the endpoints inclusive and one goes straight down the
+      // middle, which is the difference between +/-35 degrees and 0/23/47.
+      const a = fan === null
+        ? centre + (i / def.count) * Math.PI * 2
+        : centre - fan / 2 + (i / (def.count - 1)) * fan
       const p = clampToArena(
         w.boss, { x: base.x + Math.cos(a) * ring, y: base.y + Math.sin(a) * ring }, 2)
       spawn(w, def, p, a)
@@ -2361,24 +2602,49 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
     return
   }
 
-  if (def.rule.type === 'collect') {
+  if (def.rule.type === 'collect' || def.rule.type === 'launchPad') {
     // Scattered pickups, not one shape. Each is its own instance so each can be
     // eaten independently, which is what "one player walks in first and eats it
-    // alone" actually means.
+    // alone" actually means. Bouncy Mushrooms scatter the same way and for the
+    // same reason: six things on the floor you pick one of, not a fan of copies
+    // leaving a caster.
     const n = def.rule.count
+    const src = bossUnitFor(w, def.from)
+    // Boxes come off the body that threw them. Gebbo walks his circle while he
+    // does it, so a ring drawn round the middle of the room put his junk
+    // somewhere he had never been — and "he throws boxes around him as he walks"
+    // is the whole reason his patrol matters. Everything else keeps the
+    // centre-anchored ring it has always had.
+    const onCaster = def.origin === 'boss'
+    const anchor = onCaster ? src.pos : { x: 0, y: 0 }
+    const spawned: Instance[] = []
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + w.elapsedMs / 3000
-      const r = w.boss.arenaRadius * (0.28 + 0.42 * ((i % 3) / 2))
+      const r = onCaster
+        ? w.boss.arenaRadius * (0.12 + 0.10 * ((i % 3) / 2))
+        : w.boss.arenaRadius * (0.28 + 0.42 * ((i % 3) / 2))
       // Clamped to the floor: a ring drawn as a circle puts its diagonals
       // outside an octagon, and a droplet nobody can stand on is a droplet
       // nobody can sweep.
-      let p = clampToArena(w.boss, { x: Math.cos(a) * r, y: Math.sin(a) * r }, 3)
+      let p = clampToArena(
+        w.boss, { x: anchor.x + Math.cos(a) * r, y: anchor.y + Math.sin(a) * r }, 3)
       // And onto the right half. This ring is drawn around the ARENA CENTRE, so
       // on a split fight it happily scattered green droplets across the red side
       // and through the overlap — sending the green sweepers into Blood's Mark
       // radius to do their job, or handing the job to people who must not cross.
       if (def.side) p = confineToSide(w, def.side, p)
       spawn(w, def, p)
+      const born = w.instances[w.instances.length - 1]
+      if (born) spawned.push(born)
+    }
+    // One of them is hiding a Disgusting Fish, until three have been found.
+    //
+    // Decided now, across the whole set, because "find the fish" is a search and
+    // a search needs an answer that was already there. Once the encounter's three
+    // are spent the boxes keep coming and hide nothing — which is the moment the
+    // bar stops being resettable and the enrage becomes real.
+    if (def.hides && w.fishFound < def.hides.maxTotal && spawned.length) {
+      spawned[Math.floor(rnd() * spawned.length)].hidesFish = true
     }
     return
   }
@@ -2716,6 +2982,23 @@ function altarStation(w: World): Vec | null {
   return best ? clampToArena(w.boss, best, w.boss.arenaRadius * 0.12) : null
 }
 
+/**
+ * Compile-time proof that a `rule.type` switch handled every variant of `Rule`.
+ *
+ * Every dispatch in this engine is a place a new rule variant can be silently
+ * forgotten, and pass one proved it: four new primitives went in and the
+ * playtest bot knew about none of them, so three instrument gaps were read as a
+ * fight being too hard before anybody looked. A `default` that quietly did
+ * nothing is what let that happen, and it is exactly what this replaces —
+ * `npx tsc` now fails the moment a variant is added without a case for it.
+ *
+ * Deliberately inert at RUNTIME. The value is entirely in the typecheck, and a
+ * thrown error would put a crash in the frame loop for a state the type system
+ * has already proved unreachable — in a game where a mechanic dispatch runs
+ * sixty times a second, that trade is the wrong way round.
+ */
+function exhaustive(_never: never): void {}
+
 /** One of the three demands a `carryOut` can make of where you drop it. */
 export type CarryOutMiss = 'distance' | 'edge' | 'apart'
 
@@ -2924,7 +3207,13 @@ function resolveInstance(w: World, inst: Instance) {
       // correct play, so a soaker can never appear as a failure.
       if (!inst.answered) {
         if (scored) recordFailure(w, def)
-        w.raidHealth -= def.lethal ? 0.16 : 0.09
+        // A ruptured box lands on the RAID and never on one body: blaming one
+        // person for a collective sweep is the defect this project keeps having
+        // to re-fix. What a heavy `missCost` buys is a ten-second window
+        // that means something: Throw Junk asks for every box off the floor, and
+        // at the ordinary chip missing all six cost a third of a bar and the
+        // clock was decoration.
+        w.raidHealth -= def.missCost ?? (def.lethal ? 0.16 : 0.09)
         payRaid(w, def)   // it ruptured on everybody, which is what a miss costs
       }
       break
@@ -3301,15 +3590,38 @@ function resolveInstance(w: World, inst: Instance) {
       w.pairPartnerId = -1
       break
 
-    case 'raidDamage':
+    case 'raidDamage': {
       // Ambient attrition is ticked in step() and never arrives here. One fired
       // as a CAST does: a channelled Rite has to land as a discrete lump or the
       // healer cannot see what they are covering. Unavoidable either way, and it
       // can never name anybody — an empowered Expulsion is a bigger number for
       // the healer to cover, never a bigger stick to beat them with.
-      w.raidHealth -= (def.rule.dps / 100) * empowerment(w, def)
+      //
+      // Blink Nova adds a dial to that without changing whose fault it is. Iku
+      // charges at whoever she marked and the raid eats the arrival; how far the
+      // marked player ran is the only thing anybody can do about the size of it.
+      // Still nobody's failure — being chosen never is — but no longer a number
+      // the room is simply told to survive.
+      //
+      // Measured from the RAID, not from the caster. Iku blinks onto whoever she
+      // marked and the impact catches everyone standing near them, so the job is
+      // to run out of the group — the distance that matters is the one between
+      // the mark and the bodies, and it is the same reference `faceAway` and
+      // `aimAway` already ask "would this sweep the raid" against. Measured from
+      // Iku it taught the opposite habit on any cast where she had walked away
+      // from the group herself: a marked player who stood still next to the raid
+      // scored full marks for it.
+      let scale = 1
+      const f = def.rule.falloff
+      if (f) {
+        const d = dist(inst.pos, raidAnchor(w))
+        const t = Math.max(0, Math.min(1, (d - f.nearYards) / Math.max(1, f.farYards - f.nearYards)))
+        scale = 1 + t * (f.farMultiplier - 1)
+      }
+      w.raidHealth -= (def.rule.dps / 100) * empowerment(w, def) * scale
       payRaid(w, def)   // Venomous Emergence: a stack on everybody, nothing to dodge
       break
+    }
 
     case 'combo': {
       // The flurry. Five real abilities dealt out back-to-back in an order
@@ -3332,10 +3644,27 @@ function resolveInstance(w: World, inst: Instance) {
       // two frontals overlapping — one asking you into it and the other asking
       // you out, with no instant at which both answers existed. The two cones
       // here are 3s casts and the period was 1.9s, so it was not close.
+      //
+      // ...but only for parts that are actually CASTS. On a scatter rule —
+      // `collect`, `launchPad` — `telegraphMs` is not a cast bar at all, it is
+      // how long the things lie on the floor, exactly as Throw Junk's ten
+      // seconds is the window you have to clear the crates in. Charging that to
+      // the stagger reads a lifetime as a cast time, and it broke the one
+      // pairing this raid depends on: Mushroom Toss scatters six mushrooms with
+      // an 18-second life, so the bomb behind it was scheduled 18.8 seconds
+      // later, the mushrooms expired at 18, and the Blast Wave arrived 12
+      // seconds after the only answer to it had gone. The boss file says in as
+      // many words that the mushrooms land first on purpose; this is what makes
+      // that true rather than merely stated.
+      //
+      // Nothing overlaps that should not: mushrooms on the floor are not a cone,
+      // and the reason this stagger exists is two frontals in the air at once.
+      const SCATTER = ['collect', 'launchPad']
       let at = w.elapsedMs
       for (const id of parts) {
         w.queue.push({ id, atMs: at })
-        at += (w.boss.mechanics.find(m => m.id === id)?.telegraphMs ?? 0) + gap
+        const part = w.boss.mechanics.find(m => m.id === id)
+        at += (part && SCATTER.includes(part.rule.type) ? 0 : part?.telegraphMs ?? 0) + gap
       }
       // Nothing else lands during a flurry. It is a set piece — five casts the
       // fight delivers one at a time — and the ordinary rotation arriving on top
@@ -3477,11 +3806,100 @@ function resolveInstance(w: World, inst: Instance) {
       break
     }
 
+    case 'polarity': {
+      const r = def.rule
+      const deathDef = w.boss.mechanics.find(m => m.id === r.deathId)
+      // A second volley on a body that still carries an element kills it, and
+      // the death belongs to Elemental Explosion — the Deadly id — rather than
+      // to the Volley, exactly as a Mutilate death belongs to the Gash. The
+      // Volley itself is a dealing, and a dealing can never be failed.
+      if (w.player.element && deathDef) {
+        if (deathDef.roles.includes(w.player.role)) recordFailure(w, deathDef)
+        killPlayer(w, deathDef.name)
+      }
+      for (const a of w.allies) {
+        if (a.alive && a.element) { a.alive = false; w.alliesLost++ }
+      }
+      // Tanks are never given an element. On a tank pull the volley is somebody
+      // else's problem and the raid plays it out in front of you, which is the
+      // only way a tank ever learns what the trade looks like.
+      const pool = w.allies.filter(a => a.alive && a.role !== 'tank')
+      const playerTakes = def.roles.includes(w.player.role) && w.player.role !== 'tank'
+      const mine: 'fire' | 'frost' = rnd() < 0.5 ? 'fire' : 'frost'
+      const theirs = mine === 'fire' ? 'frost' : 'fire'
+      // Reserve ONE partner holding the opposite, the way dealOrbs and dealWinds
+      // do. "Nearest body with the other element" looks equivalent and is not:
+      // a puzzle whose only valid answer can wander off is not a puzzle.
+      w.polarityPartnerId = -1
+      if (playerTakes) {
+        w.player.element = mine
+        w.player.elementMs = ELEMENT_MS
+        const p = pool[Math.floor(rnd() * Math.max(1, pool.length))]
+        if (p) { p.element = theirs; p.elementMs = ELEMENT_MS; w.polarityPartnerId = p.id }
+      } else {
+        const a1 = pool[Math.floor(rnd() * Math.max(1, pool.length))]
+        const a2 = pool.find(a => a !== a1)
+        if (a1) { a1.element = mine; a1.elementMs = ELEMENT_MS }
+        if (a2) { a2.element = theirs; a2.elementMs = ELEMENT_MS }
+      }
+      break
+    }
+
+    case 'elementPool':
+      // A deliberate no-op, like `keepApart` and `lethalGround`. The pool only
+      // matters while it lingers, and what it does there is take a debuff OFF a
+      // body — so it must never hurt anybody, never record a failure and never
+      // kill. Its whole existence is the cure.
+      break
+
+    case 'launchPad':
+      // A deliberate no-op. Touching a mushroom is correct play and the contact
+      // test in step() is what consumes it; a mushroom nobody reached simply
+      // expires, which costs the raid nothing because standing on one was never
+      // the demand. The demand is Blast Wave, and it says so itself.
+      break
+
+    case 'wave':
+      // Airborne is the ONLY escape, and this is deliberately the only rule in
+      // the engine that reads `aloft`. A blanket "airborne beats ground AoE"
+      // exemption would let a Crosswinds knock or a `survive` knockback dodge
+      // arbitrary telegraphs, which is a different game.
+      //
+      // The shape is meant to be too big to outrun. Drawn as something you sidestep
+      // this taught the wrong habit entirely: the answer is not to be somewhere
+      // else, it is to be off the floor.
+      if (inside && w.player.aloft <= 0) {
+        if (scored) recordFailure(w, def)
+        if (def.lethal) killPlayer(w, def.name)
+        else hurt(w, def.damage ?? 0.4, def.name)
+      }
+      for (const a of w.allies) {
+        if (a.alive && a.aloft <= 0 && isInside(inst, a.pos)) { a.alive = false; w.alliesLost++ }
+      }
+      break
+
+    case 'feed':
+      // Nothing at all. A fish nobody picked up simply rots where it landed, and
+      // that already cost the raid the reset it would have bought — which the
+      // energy bar has been saying out loud the whole time. Charging for it
+      // twice, or naming somebody for it, would bill a player for a box they
+      // could not reach.
+      break
+
     case 'keepApart':
     case 'lethalGround':
-      // Never resolved. Both are judged continuously in step(): one is a state
-      // you are allowed to sit in for a moment, and the other is a hole in the
-      // floor, which has no resolve moment at all.
+    case 'syncKill':
+    case 'holdMelee':
+      // Never resolved. All four are judged continuously in step(): one is a
+      // state you are allowed to sit in for a moment, one is a hole in the
+      // floor, which has no resolve moment at all, the third is a health gap
+      // between two entities, and the fourth is a tank standing too far from the
+      // thing they hold — every one of them a condition rather than a cast.
+      break
+
+    default:
+      // Not reachable, and that is the point — see `exhaustive`.
+      exhaustive(def.rule)
       break
   }
 
@@ -3659,7 +4077,7 @@ function resolveInstance(w: World, inst: Instance) {
 
   /**
    * A cast that bites more than once puts itself back in the air, in the same
-   * place, and this is the last thing that happens in a resolve.
+   * place, and this is the last thing that happens to the INSTANCE in a resolve.
    *
    * The alternative was `channel` children, and it does not work for this
    * mechanic. Every child goes through `fire()` → `spawn()` and re-rolls its
@@ -3686,9 +4104,74 @@ function resolveInstance(w: World, inst: Instance) {
       inst.timer = def.rule.biteGapMs
     }
   }
+
+  // Last, because this is the one thing here that is about the SCHEDULE rather
+  // than about what just landed. A cast resolving is what wakes an event-gated
+  // timeline entry, and it has to be every resolve path rather than the loop's
+  // — the ability that re-arms Throw Junk is as likely to have arrived out of a
+  // combo queue as off a clock.
+  rearmTimeline(w, def.id)
+}
+
+/**
+ * Wake any timeline entry waiting on this mechanic.
+ *
+ * The gate the Lost Explorers is built on: Throw Junk #1 is on the clock at 30s,
+ * and #2 and #3 wait for the empowered ability the previous fish actually bought
+ * to happen. A fixed period would either arrive before the player had anything
+ * to do with it, or leave Mor'zahi's bar climbing against a fish that does not
+ * exist yet.
+ *
+ * Only a DORMANT entry is woken. That is what makes it the FIRST cast of the
+ * empowered ability that counts rather than every one of them: once the
+ * appointment is made, further casts of the same ability find a live clock and
+ * leave it alone. Without it, an empowered mechanic that comes round twice
+ * before the crates land would keep pushing its own window backwards.
+ *
+ * Nothing here knows which mechanic re-arms which — the fight says that, in
+ * `rearmOn.anyOf`, and the engine only knows that some casts do.
+ */
+function rearmTimeline(w: World, resolvedId: string) {
+  const timeline = w.boss.timeline
+  if (!timeline) return
+  for (let i = 0; i < timeline.length; i++) {
+    const r = timeline[i].rearmOn
+    if (!r || !r.anyOf.includes(resolvedId)) continue
+    if (Number.isFinite(w.timelineNextMs[i])) continue
+    w.timelineNextMs[i] = w.elapsedMs + (r.delaySec ?? 0) * 1000
+  }
 }
 
 const ALLY_SPEED = 12
+
+/**
+ * How long a Disgusting Fish lies on the floor before the raid takes it.
+ *
+ * The player's window to claim it, and the only thing standing between "you
+ * chose which explorer to empower" and "the raid chose for you". Long enough to
+ * cross the arena from anywhere — the crates land on Gebbo's patrol and the run
+ * is about forty yards — and short enough that a refused fish still buys a reset
+ * before the bar cares.
+ */
+const FISH_FIRST_REFUSAL_MS = 6000
+
+/**
+ * Which body the raid walks a refused fish into.
+ *
+ * The fight's own `feedPriority`, in order, skipping the dead, the untargetable
+ * and anyone who has already eaten — an explorer can only be empowered once, and
+ * offering a fish to one that has eaten is a rejected feed, which costs nothing
+ * and achieves nothing. Falls through to any remaining mouth so a priority list
+ * that has run out cannot strand the encounter's last fish.
+ */
+function feedTarget(w: World): BossUnit | null {
+  const eligible = (b: BossUnit) => !b.def.untargetable && b.alive && !b.empowered
+  for (const id of w.boss.feedPriority ?? []) {
+    const u = w.bosses.find(b => b.def.id === id && eligible(b))
+    if (u) return u
+  }
+  return w.bosses.find(eligible) ?? null
+}
 const SWAP_GRACE_MS = 2500
 /** How fast a boss walks to its tank. Slower than a player, so leading one is deliberate. */
 const BOSS_FOLLOW_SPEED = 7
@@ -3844,6 +4327,21 @@ function soakPoint(inst: Instance, slot: number, of: number): Vec {
   }
 }
 
+/**
+ * Ground that lingers and is not a hazard.
+ *
+ * An element pool is the only thing on any floor in this raid that you are meant
+ * to run INTO and that costs nothing at all — it exists to take a debuff OFF a
+ * body. Everything that judges the floor assumes a shape lying there is a reason
+ * to be somewhere else, which for these is exactly backwards: the pool tick
+ * charged the player for taking their own cure, and the raid's tidying pass
+ * treated an accumulating floor of cures as an accumulating floor of filth and
+ * relocated away from all of it.
+ */
+function isHarmlessGround(def: MechanicDef): boolean {
+  return def.rule.type === 'elementPool'
+}
+
 /** Is this point inside the shape, treated generously so allies keep clear? */
 function threatAt(inst: Instance, x: number, y: number): number {
   const sh = inst.def.shape
@@ -3921,14 +4419,39 @@ function reservePickups(w: World) {
     // Fangs used to watch one globule rupture on the raid every Deluge because
     // the engine was saving it for somebody who was never coming.
     if (!of.some(i => def_scored(w, i.def))) continue
-    if (of.some(i => w.reservedPickups.has(i.uid))) continue
-    let pick = of[0]
-    let bd = dist(pick.pos, w.player.pos)
-    for (const i of of) {
-      const d = dist(i.pos, w.player.pos)
-      if (d < bd) { bd = d; pick = i }
+    // HOW MANY are held back, not just which one.
+    //
+    // `soakers` is the existing "how many bodies, minus one for you" convention
+    // and it means the same thing here: Throw Junk drops six boxes and the raid
+    // takes all but the two or three nearest you. One is the right answer for a
+    // globule — the rota is one body per pickup — and it is what every other
+    // `collect` in the raid has always been given.
+    //
+    // Deliberately gated on the mechanic declaring `soakers`, which is the
+    // author opting in to "several of these are yours". Applied to every collect
+    // it would also re-share the Entombed Sentinels' Toxic Droplets — which
+    // declare none and were tuned without one — and a raid that leaves the
+    // player three droplets instead of one is a balance change to somebody
+    // else's fight smuggled in as an AI tidy-up.
+    //
+    // With a `missCost` of a whole raid bar behind Throw Junk, getting this
+    // wrong in the other direction is worse than untidy: a share reserved for a
+    // player who is never coming is a guaranteed wipe with no action available
+    // to them, which is why the `def_scored` gate above runs first and unscored
+    // pickups are swept by the raid entirely.
+    const want = of[0].def.soakers ?? 1
+    for (let n = 0; n < want; n++) {
+      if (of.filter(i => w.reservedPickups.has(i.uid)).length >= want) break
+      let pick: Instance | null = null
+      let bd = Infinity
+      for (const i of of) {
+        if (w.reservedPickups.has(i.uid)) continue
+        const d = dist(i.pos, w.player.pos)
+        if (d < bd) { bd = d; pick = i }
+      }
+      if (!pick) break
+      w.reservedPickups.add(pick.uid)
     }
-    w.reservedPickups.add(pick.uid)
   }
 }
 
@@ -3971,6 +4494,17 @@ function allyThink(w: World) {
     if (inst.resolved || inst.def.rule.type !== 'beInside') continue
     soaks.push({ inst, slots: Math.max(1, (inst.def.soakers ?? 4) - 1), taken: 0 })
   }
+  // The bots fill the marker nearest YOU first.
+  //
+  // Mighty Thud puts three landing zones on the floor at once and the damage
+  // splits among whoever is inside one, so "get into a soak, or the raid runs
+  // into yours" is only true if the raid actually prefers yours. Slots used to
+  // be handed out in array order, which meant three soaks and nineteen allies
+  // could still leave the one you were standing in empty.
+  soaks.sort((x, y) => {
+    if (x.inst.carriedByPlayer !== y.inst.carriedByPlayer) return x.inst.carriedByPlayer ? -1 : 1
+    return dist(x.inst.pos, w.player.pos) - dist(y.inst.pos, w.player.pos)
+  })
 
   // Pickups. Raiders run over all but the one being held back for the player,
   // so a collect mechanic is always personally consequential without being
@@ -4025,6 +4559,26 @@ function allyThink(w: World) {
       claimedBy.set(a.id, best)
     }
   }
+
+  // Mushrooms, on exactly the same bargain as a pickup: the raid takes all but
+  // the one nearest YOU.
+  //
+  // Without this the branch below had every raider independently pick the
+  // NEAREST unanswered mushroom, with no claim discipline at all — so nineteen
+  // bodies converged on the same one, ate it, converged on the next, and six
+  // mushrooms were gone inside a second. The player then arrived at an empty
+  // floor and died to a Blast Wave whose only answer the raid had just consumed
+  // on their behalf. That is not a hard mechanic; it is a mechanic somebody else
+  // plays for you and then bills you for.
+  //
+  // Reserved rather than searched for each tick, and nearest-to-the-player
+  // rather than first-in-array — the same two lessons as `windMate` and the
+  // Mighty Thud soak sort directly above.
+  const pads = w.instances
+    .filter(i => !i.resolved && !i.answered && i.def.rule.type === 'launchPad')
+    .sort((x, y) => dist(y.pos, w.player.pos) - dist(x.pos, w.player.pos))
+  const padsForRaid = pads.slice(0, Math.max(0, pads.length - 1))
+  const padClaimed = new Set<number>()
 
   // Corpse duty. While an intermission that would raise the bodies is running,
   // the raid stands on them so the flames have something to land on — all but
@@ -4196,6 +4750,10 @@ function allyThink(w: World) {
 
     // 3a. Stand on a corpse, if one is going unburned.
     let onCorpseDuty = false
+    // A raider walking to a mushroom is answering the wave, not ignoring it.
+    // Without this the flee pass below drags them straight back out of a front
+    // they cannot outrun — the answer to Blast Wave is height, not distance.
+    let onMushroomDuty = false
     if (a.role !== 'tank' && corpseNext < claimableCorpses.length) {
       const c = claimableCorpses[corpseNext++]
       a.want.x = c.pos.x
@@ -4442,6 +5000,31 @@ function allyThink(w: World) {
           a.want.x = -dir.x * 6
           a.want.y = -dir.y * 6
         }
+      } else if (rt === 'launchPad') {
+        // Blast Wave is coming and the only answer is being off the floor. The
+        // raid goes and stands on mushrooms, visibly, because an instruction
+        // nineteen people ignore reads as advice rather than as the mechanic.
+        const wave = w.instances.find(i => !i.resolved && i.def.rule.type === 'wave')
+        if (wave && a.aloft <= 0) {
+          // Nearest mushroom this raider is ALLOWED to take. `padsForRaid` has
+          // already held the one nearest the player back, and `padClaimed` stops
+          // two raiders spending the same one — without either, the raid eats
+          // every mushroom on the floor and the player answers the wave with
+          // nothing.
+          let best: Instance | null = null
+          let bd = Infinity
+          for (const m of padsForRaid) {
+            if (m.answered || padClaimed.has(m.uid)) continue
+            const d = dist(m.pos, a.pos)
+            if (d < bd) { bd = d; best = m }
+          }
+          if (best) {
+            padClaimed.add(best.uid)
+            a.want.x = best.pos.x
+            a.want.y = best.pos.y
+            onMushroomDuty = true
+          }
+        }
       } else if (rt === 'press' && inst.def.rule.ability === 'dispel') {
         // A drifting hazard: the raid gives it a wide berth rather than
         // walking through it.
@@ -4485,6 +5068,45 @@ function allyThink(w: World) {
       }
     }
 
+    // 3d-bis. A carrier goes and stands in the other element.
+    //
+    //     Driven off the raider's own `element` rather than off a live instance,
+    //     the way the orbs above are driven off `marked`: a pool has a 1 ms
+    //     telegraph and is RESOLVED for the whole of its useful life, so a branch
+    //     inside the unresolved-instance loop would never once have run.
+    //
+    //     They walk to the POOL, not to whoever is holding the opposite element.
+    //     A patch of ground does not move; a body does, and a destination
+    //     measured off a moving body is the carrot on a stick the Crosswinds
+    //     partner branch documents at length — here it would have two carriers
+    //     chasing each other round the room with neither ever cleansing.
+    if (a.element) {
+      let cure: Instance | null = null
+      let cd = Infinity
+      for (const inst of w.instances) {
+        if (inst.def.rule.type !== 'elementPool' || inst.def.rule.element === a.element) continue
+        const d = dist(inst.pos, a.pos)
+        if (d < cd) { cd = d; cure = inst }
+      }
+      if (cure) {
+        a.want.x = cure.pos.x
+        a.want.y = cure.pos.y
+      }
+    }
+
+    // 3d-ter. The raider carrying a refused fish walks it into a mouth.
+    //
+    //     After the pools and before the flee pass on purpose: it is an errand
+    //     like corpse duty, and like corpse duty it is worth a few points of
+    //     health, but it is not worth walking into a Blast Wave for.
+    if (w.fishAlly === a.id) {
+      const mouth = feedTarget(w)
+      if (mouth) {
+        a.want.x = mouth.pos.x
+        a.want.y = mouth.pos.y
+      }
+    }
+
     // 3e. The gales are not theirs. The raid is off the floor for the Maelstrom,
     //     so they simply hold their marks and walk back on when it ends — the
     //     glob is the player's to reach.
@@ -4514,6 +5136,13 @@ function allyThink(w: World) {
       // avoidable damage, it is standing where the tank has to be.
       if (rt === 'faceAway' || rt === 'tankSoak') {
         if (w.bosses.some(b => b.def.id === inst.fromId && b.targetId === a.id)) continue
+      } else if (rt === 'wave') {
+        // A body already off the floor, or on its way to a mushroom, is answering
+        // this correctly. Everyone else treats the front as ground to leave —
+        // which is honest even though it mostly will not save them, because a
+        // raid standing placidly in a lethal sweep reads as the engine having
+        // forgotten about it.
+        if (a.aloft > 0 || onMushroomDuty) continue
       } else if (rt !== 'avoid' && rt !== 'lethalGround') continue
       // The cyst the gale is aimed at is the way OUT of the Maelstrom, not a
       // puddle. Fleeing it is how a raid gets blown off the far rim.
@@ -4539,7 +5168,11 @@ function allyThink(w: World) {
       // nothing else matters, because the alternative is the abyss. Stepping
       // around a puddle costs a few points of health; stepping off the line
       // costs the pull.
-      if ((onCorpseDuty || a.marked || a.wind) && inst.resolved && inst.def.rule.type === 'avoid') continue
+      // A carrier standing in a pool on purpose is in the same position: their
+      // cure is a patch of ground, and a tidiness pass that walked them out of
+      // it would make the trade impossible to complete.
+      if ((onCorpseDuty || a.marked || a.wind || a.element !== null)
+          && inst.resolved && inst.def.rule.type === 'avoid') continue
       const sh = inst.def.shape
       const threatWant = threatAt(inst, a.want.x, a.want.y)
       const threatNow = threatAt(inst, a.pos.x, a.pos.y)
@@ -4587,6 +5220,10 @@ function allyThink(w: World) {
       // A raider with orbs over their head has ten seconds to find a partner and
       // nothing else matters; clean feet are a luxury for the rest of the pull.
       //
+      // A carrier mid-trade is in the same position: their cure is a patch of
+      // ground, and a tidiness pass that walked them out of it would make the
+      // trade impossible to complete.
+      //
       // A tank on a soak run is the same and worse. This pass will happily walk
       // a body twenty-six yards to find cleaner ground, and Coiling Ichor drops
       // its pools roughly fifteen seconds ahead of Stone Breaker: measured on a
@@ -4594,7 +5231,9 @@ function allyThink(w: World) {
       // the third slam struck nobody, and the raid was thrown into the venom at
       // thirty-four seconds — for tidiness. Ground that KILLS still moves them,
       // which is the same line step 4 draws.
-      if (onCorpseDuty || a.marked || a.wind || soakTarget || !inst.resolved || !inst.def.shape) continue
+      if (onCorpseDuty || a.marked || a.wind || a.element !== null || soakTarget
+          || !inst.resolved || !inst.def.shape) continue
+      if (isHarmlessGround(inst.def)) continue
       if (!inst.def.lingerMs && !inst.def.permanent) continue
       fouled += threatAt(inst, a.want.x, a.want.y) > 0 ? 1 : 0
     }
@@ -4610,7 +5249,7 @@ function allyThink(w: World) {
           if (!inArena(w.boss, { x: cx, y: cy })) continue
           let bad = 0
           for (const inst of w.instances) {
-            if (!inst.def.shape) continue
+            if (!inst.def.shape || isHarmlessGround(inst.def)) continue
             const rt = inst.def.rule.type
             if (!inst.resolved && rt !== 'avoid' && rt !== 'lethalGround') continue
             // Ground that kills outright is never worth a shorter walk.
@@ -4930,10 +5569,25 @@ function allyMove(w: World, dt: number) {
     // point of walking it is that the pools miss the raid, and with an empty
     // floor there is nothing for them to miss.
     i.def.rule.type === 'trail' ||
+    // The polarity trade is the most collective thing on the Lost Explorers:
+    // your cure is a pool somebody else is standing in and dripping. With an
+    // empty floor there is no other element on it, and the mechanic would look
+    // like a debuff that simply kills you.
+    i.def.rule.type === 'polarity' ||
+    // And the raid has to be SEEN getting off the floor for a wave, or "be
+    // airborne when it passes" is a sentence in a briefing rather than a thing
+    // the room does.
+    i.def.rule.type === 'wave' ||
+    i.def.rule.type === 'launchPad' ||
     (i.def.rule.type === 'press' && i.def.rule.ability === 'dispel')))
   // Corpse duty is group work too — a pile of bodies to burn between nineteen
   // people is the most collective thing in the raid.
   const corpseWork = !!activePhase(w)?.resurrectCorpsesAs && w.corpses.some(c => !c.burned)
+  // The polarity trade outlives its own cast. The Volley resolves in an instant
+  // and the twenty seconds that matter come after it, so a gate that only looked
+  // for a live instance would clear the floor at the exact moment the trade
+  // starts. Anybody carrying an element keeps the raid on the floor.
+  const elementWork = w.player.element !== null || w.allies.some(a => a.alive && a.element)
   // An add that drops a pool at every body when it dies turns its death into a
   // whole-raid relocation. That only reads as one if the bodies are on the floor
   // when it happens.
@@ -4954,8 +5608,8 @@ function allyMove(w: World, dt: number) {
   for (const a of w.allies) {
     if (!a.alive) { a.presence = Math.max(0, a.presence - dt * 3); continue }
     const wanted = galeSolo ? 0
-      : (a.role === 'tank' || groupWork || corpseWork || relocateWork
-        || groupsUp || a.wind || a.debuff || a.marked ? 1 : 0)
+      : (a.role === 'tank' || groupWork || corpseWork || relocateWork || elementWork
+        || groupsUp || a.wind || a.debuff || a.marked || a.element ? 1 : 0)
     // Walk on briskly, drift off gently — a raid that blinks out mid-mechanic
     // reads as a bug.
     a.presence += Math.max(-dt * 1.1, Math.min(dt * 3.4, wanted - a.presence))
@@ -4987,6 +5641,15 @@ function allyMove(w: World, dt: number) {
     // fraction, so a raider still accelerates into a move rather than snapping,
     // and `id % 5` still staggers the raid so it does not move as one object.
     // The only thing that changed is where they are allowed to stop.
+    //
+    // This subsumes the narrower fix the Lost Explorers branch carried, which
+    // closed the last few yards only for an ERRAND — a fish being walked
+    // somewhere, or a pickup declaring `soakers` — so that a Throw Junk crate,
+    // eaten inside 3 yards, could actually be reached. A raider who used to stop
+    // five yards short of a crate and watch the window close now arrives at it,
+    // and the same is true of every other thing in the raid that has to be
+    // physically stood on. The errand gate exists only to protect the OTHER six
+    // fights from the retune, and it is not needed once the retune is taken.
     if (d > 0.6) {
       const stepLen = Math.min(d * ease, ALLY_SPEED * dt)
       a.pos.x += (dx / d) * stepLen
@@ -4995,6 +5658,15 @@ function allyMove(w: World, dt: number) {
     if (a.debuffMs > 0) {
       a.debuffMs -= dt * 1000
       if (a.debuffMs <= 0) { a.debuff = null; a.debuffMs = 0 }
+    }
+    // A raider is off the floor for exactly as long as the mushroom threw them.
+    if (a.aloft > 0) a.aloft = Math.max(0, a.aloft - dt * 1000)
+    // The element clock is a backstop, not the mechanic — what takes an element
+    // off a body is the opposite pool, tested in step(). This only matters when
+    // a volley never gets a successor to kill them with.
+    if (a.elementMs > 0) {
+      a.elementMs -= dt * 1000
+      if (a.elementMs <= 0) { a.element = null; a.elementMs = 0 }
     }
     if (a.health < 1 && a.health > 0) a.health = Math.min(1, a.health + 0.06 * dt)
   }
@@ -5063,6 +5735,37 @@ function computePrompt(w: World): Prompt | null {
         urgency: Math.min(1, dist(w.player.pos, unit.pos) / (maxYards * 2)),
       }, 0)
     }
+  }
+
+  // One of them is nearly down and another is nowhere near it.
+  //
+  // The 0.10 threshold lives in step(), where `killSpreadWarning` is computed,
+  // and the HUD chip reads the same rule — one rule, three readers, so the
+  // canvas, the panel and the voice can never disagree about whether the council
+  // is out of step. The verb is byte-identical to the one `brief.ts` returns for
+  // `syncKill`, because `voice.ts` speaks both.
+  if (w.killSpreadWarning) {
+    const d = w.boss.mechanics.find(m => m.rule.type === 'syncKill')
+    if (d) consider({ verb: 'EVEN THEM OUT', mechanic: d.name, urgency: 1 }, 1)
+  }
+
+  // The fish, and where it has to go.
+  //
+  // Deliberately not tied to the fish's own instance: the moment you pick one up
+  // the instance is gone, and the job — walk it into a boss that has not eaten —
+  // has only just started. An instruction that vanished on pickup would be an
+  // instruction about the easy half.
+  const feedDef = w.boss.mechanics.find(m => m.rule.type === 'feed')
+  if (feedDef && w.fishCarried) {
+    consider({ verb: 'FEED A BOSS', mechanic: feedDef.name, urgency: 1 }, 1)
+  }
+
+  // Your element, and its cure. Ranked with the fish rather than with the floor
+  // because a second volley on an uncleansed carrier kills them outright, and
+  // there is nothing else on this fight that a puddle can do to you.
+  if (w.player.element) {
+    const d = w.boss.mechanics.find(m => m.rule.type === 'polarity')
+    if (d) consider({ verb: 'OPPOSITE POOL', mechanic: d.name, urgency: 1 }, 1)
   }
 
   // Where the boss is standing, on a fight with fountains.
@@ -5371,7 +6074,75 @@ function computePrompt(w: World): Prompt | null {
         // saying is that five things are about to arrive at once.
         consider({ verb: 'BRACE — FLURRY', mechanic: def.name, urgency: t }, 5)
         break
+
+      case 'feed':
+        // A fish lying on the floor with nobody holding it. Only worth saying
+        // while it is still there to be had — once it is in your hands the
+        // instruction above takes over and names the destination instead.
+        if (!w.fishCarried) consider({ verb: 'GRAB THE FISH', mechanic: def.name, urgency: t }, 2)
+        break
+
+      case 'wave':
+        // The top of the board, and it has to be: a front you cannot outrun and
+        // cannot heal through is the one instruction on this fight where being
+        // late is the same as being wrong. Silent once you are already up.
+        if (w.player.aloft <= 0) {
+          consider({ verb: 'GET AIRBORNE', mechanic: def.name, urgency: t }, 0)
+        }
+        break
+
+      case 'launchPad':
+        // Mushrooms with no wave coming are scenery — there is nothing to be
+        // airborne FOR. Only speak while a front is actually queued behind them,
+        // which is the pairing the fight always casts them in.
+        if (w.player.aloft <= 0
+            && w.instances.some(i => !i.resolved && i.def.rule.type === 'wave')) {
+          consider({ verb: 'GET AIRBORNE', mechanic: def.name, urgency: t }, 1)
+        }
+        break
+
+      case 'raidDamage':
+        // Only when it has a dial and you are the one holding it. Unavoidable
+        // raid damage has nothing to say to anybody else, and this still never
+        // becomes a failure — it is a number the marked player can shrink.
+        if (def.rule.falloff && inst.carriedByPlayer) {
+          consider({ verb: 'RUN FAR', mechanic: def.name, urgency: t }, 2)
+        }
+        break
+
+      case 'tankSwap':
+      case 'burnWindow':
+      case 'drainNearest':
+      case 'keepApart':
+      case 'polarity':
+      case 'holdMelee':
+        // Deliberately silent HERE, and every one of them is spoken for above.
+        // Their instruction outlives the instance that carries it: a swap is
+        // called off the holder's stacks, a burn window off the clock it opened,
+        // the fountains off where the boss is standing between drinks, the link
+        // off the gap between two bodies, an element off the debuff you are
+        // still carrying long after the volley resolved, and a leash off
+        // `w.leashBroken` — which is a distance you are sitting in right now
+        // rather than a telegraph that is filling. Prompting off the telegraph as
+        // well would say the same thing twice and stop saying it at the moment it
+        // starts to matter.
+        break
+
+      case 'lethalGround':
+      case 'pairUp':
+      case 'stackingDot':
+      case 'elementPool':
+      case 'syncKill':
+        // Nothing to say. A hole in the floor is scenery you learn once; the orb
+        // puzzle and the Gash are told through `w.player.marked` and the group
+        // rota rather than through a shape; an element pool is the only thing on
+        // any floor in this raid that is purely good news; and a kill spread is
+        // a state of the health bars, prompted above off `killSpreadWarning`.
+        break
+
       default:
+        // Not reachable, and that is the point — see `exhaustive`.
+        exhaustive(def.rule)
         break
     }
   }
@@ -5833,9 +6604,30 @@ function recordAddFailure(w: World, d: AddDef) {
   else w.failures.set(d.id, { mechanicId: d.id, name: d.name, failText: d.failText, count: 1 })
 }
 
-/** The next few mechanics the loop will fire, for the anticipation strip. */
+/**
+ * The next few mechanics the fight will cast, for the anticipation strip.
+ *
+ * Both schedulers, merged and sorted by when they actually land. A strip built
+ * from the rotation alone would leave out the three casts the Lost Explorers is
+ * most often read by — Shell Spin, Blink Nova and Throw Junk are all on their
+ * own clocks — which is the one display that exists to count them down.
+ */
 export function upcoming(w: World, count = 3): { name: string; inSec: number }[] {
   const out: { name: string; inSec: number }[] = []
+  /**
+   * The same gates `fire()` applies, for the same reason: a strip that promised
+   * Mighty Thud from an explorer that has eaten nothing, or from one that is
+   * already dead, would be counting down to nothing.
+   */
+  const shown = (id: string): MechanicDef | null => {
+    const def = w.boss.mechanics.find(m => m.id === id)
+    if (!def || !def_scored(w, def)) return null
+    if (def.from && !bossUnitFor(w, def.from).alive) return null
+    if (def.empoweredOnly && !w.bosses.some(b => b.def.id === def.empoweredOnly && b.empowered)) return null
+    if (def.unlockedByDeathOf && !def.unlockedByDeathOf.some(e => e in w.deadEntities)) return null
+    return def
+  }
+
   const period = activeInterval(w) * 1000
   // On a scripted stage these are FLOORS rather than times, and they cannot be
   // anything else: the next step arrives one beat after the current one closes,
@@ -5852,13 +6644,36 @@ export function upcoming(w: World, count = 3): { name: string; inSec: number }[]
   // belongs to somebody else — a green-side healer's next three are three of
   // their own, not "red mechanic, red mechanic, red mechanic".
   for (let i = 0; i < live * 2 && out.length < count; i++) {
-    const id = loop[(w.loopIndex + i) % live]
-    const def = w.boss.mechanics.find(m => m.id === id)
-    if (def && def_scored(w, def)) {
-      out.push({ name: def.name, inSec: (untilNext + i * period) / 1000 })
+    const def = shown(loop[(w.loopIndex + i) % live])
+    if (!def) continue
+    out.push({ name: def.name, inSec: (untilNext + i * period) / 1000 })
+  }
+
+  // A DORMANT timeline entry contributes nothing at all. Throw Junk after the
+  // first one arrives when a player has empowered a boss and that boss has cast,
+  // and putting a number on that would be the HUD inventing one — which is a
+  // worse failure than a short strip, because a countdown is the one thing on
+  // screen a player is entitled to trust.
+  const timeline = w.boss.timeline ?? []
+  for (let i = 0; i < timeline.length; i++) {
+    const at = w.timelineNextMs[i]
+    if (at === undefined || !Number.isFinite(at)) continue
+    const def = shown(timeline[i].id)
+    if (!def) continue
+    const every = timeline[i].everySec
+    // Enough repeats to still be on the strip when the rotation is busy; a
+    // one-shot contributes exactly one.
+    for (let k = 0; k < count; k++) {
+      const t = at + (every ?? 0) * 1000 * k - w.elapsedMs
+      out.push({ name: def.name, inSec: Math.max(0, t) / 1000 })
+      if (every === undefined) break
     }
   }
-  return out
+
+  // Sorting is a no-op on a fight with no timeline — the rotation is walked in
+  // order, so its entries are already ascending — which is why the other seven
+  // bosses' strips read exactly as they did.
+  return out.sort((a, b) => a.inSec - b.inSec).slice(0, count)
 }
 
 /**
@@ -6220,6 +7035,13 @@ export function step(w: World, input: Input, dtMs: number) {
     w.player.pos.y += my * speed * dt
   }
   if (w.player.aloft > 0) w.player.aloft -= dtMs
+  // The element clock. A backstop rather than the mechanic: what takes an
+  // element off you is a patch of the opposite one, tested with the pickups
+  // below. This only ever matters when a volley gets no successor.
+  if (w.player.elementMs > 0) {
+    w.player.elementMs -= dtMs
+    if (w.player.elementMs <= 0) { w.player.element = null; w.player.elementMs = 0 }
+  }
 
   // Being thrown. Applied after your own input rather than instead of it, so a
   // player mid-flight can still lean — you have no real say in where you land,
@@ -6647,11 +7469,42 @@ export function step(w: World, input: Input, dtMs: number) {
     // tick cannot be walked out from under, so there is nothing to protect — and
     // Sszorak's opening premise is that he chases the tanks, which he cannot do
     // if five back-to-back casts pin him for the whole Apex Predator flurry.
+    // A scattered field is not a cast anybody is standing still to deliver.
+    //
+    // The root protects a shape that is still attached to its caster when it
+    // lands. Pickups and mushrooms are not: `fire` places each one on the floor
+    // at a fixed point the moment it is thrown, and nothing re-anchors them
+    // afterwards — so there is no telegraph for the caster to walk out from
+    // under. Rooting on one instead pins him for the whole of its window, and
+    // Throw Junk's window is ten seconds: Gebbo threw boxes "as he walks his
+    // circle" while standing perfectly still for four fifths of the pull.
+    //
+    // No existing fight is affected — every other `collect` in this raid is
+    // `origin: 'random'` and never rooted anything in the first place.
     const rooted = w.instances.some(i =>
       !i.resolved && i.fromId === b.def.id && i.def.origin === 'boss'
+      && i.def.rule.type !== 'collect' && i.def.rule.type !== 'launchPad'
       && i.def.telegraphMs > 0 && !i.def.mobileCaster)
 
-    if (phase?.entitiesConverge) {
+    if (b.def.patrol && !rooted) {
+      // He walks his circle on his own. Nobody tanks him and nobody can move him,
+      // which is what makes his Throw Junk land somewhere new every cast — an
+      // untanked entity in this engine simply never moved, so "no boss is static"
+      // was false and every box came out of the same spot.
+      //
+      // `rooted` still wins. A frontal fired from where the caster used to be is
+      // exactly the defect the root block above exists to prevent, and a boss who
+      // walked out from under his own telegraph would make it a lie.
+      //
+      // `station` follows him because the tank leash and `tankStation` both read
+      // it, and a station left behind at the spawn point is a station that means
+      // nothing.
+      const p = b.def.patrol
+      const a = ((p.startDeg ?? 0) + (w.elapsedMs / 1000) * p.degPerSec) * Math.PI / 180
+      b.pos = clampToArena(w.boss,
+        { x: p.centre.x + Math.cos(a) * p.radius, y: p.centre.y + Math.sin(a) * p.radius }, 2)
+      b.station = { ...b.pos }
+    } else if (phase?.entitiesConverge) {
       // The intermission: they walk at each other, or — with only one entity on
       // the field — into the middle of the room, where the well is. Nobody is
       // dragging them and nothing a tank does changes it.
@@ -6691,6 +7544,76 @@ export function step(w: World, input: Input, dtMs: number) {
         b.pos.y += ((to.y - b.pos.y) / d) * step
       }
       b.pos = clampToArena(w.boss, b.pos, w.boss.arenaRadius * 0.12)
+    }
+  }
+
+  // ── the fish ──
+  //
+  // A destination, not a distance. Walking it into a boss is the whole action;
+  // there is no button, because the fight has none — the answer to Mor'zahi's bar
+  // is where you are standing while you hold a fish.
+  //
+  // This is the ONLY place `bossEnergy` is ever set back to zero. Routing the
+  // reset through `atFullEnergy` instead would make the bar self-emptying and
+  // delete the enrage, which is the one thing three fish are being spent on.
+  if (w.fishCarried) {
+    const feedDef = w.boss.mechanics.find(m => m.rule.type === 'feed')
+    if (feedDef && feedDef.rule.type === 'feed') {
+      const range = feedDef.rule.feedRange
+      // Read out here rather than inside the callbacks below: a narrowed
+      // property does not survive being referenced from a closure.
+      const costId = feedDef.rule.costId
+      const u = w.bosses.find(b => !b.def.untargetable && b.alive
+        && dist(b.pos, w.player.pos) < range)
+      // A boss that has already eaten refuses it and you keep the fish. Never a
+      // recorded failure and never a cost: a misclick on a three-body council
+      // must not be an unrecoverable wipe, and this project does not bill people
+      // for walking into the wrong one of three bodies standing close together.
+      if (u && !u.empowered) {
+        u.empowered = true
+        w.fishCarried = false
+        w.fishSpent++
+        w.bossEnergy = 0
+        w.shake = 1
+        const cost = w.boss.mechanics.find(m => m.id === costId)
+        if (cost) fire(w, cost.id)
+        if (!w.seen.has(feedDef.id)) { w.seen.add(feedDef.id); w.announce = feedDef }
+      }
+    }
+  }
+
+  // The same errand, run by the raid, on a fish the player let lie.
+  //
+  // Deliberately the same reset and the same empowerment: the directive's reset
+  // is a property of the FEED, not of who carried it. What the player loses by
+  // not finding the fish is which explorer gets it — `feedPriority` decides that
+  // instead, in the order the fight declares, skipping anyone already fed.
+  //
+  // Kept beside the player's copy rather than folded into it, because the two
+  // differ in the one place that matters: this one has a destination chosen for
+  // it, and that is the whole of the loss.
+  if (w.fishAlly >= 0 && w.boss.feedPriority) {
+    const bearer = w.allies.find(a => a.id === w.fishAlly && a.alive)
+    const feedDef = w.boss.mechanics.find(m => m.rule.type === 'feed')
+    const mouth = feedTarget(w)
+    if (!bearer || !mouth) {
+      // Bearer dead, or every living explorer has already eaten. The fish is
+      // gone either way — three exist in the encounter and this one is spent.
+      w.fishAlly = -1
+    } else if (feedDef && feedDef.rule.type === 'feed'
+        && dist(mouth.pos, bearer.pos) < feedDef.rule.feedRange) {
+      // Read out before the callback below: a narrowed property does not
+      // survive being referenced from a closure. Same reason as the player's
+      // copy directly above.
+      const costId = feedDef.rule.costId
+      mouth.empowered = true
+      w.fishAlly = -1
+      w.fishSpent++
+      w.bossEnergy = 0
+      w.shake = 1
+      const cost = w.boss.mechanics.find(m => m.id === costId)
+      if (cost) fire(w, cost.id)
+      if (!w.seen.has(feedDef.id)) { w.seen.add(feedDef.id); w.announce = feedDef }
     }
   }
 
@@ -6795,14 +7718,27 @@ export function step(w: World, input: Input, dtMs: number) {
     // a three-body council with two tanks, and United Defense keys on any pair
     // being close: "all three explorers take 99% reduced damage while within
     // 30 yds of each other".
+    // The WIDEST pair, not the closest.
+    //
+    // "All three explorers take 99% reduced damage while within 30 yds of each
+    // other" is literally "the widest pair is under 30" — and it is the only
+    // reading under which a patrolling Gebbo passing near ONE tanked boss does
+    // not link the whole council for something no tank could have prevented.
+    // Under the minimum it took both tanks to break the link; under the maximum
+    // one tank walking one boss out ends it, which is the mechanic as described.
+    //
+    // Once an explorer dies this silently becomes pairwise for the two left, and
+    // that is correct: two bosses within 30 yards of each other genuinely are all
+    // within 30 yards of each other. The Sentinels are unaffected — with two
+    // targetable entities the maximum and the minimum are the same number.
     const held = w.bosses.filter(b => !b.def.untargetable && b.alive)
-    let closest = Infinity
+    let widest = 0
     for (let i = 0; i < held.length; i++) {
       for (let j = i + 1; j < held.length; j++) {
-        closest = Math.min(closest, dist(held[i].pos, held[j].pos))
+        widest = Math.max(widest, dist(held[i].pos, held[j].pos))
       }
     }
-    if (held.length > 1 && closest < apartDef.rule.minYards) {
+    if (held.length > 1 && widest < apartDef.rule.minYards) {
       w.bossesLinked = true
       w.linkedMs += dtMs
       if (w.linkedMs > LINK_GRACE_MS) {
@@ -6934,6 +7870,36 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
 
+  // ── the timeline ──
+  //
+  // Mechanics with a real interval of their own, fired off absolute pull time
+  // rather than off the shared beat. See `TimedCast` for why the round-robin
+  // cannot express these.
+  //
+  // Deliberately OUTSIDE the flurry guard above. Shell Spin at t=5,35,65 and
+  // Blink Nova at t=10,40,70 are not paused for anything — a Shell Spin landing
+  // five seconds into a ten-second crate window is the intended difficulty, and
+  // the fight's own combo is Mushroom Toss, which would otherwise suppress both
+  // of them for the whole of its chain.
+  //
+  // No staging. A timeline entry named its own first cast, and `unlockedCount`
+  // is an index into `loop`, so an id that is not in that array is not staged by
+  // construction. Gating it again here would be the double-count the type
+  // comment warns about.
+  const timeline = w.boss.timeline
+  if (timeline) {
+    for (let i = 0; i < timeline.length; i++) {
+      const t = timeline[i]
+      const at = w.timelineNextMs[i]
+      if (at === undefined || !Number.isFinite(at) || w.elapsedMs < at) continue
+      // Re-armed from the appointment rather than from now, so a period does not
+      // drift by a frame every cast. An entry with no period goes dormant and
+      // stays there until a `rearmOn` event wakes it.
+      w.timelineNextMs[i] = t.everySec === undefined ? Infinity : at + t.everySec * 1000
+      fire(w, t.id)
+    }
+  }
+
   // Anything a channel queued. Four Rites a second apart is four events the
   // healer watches arrive, which is what a channel is; one lump of damage with
   // the same total would hide it.
@@ -6942,6 +7908,23 @@ export function step(w: World, input: Input, dtMs: number) {
     // Undefined for every other channel in the raid, where `fire` rolls one.
     for (const q of w.queue) if (q.atMs <= w.elapsedMs) fire(w, q.id, q.at)
     w.queue = w.queue.filter(q => q.atMs > w.elapsedMs)
+  }
+
+  // Mighty Thud's leaps, one at a time, onto the raider each was marked for.
+  //
+  // Spawned at the mark's position at the moment the leap lands rather than where
+  // they were standing when Nama picked them, because he jumps AT them — a
+  // landing zone frozen at cast time would let three marked players stroll out of
+  // their own soaks and split nothing.
+  for (let i = w.leapQueue.length - 1; i >= 0; i--) {
+    const L = w.leapQueue[i]
+    if (L.atMs > w.elapsedMs) continue
+    w.leapQueue.splice(i, 1)
+    const d = w.boss.mechanics.find(m => m.id === L.defId)
+    const at = L.raider < 0
+      ? { ...w.player.pos }
+      : { ...(w.allies.find(a => a.id === L.raider)?.pos ?? w.player.pos) }
+    if (d) spawn(w, d, at)
   }
 
   // A full bar. What it means depends on whether anything is waiting to spend
@@ -6956,10 +7939,17 @@ export function step(w: World, input: Input, dtMs: number) {
     } else if (!w.enraged) {
       w.enraged = true
       w.shake = 1
+      // Named where the fight names it. Mor'zahi's bar filling is Final
+      // Ascension, and a debrief that said "the bar filled" would be describing
+      // the instrument rather than what killed the raid.
+      //
       // The generic line is the truth on a bar that fills on a clock. On a bar
       // that only moves when a Submerge happens it is a lie about the cause, so
-      // the boss file gets to say what filling it actually means.
-      killPlayer(w, w.boss.enrageText || 'The bar filled — enraged')
+      // the boss file gets to say what filling it actually means — through
+      // `enrageName` on the Explorers and `enrageText` on the Twin Fangs. Two
+      // spellings of one idea, kept apart because each fight's own file and its
+      // own tests already say it one way; neither is ever set on the same boss.
+      killPlayer(w, w.boss.enrageName || w.boss.enrageText || 'The bar filled — enraged')
       return
     }
   }
@@ -6990,6 +7980,32 @@ export function step(w: World, input: Input, dtMs: number) {
   if (w.player.health < 1) {
     const throughput = 0.062 * (0.35 + 0.65 * w.raidHealth)
     w.player.health = Math.min(1, w.player.health + throughput * dt)
+  }
+
+  // ── the elements ──
+  //
+  // Every carrier drips a patch of THEIR OWN element under their feet, which is
+  // the half of Frostfire Volley that makes it solvable: your cure is the ground
+  // somebody else is laying, and theirs is yours. Neither of you can fix
+  // yourself, so the mechanic is a trade rather than a dodge.
+  const polarityDef = w.boss.mechanics.find(m => m.rule.type === 'polarity')
+  if (polarityDef && polarityDef.rule.type === 'polarity') {
+    const r = polarityDef.rule
+    w.elementDripMs -= dtMs
+    if (w.elementDripMs <= 0) {
+      w.elementDripMs = ELEMENT_DRIP_MS
+      const poolFor = (el: 'fire' | 'frost') =>
+        w.boss.mechanics.find(m => m.id === (el === 'fire' ? r.firePoolId : r.frostPoolId))
+      if (w.player.element) {
+        const d = poolFor(w.player.element)
+        if (d) spawn(w, d, { ...w.player.pos })
+      }
+      for (const a of w.allies) {
+        if (!a.alive || !a.element) continue
+        const d = poolFor(a.element)
+        if (d) spawn(w, d, { ...a.pos })
+      }
+    }
   }
 
   // ── instances ──
@@ -7209,6 +8225,87 @@ export function step(w: World, input: Input, dtMs: number) {
           giveVenom(w, eater, soak)
         }
       }
+      // Opening the box is what reveals what it was hiding, and it drops where
+      // it stood — whichever body opened it, ally or player. Two steps, find it
+      // and then go and get it, is the mechanic; an ally who opened the box and
+      // handed you the fish invisibly is one step and no search at all.
+      if (inst.answered && inst.hidesFish && inst.def.hides) {
+        inst.hidesFish = false
+        w.fishFound++
+        const fishDef = w.boss.mechanics.find(m => m.id === inst.def.hides!.defId)
+        if (fishDef) {
+          spawn(w, fishDef, { ...inst.pos })
+          w.shake = Math.max(w.shake, 0.5)
+        }
+      }
+    }
+
+    // The fish itself. The player gets first refusal on every one of them: the
+    // whole decision is which of three bodies to walk it into, and a raid that
+    // fetched and delivered it the moment it dropped would be playing the
+    // mechanic on your behalf.
+    if (!inst.resolved && !inst.answered && inst.def.rule.type === 'feed'
+        && !w.fishCarried && w.fishAlly < 0) {
+      const r = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 2.5
+      if (dist(inst.pos, w.player.pos) <= r) {
+        w.fishCarried = true
+        inst.answered = true
+        inst.timer = 0
+      } else if (w.boss.feedPriority
+          && (inst.def.telegraphMs - inst.timer) >= FISH_FIRST_REFUSAL_MS) {
+        // Refused. The raid finishes the errand rather than watching Mor'zahi
+        // fill against a fish lying on the floor — what a missed fish costs you
+        // is the CHOICE of which explorer gets it, not the reset. Nearest body
+        // to the fish, because it is a fetch and not an assignment.
+        let taker: Ally | null = null
+        let td = Infinity
+        for (const a of w.allies) {
+          if (!a.alive || a.role === 'tank') continue
+          const d = dist(inst.pos, a.pos)
+          if (d < td) { td = d; taker = a }
+        }
+        if (taker) {
+          w.fishAlly = taker.id
+          inst.answered = true
+          inst.timer = 0
+        }
+      }
+    }
+
+    // A patch of one element cures the other, and does absolutely nothing else.
+    // Beside the pickup test because both are "walk over it" behaviours and they
+    // belong together — but this one never hurts, never scores and never kills:
+    // it is the only thing on the floor of this fight that is purely good news.
+    if (inst.def.rule.type === 'elementPool') {
+      const el = inst.def.rule.element
+      const rad = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 5
+      if (w.player.element && w.player.element !== el && dist(inst.pos, w.player.pos) < rad) {
+        w.player.element = null
+        w.player.elementMs = 0
+      }
+      for (const a of w.allies) {
+        if (!a.alive || !a.element || a.element === el) continue
+        if (dist(inst.pos, a.pos) < rad) { a.element = null; a.elementMs = 0 }
+      }
+    }
+
+    // A mushroom throws whoever touches it and is consumed. Touching one is
+    // always correct play — the ability data calls the airborne debuff the
+    // success signal in as many words — so this can never `hurt`, never
+    // `recordFailure` and never `killPlayer`.
+    if (inst.def.rule.type === 'launchPad' && !inst.answered && !inst.resolved) {
+      const rad = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 4
+      if (dist(inst.pos, w.player.pos) < rad) {
+        w.player.aloft = Math.max(w.player.aloft, inst.def.rule.launchMs)
+        inst.answered = true
+        inst.timer = 0
+      }
+      for (const a of w.allies) {
+        if (!a.alive || dist(inst.pos, a.pos) >= rad) continue
+        a.aloft = Math.max(a.aloft, inst.def.rule.launchMs)
+        inst.answered = true
+        inst.timer = 0
+      }
     }
 
     inst.timer -= dtMs
@@ -7244,7 +8341,13 @@ export function step(w: World, input: Input, dtMs: number) {
       }
     }
 
-    if (inst.resolved && (inst.def.lingerMs || inst.def.permanent) && isInside(inst, w.player.pos)) {
+    // Without this exemption the generic pool tick below charged the cure at the
+    // default 0.15, so the answer to Frostfire Volley damaged you for taking it
+    // — and, with the stack economy below, billed you a counter stack for it too.
+    // `elementPool` is the only harmless ground in the raid and no fight that
+    // keeps a counter has any, so nothing else changes shape here.
+    if (!isHarmlessGround(inst.def) && inst.resolved
+        && (inst.def.lingerMs || inst.def.permanent) && isInside(inst, w.player.pos)) {
       // The counter stack, charged per HAZARD rather than per tick — `payHit`
       // bills a body once per instance, or once per `applies.everyMs` for
       // something you can walk back into. Deliberately outside the
@@ -7356,9 +8459,21 @@ export function step(w: World, input: Input, dtMs: number) {
 
   // Tuned so all three roles can clear a clean pull inside the enrage, with dps
   // fastest and healer slowest — nobody locked out of a kill for their role.
+  //
+  // `maxHp` is the health pool as a multiple of that. It was declared on every
+  // boss and read by nothing for a long time, which welded two separate
+  // questions together: with `pullLengthSec` as the only lever you could not
+  // make a fight longer without also making it tankier, and the Lost Explorers'
+  // length is emergent from a chain of event gates rather than set by a clock.
+  //
+  // Every fight in the tier declares `maxHp: 1`, and dividing by one is exact in
+  // binary floating point, so this is bit-for-bit the old arithmetic everywhere
+  // it has not been changed on purpose. The guard is for a boss file typo:
+  // `maxHp: 0` would divide by zero and make the whole raid immortal.
   const base = w.player.role === 'dps' ? 1.0 : w.player.role === 'tank' ? 0.82 : 0.75
   const bursting = (w.player.cooldowns.burst ?? 0) > COOLDOWN_MS.burst - BURST_WINDOW_MS
-  const perShot = (base * (bursting ? 3 : 1)) / (w.boss.pullLengthSec * SHOTS_PER_SEC * 0.46)
+  const pool = Math.max(0.01, w.boss.maxHp || 1)
+  const perShot = (base * (bursting ? 3 : 1)) / (w.boss.pullLengthSec * SHOTS_PER_SEC * 0.46 * pool)
 
   for (const s of w.shots) {
     if (s.life <= 0) continue
@@ -7398,6 +8513,11 @@ export function step(w: World, input: Input, dtMs: number) {
       if (dist(s.pos, b.pos) > BOSS_HIT_RADIUS) continue
       s.life = 0
       w.shotsHit++
+      // Which one you are on. The raid chips everything else, so this is the
+      // steering wheel: on a council with no sides, the entity your last shot
+      // connected with is the only honest answer to "which one is nobody else
+      // helping with".
+      w.focusId = b.def.id
       // Damage lands on the entity you actually hit. A shared pool let you
       // ignore one of a pair completely and still "kill them together", which
       // is the one thing Twin Fangs and the Altar's third stage forbid.
@@ -7409,10 +8529,24 @@ export function step(w: World, input: Input, dtMs: number) {
       // A stage can armour them too — an intermission's 99% reduction is the
       // fight telling you to stop shooting and go and do the mechanic, and
       // damage logged inside that window is wasted.
-      const live = w.bosses.filter(x => !x.def.untargetable).length || 1
+      //
+      // Suppressed entirely when the raid is chipping the other entities. The
+      // multiplier exists because your shots were the ONLY damage in the fight
+      // and had to be split three ways; with allies dragging the other two along
+      // as well it triple-counts, and a 210-second fight ended in 32.
+      const live = w.boss.alliesChipOffTarget
+        ? 1
+        : (w.bosses.filter(x => !x.def.untargetable).length || 1)
       b.hp -= (w.bossesLinked ? perShot * 0.01 : perShot)
         * (1 - w.entityReduction) * (w.burnMs > 0 ? w.burnMult : 1) * live
-      if (b.hp <= 0) { b.hp = 0; b.alive = false }
+      // Recorded the instant it happens, and only once. The abilities an ally's
+      // death unlocks are supposed to get worse the longer the survivors stand
+      // there, so what is kept is WHEN rather than merely THAT.
+      if (b.hp <= 0) {
+        b.hp = 0
+        b.alive = false
+        if (!(b.def.id in w.deadEntities)) w.deadEntities[b.def.id] = w.elapsedMs
+      }
       break
     }
   }
@@ -7433,11 +8567,22 @@ export function step(w: World, input: Input, dtMs: number) {
   // so the health delta the intermission punishes is real and readable rather
   // than pinned at zero — the tactic file calls that delta "the most actionable
   // number on the fight", and it only means anything if it can move.
-  if (w.boss.sided) {
-    const ours = w.bosses.find(b => b.def.side === w.player.side)
+  //
+  // On a council with no sides, the gate is which entity your last shot
+  // connected with: you steer the balance by switching targets, and the
+  // health-spread warning is what tells you when to.
+  if (w.boss.sided || w.boss.alliesChipOffTarget) {
+    const ours = w.boss.sided
+      ? w.bosses.find(b => b.def.side === w.player.side)
+      : w.bosses.find(b => b.def.id === w.focusId && b.alive)
+    const lag = w.boss.chipLag ?? OFFSIDE_LAG
     for (const b of w.bosses) {
-      if (b.def.untargetable || !b.alive) continue
-      if (b.def.side === w.player.side) continue
+      if (b.def.untargetable || !b.alive || b === ours) continue
+      if (w.boss.sided && b.def.side === w.player.side) continue
+      // Nothing shot yet, so nothing to pace against. Draining everything toward
+      // a focus that does not exist would have the raid open the pull by
+      // levelling all three at once, before the player has made a single choice.
+      if (!w.boss.sided && !ours) continue
       // Paced to you, not independent of you.
       //
       // A flat rate meant the other group solo-killed their golem whether or not
@@ -7447,7 +8592,7 @@ export function step(w: World, input: Input, dtMs: number) {
       // is doing what you are doing, so they keep pace and stay a little behind
       // — which leaves a real health delta for Vitriolic Stasis to punish
       // without ever letting either golem finish first.
-      const floor = Math.max(0, (ours?.hp ?? 0)) + OFFSIDE_LAG
+      const floor = Math.max(0, (ours?.hp ?? 0)) + lag
       if (b.hp <= floor) continue
       const drain = OFFSIDE_DPS * (1 - w.entityReduction) * (w.bossesLinked ? 0.01 : 1)
       b.hp = Math.max(floor, b.hp - drain * dt)
@@ -7484,6 +8629,11 @@ export function step(w: World, input: Input, dtMs: number) {
     for (const b of live) {
       if (b.hp <= 0.005 && !allDown) { b.hp = 0.005; b.alive = false }
       else if (allDown) { b.hp = 0; b.alive = false }
+      // The other place `alive` is cleared, and it has to record the death for
+      // the same reason the shot loop does. No fight combines the pin with
+      // death-unlocked abilities today; a fight that did would otherwise unlock
+      // nothing at all, silently.
+      if (!b.alive && !(b.def.id in w.deadEntities)) w.deadEntities[b.def.id] = w.elapsedMs
     }
   }
 
@@ -7493,6 +8643,22 @@ export function step(w: World, input: Input, dtMs: number) {
     w.bossHp = 0
     w.killed = true
   }
+
+  // One of them nearly down and another nowhere near it.
+  //
+  // The encounter's own instruction is that the council has to die together, and
+  // this is the readable statement of how far from that the pull currently is:
+  // somebody under 10%, and somebody else more than 10% above them. THE 0.10
+  // THRESHOLD IS MIRRORED in the HUD's kill-spread chip — both read the same rule
+  // so the canvas and the panel cannot disagree about whether you are in trouble.
+  //
+  // Set above the chip lag on purpose. The raid chips to `chipLag` behind your
+  // focus, which is deliberately wider than this, so late in a pull the warning
+  // is the DEFAULT state and evening the three out is a job rather than a rare
+  // alarm.
+  const liveT = targetable.filter(b => b.alive)
+  const lo = liveT.length ? Math.min(...liveT.map(b => b.hp)) : 1
+  w.killSpreadWarning = liveT.length > 1 && lo < 0.10 && liveT.some(b => b.hp - lo > 0.10)
 
   // ── stages ──
   // Checked after the health and the bar have been brought up to date, because

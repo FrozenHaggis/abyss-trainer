@@ -207,10 +207,26 @@ interface HudSample {
   raidAlive: number
   prompt: Prompt | null
   next: { name: string; inSec: number }[]
+  /**
+   * Casts on the timeline that are waiting on an event rather than on a clock.
+   *
+   * Carried separately from `next` precisely because they have no `inSec`. The
+   * moment these are merged into the countdown list somebody has to invent a
+   * number for them, and the honest display is the absence of one.
+   */
+  waiting: { id: string; name: string; on: string }[]
   drillReps: number
   drillClean: number
-  /** Every entity's health, in the boss file's own order. */
-  units: { id: string; name: string; side?: Side; hp: number }[]
+  /**
+   * Every entity's health, in the boss file's own order.
+   *
+   * `untargetable` rides along so the readouts can drop the entity that has no
+   * health to compare: Mor'zahi cannot be shot, sits permanently at full, and
+   * would make the health-gap and kill-spread readouts nonsense if counted.
+   * `empowered` is the fish it has eaten — permanent, once only, and the answer
+   * to "which of these three is a wasted feed".
+   */
+  units: { id: string; name: string; side?: Side; hp: number; untargetable: boolean; empowered: boolean }[]
   /** Yards between the closest pair of entities. Null when there is only one. */
   separation: number | null
   /** The separation the fight demands, from its own `keepApart` rule. */
@@ -256,23 +272,123 @@ interface HudSample {
    * Null on a fight with no such pool or nothing that walks at it.
    */
   inbound: { count: number; gapYards: number } | null
+  /**
+   * The fish economy: how many of the three have been found, how many have been
+   * fed, and whether you are holding one right now. Once `fishSpent` reaches the
+   * total there is nothing left that can empty the bar, which is the moment the
+   * enrage stops being theoretical.
+   */
+  fishFound: number
+  fishSpent: number
+  fishCarried: boolean
+  /** The Frostfire element you are carrying, and how long it has left. */
+  element: 'fire' | 'frost' | null
+  elementMs: number
+  /** ms left airborne off a Bouncy Mushroom — the only answer to a Blast Wave. */
+  aloft: number
+  /**
+   * One entity is nearly down and another is nowhere near it.
+   *
+   * Read straight off `world.killSpreadWarning` rather than recomputed from the
+   * bars above. The simulation owns the threshold and the live prompt already
+   * barks off it; a second copy of the rule here is a second thing to keep in
+   * step, and the one thing this HUD must never do is disagree with the fight.
+   */
+  killSpread: boolean
 }
 
 /**
- * Yards between the closest pair of live entities — the quantity `keepApart` is
+ * Yards between the WIDEST pair of live entities — the quantity `keepApart` is
  * judged on, computed the same way the simulation computes it. Null on a
  * single-entity fight, where the readout has nothing to say.
+ *
+ * The widest pair, not the closest, because the rule these fights state is "all
+ * of them within N of each other", and that is literally "the widest pair is
+ * under N". On the Sentinels there are two entities and the two readings are the
+ * same number. On a three-body council they are not: two explorers standing on
+ * top of each other with the third across the room link nothing, and a readout
+ * that showed their gap would have called every fine pull broken. If this ever
+ * disagrees with the sim, the HUD is lying about the damage reduction.
  */
 function separationOf(w: World): number | null {
   const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
   if (live.length < 2) return null
-  let closest = Infinity
+  let widest = 0
   for (let i = 0; i < live.length; i++) {
     for (let j = i + 1; j < live.length; j++) {
-      closest = Math.min(closest, Math.hypot(live[i].pos.x - live[j].pos.x, live[i].pos.y - live[j].pos.y))
+      widest = Math.max(widest, Math.hypot(live[i].pos.x - live[j].pos.x, live[i].pos.y - live[j].pos.y))
     }
   }
-  return closest
+  return widest
+}
+
+/**
+ * How many of the encounter's one-off pickups exist in the whole pull, read off
+ * whichever mechanic hides them.
+ *
+ * Three Disgusting Fish, and the number is the fight: each one empties Mor'zahi's
+ * bar exactly once, so "how many resets are left" is the only long-range piece of
+ * information anybody has. Taken from the boss file's own `hides.maxTotal` rather
+ * than written as a 3 here, because a fight that changes its mind must not be
+ * able to leave this readout counting to the wrong number.
+ */
+function hiddenTotalOf(boss: BossDef): number {
+  return boss.mechanics.find(m => m.hides)?.hides?.maxTotal ?? 0
+}
+
+/**
+ * The casts that are armed by an EVENT and have not been armed yet.
+ *
+ * `upcoming()` deliberately gives these no number, and it is right not to: a
+ * dormant timeline entry has no time to count down to, and a strip that
+ * invented one would be lying on the one readout a player is entitled to
+ * trust. But dropping them silently is its own lie. Throw Junk after the first
+ * is the beat the whole Explorers fight is paced by — it arrives when the
+ * ability the last fish bought has actually been cast — and a strip that simply
+ * stopped mentioning it reads as a mechanic that is finished with.
+ *
+ * So they are listed as WAITING, named with what they are waiting on. The gates
+ * are the same three `upcoming()` applies and for the same reason: a row for a
+ * cast that can never come is noise whether or not it carries a clock.
+ */
+function waitingOn(w: World): { id: string; name: string; on: string }[] {
+  const out: { id: string; name: string; on: string }[] = []
+  const timeline = w.boss.timeline ?? []
+  for (let i = 0; i < timeline.length; i++) {
+    const t = timeline[i]
+    // A finite appointment means `upcoming()` is already counting it down.
+    // Dormant with no `rearmOn` is a one-shot that has been spent, and a spent
+    // cast is not waiting for anything.
+    if (!t.rearmOn || Number.isFinite(w.timelineNextMs[i] ?? Infinity)) continue
+    const def = w.boss.mechanics.find(m => m.id === t.id)
+    if (!def) continue
+    if (def.from && !w.bosses.some(b => b.def.id === def.from && b.alive)) continue
+    if (def.empoweredOnly && !w.bosses.some(b => b.def.id === def.empoweredOnly && b.empowered)) continue
+    if (def.unlockedByDeathOf && !def.unlockedByDeathOf.some(e => e in w.deadEntities)) continue
+    // Named by the mechanics that re-arm it rather than by the ids, because the
+    // player has met those by name — the whole point of the gate is that the
+    // next crate is bought by playing the ability the last fish paid for.
+    const on = t.rearmOn.anyOf
+      .map(id => w.boss.mechanics.find(m => m.id === id)?.name)
+      .filter((n): n is string => !!n)
+    out.push({ id: t.id, name: def.name, on: on.join(' or ') })
+  }
+  return out
+}
+
+/**
+ * The entity whose bar the raid should be moving to.
+ *
+ * Only asked while the simulation says the kill spread has opened up. "Even them
+ * out" is an instruction with no object — three bars and no name is exactly the
+ * moment a raider freezes — so the readout names the healthiest one, which is
+ * the one the damage has to go to.
+ */
+function switchTargetOf(units: { name: string; hp: number }[]): string {
+  let best = ''
+  let hp = -1
+  for (const u of units) if (u.hp > hp) { hp = u.hp; best = u.name }
+  return best
 }
 
 /**
@@ -307,10 +423,12 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
   const [hud, setHud] = useState<HudSample>({
     health: 1, raid: 1, bossHp: 1, energy: 0, elapsed: 0, cooldowns: {},
     alive: true, stacks: 0, tanking: false, raidAlive: 0,
-    prompt: null, next: [], drillReps: 0, drillClean: 0,
+    prompt: null, next: [], waiting: [], drillReps: 0, drillClean: 0,
     units: [], separation: null, minApart: 0, leash: null, marks: [],
     marked: false, green: 0, pairTarget: ORB_COUNT, phase: null,
     altars: [], enrage: [], inbound: null, venom: 0, venomRaid: 0,
+    fishFound: 0, fishSpent: 0, fishCarried: false,
+    element: null, elementMs: 0, aloft: 0, killSpread: false,
   })
   // The fight's stack counter, read off the boss file the same way the
   // separation and the orb target are. Zero on the seven fights without one,
@@ -492,10 +610,12 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           raidAlive: world.allies.filter(a => a.alive).length,
           prompt: world.prompt,
           next: upcoming(world, 3),
+          waiting: waitingOn(world),
           drillReps: world.drillReps,
           drillClean: world.drillClean,
           units: world.bosses.map(b => ({
             id: b.def.id, name: b.def.name, side: b.def.side, hp: Math.max(0, b.hp),
+            untargetable: !!b.def.untargetable, empowered: b.empowered,
           })),
           separation: separationOf(world),
           minApart,
@@ -525,6 +645,17 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             stacks: Math.floor(world.player.marks[e.def.id] ?? 0),
           })),
           inbound: goal && leakers ? inboundOf(world, goalEdge) : null,
+          // All five straight off the world. Every one of these is state the
+          // simulation already owns — whether a box turned out to hold a fish,
+          // which element it dealt you, how long you have left in the air — and
+          // re-deriving any of it here would put a second answer on screen.
+          fishFound: world.fishFound,
+          fishSpent: world.fishSpent,
+          fishCarried: world.fishCarried,
+          element: world.player.element,
+          elementMs: world.player.elementMs,
+          aloft: world.player.aloft,
+          killSpread: world.killSpreadWarning,
         })
       }
       raf = requestAnimationFrame(frame)
@@ -590,8 +721,24 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
   // intermission heals the weaker one up to match, so this is damage you are
   // about to hand back; on a fight with a synchronised kill it is the bar you
   // are about to leave behind. Either way it is the number to close.
-  const hps = hud.units.map(u => u.hp)
+  // Only the bodies with a health bar. An untargetable entity — Mor'zahi, who is
+  // an energy bar and nothing else — sits permanently at full, and counting it
+  // would report a 100% health gap for the entire pull.
+  const shootable = hud.units.filter(u => !u.untargetable)
+  const hps = shootable.map(u => u.hp)
   const delta = hps.length > 1 ? Math.max(...hps) - Math.min(...hps) : 0
+  // Which bar the damage should be going to, asked only while the simulation
+  // says the spread has opened. "Even them out" with three bars and no name is
+  // where a raider freezes; the healthiest one is the answer.
+  const switchTo = hud.killSpread ? switchTargetOf(shootable.filter(u => u.hp > 0)) : ''
+  // The fish, and what is left of them. `fishTotal` is 0 on the seven fights
+  // that hide nothing, which is what keeps the whole row off their HUD.
+  const fishTotal = hiddenTotalOf(boss)
+  const resetsLeft = Math.max(0, fishTotal - hud.fishSpent)
+  // The name on the energy bar. It belongs to whoever is filling it — on the
+  // Explorers that is a fourth boss nobody can target, and calling his ascension
+  // "Energy" made the fight's actual clock look like a cast bar.
+  const energyOwner = boss.entities?.find(e => e.untargetable)?.name ?? ''
   // Two auras at once means you are standing inside both golems' range, which
   // is the specific mistake this readout exists to catch.
   const bothMarks = hud.marks.filter(m => m.stacks > 0).length > 1
@@ -629,17 +776,67 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             </div>
             <span className="bar-num">{Math.round(hud.bossHp * 100)}%</span>
           </div>
+          {/* The energy bar, named after whoever is filling it and read as a
+              number. On the Explorers this is the entire fight: it is Mor'zahi's
+              ascension, nothing the raid does slows it, and the only thing that
+              empties it is a fish. Left as a nameless "Energy" it looked like a
+              cast bar — something that would go off and then be over — rather
+              than the wipe timer it is. */}
           <div className="bar bar-boss">
-            <span className="bar-label">Energy</span>
+            <span className="bar-label">{energyOwner || 'Energy'}</span>
             <div className="bar-track"><div className="bar-fill energy" style={{ width: `${hud.energy}%` }} /></div>
+            <span className="bar-num">{Math.round(hud.energy)}%</span>
           </div>
+          {boss.enrageName && (
+            <div style={S.row}>
+              <span style={hud.energy > 70 ? S.warn : S.note}>
+                100% is a wipe — {boss.enrageName}
+              </span>
+            </div>
+          )}
+
+          {/* The fish. Three slots and a count, because the whole encounter is
+              paced by them: each one empties the bar exactly once, and when the
+              last has been fed nothing can empty it again. A raider who cannot
+              see how many are left cannot tell a pull that is going fine from
+              one that is already lost. */}
+          {fishTotal > 0 && (
+            <div className="fish" style={S.row}>
+              <span style={S.lab}>Fish</span>
+              {Array.from({ length: fishTotal }, (_, i) => {
+                const spent = i < hud.fishSpent
+                const found = i < hud.fishFound
+                return (
+                  <span
+                    key={i}
+                    style={{
+                      ...S.dot,
+                      width: 11, height: 11,
+                      background: spent ? 'transparent' : found ? 'var(--accent)' : 'transparent',
+                      border: `1px solid ${found ? 'var(--accent)' : 'var(--line)'}`,
+                      opacity: spent ? 0.35 : found ? 1 : 0.55,
+                    }}
+                    title={spent ? 'fed — bar reset spent' : found ? 'found, not yet fed' : 'still in a box'}
+                  />
+                )
+              })}
+              <span style={S.num}>{resetsLeft}</span>
+              <span style={S.note}>
+                {resetsLeft === 0
+                  ? 'no resets left — the bar is the enrage now'
+                  : hud.fishCarried
+                    ? 'you are carrying one — feed a boss that has not eaten'
+                    : `${resetsLeft} bar reset${resetsLeft === 1 ? '' : 's'} left`}
+              </span>
+            </div>
+          )}
 
           {/* Both entities side by side, with the gap between them. The single
               aggregate bar above hides the one thing that decides a two-golem
               pull: which of them you have been feeding damage into. */}
-          {hud.units.length > 1 && (
+          {shootable.length > 1 && (
             <div className="golems">
-              {hud.units.map(u => (
+              {shootable.map(u => (
                 // The one you are parked on is marked, because "stay inside 40
                 // yards of YOUR golem and outside the other's" is meaningless
                 // if the two bars read as interchangeable.
@@ -647,15 +844,38 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
                   key={u.id}
                   className={`golem${u.side ? ` side-${u.side}` : ''}${u.side && u.side === side ? ' yours' : ''}`}
                 >
-                  <span className="golem-name">{u.name}</span>
+                  <span className="golem-name">
+                    {u.name}
+                    {/* A gold pip for a boss that has eaten a fish. Permanent,
+                        once only, and the answer to "would feeding this one be
+                        a wasted reset" — which is a question you want answered
+                        before the walk, not after it. */}
+                    {u.empowered && (
+                      <span title="Empowered — has eaten a fish" style={{ color: '#d29922', marginLeft: 5 }}>◆</span>
+                    )}
+                  </span>
                   <div className="bar-track">
                     <div className="bar-fill golem" style={{ width: `${u.hp * 100}%` }} />
                   </div>
                   <span className="golem-num">{Math.round(u.hp * 100)}%</span>
                 </div>
               ))}
-              <span className={`golem-delta${delta >= DELTA_WARN ? ' hot' : ''}`}>
+              <span className={`golem-delta${hud.killSpread || delta >= DELTA_WARN ? ' hot' : ''}`}>
                 Δ {Math.round(delta * 100)}%
+              </span>
+            </div>
+          )}
+
+          {/* One of them is nearly dead and another is nowhere near it.
+              A persistent sentence rather than a banner, because this is a
+              STATE — it lasts until somebody fixes it — and the phase banner
+              clears itself after three seconds. It names the boss to switch to:
+              "even them out" with three bars in front of you and no name on it
+              is exactly where a raider stalls. */}
+          {hud.killSpread && switchTo && (
+            <div style={S.row}>
+              <span style={S.warn}>
+                one is nearly down and the others are not — switch to <strong>{switchTo}</strong>
               </span>
             </div>
           )}
@@ -848,6 +1068,24 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             {n.name} <em>{n.inSec.toFixed(0)}s</em>
           </span>
         ))}
+        {/* Armed by something happening rather than by a clock, so it gets a
+            word where the others get a number. A countdown here would be the
+            HUD making one up: the next crate arrives when the ability the last
+            fish bought is actually cast, and nobody — including the engine —
+            knows when that is. Muted and unstyled by `soon`, because it is not
+            imminent, it is pending; the tooltip names the cast that arms it.
+            Styled inline for the same reason the fountain chips are: it only
+            ever draws on a fight that declares an event-gated timeline. */}
+        {hud.waiting.map(wt => (
+          <span
+            key={wt.id}
+            className="next-item"
+            style={{ opacity: 0.75 }}
+            title={wt.on ? `Armed when ${wt.on} lands` : 'Armed by an earlier cast landing'}
+          >
+            {wt.name} <em style={{ color: 'var(--muted)' }}>waiting</em>
+          </span>
+        ))}
       </div>
 
       {/* The briefing. First sight of a mechanic pauses the fight and puts this
@@ -941,6 +1179,42 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
               </div>
             ))}
             {bothMarks && <span className="mark-both">In range of both — pick a golem</span>}
+          </div>
+        )}
+
+        {/* What you are personally carrying, in words, next to the bars.
+            The canvas already draws all three on your own body, which is where
+            you read them from while you are playing — this is the version you
+            can find when you have lost yourself in a crowd of twenty, and the
+            only place the element countdown is a number rather than a colour.
+            Each one is a fact about you, never an accusation: being handed an
+            element is not a mistake, and being airborne is the correct answer. */}
+        {(hud.fishCarried || hud.element || hud.aloft > 0) && (
+          <div className="carried" style={S.row}>
+            {hud.fishCarried && (
+              <span style={{ ...S.chip, borderColor: '#2fe3a0' }}>
+                <span style={{ ...S.dot, background: '#2fe3a0' }} />
+                <span style={S.colour}>Disgusting Fish</span>
+                <span style={S.tag}>feed a boss</span>
+              </span>
+            )}
+            {hud.element && (
+              <span style={{ ...S.chip, borderColor: hud.element === 'fire' ? '#ff8a3e' : '#7ec4ff' }}>
+                <span style={{ ...S.dot, background: hud.element === 'fire' ? '#ff8a3e' : '#7ec4ff' }} />
+                <span style={S.colour}>{hud.element === 'fire' ? 'Burning Flames' : 'Piercing Frost'}</span>
+                <span style={S.num}>{(hud.elementMs / 1000).toFixed(0)}s</span>
+                <span style={S.tag}>
+                  run into {hud.element === 'fire' ? 'frost' : 'fire'}
+                </span>
+              </span>
+            )}
+            {hud.aloft > 0 && (
+              <span style={{ ...S.chip, borderColor: '#2fe3a0' }}>
+                <span style={S.colour}>Airborne</span>
+                <span style={S.num}>{(hud.aloft / 1000).toFixed(1)}s</span>
+                <span style={S.tag}>the wave passes under you</span>
+              </span>
+            )}
           </div>
         )}
 

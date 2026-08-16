@@ -255,7 +255,23 @@ export type Rule =
    * not a mechanic", and mislabelling those as failures is the exact defect this
    * project already had to fix once in the analyser.
    */
-  | { type: 'raidDamage'; dps: number }
+  | {
+      type: 'raidDamage'
+      dps: number
+      /**
+       * The raid takes less of it the further the targeted player ran.
+       *
+       * Blink Nova. Iku marks a non-tank, charges for four seconds and blinks on
+       * top of them; the raid eats the arrival, and the target's distance is the
+       * only dial anyone has on how big it is. Still `raidDamage`, so it can
+       * never name anybody — the target is not at fault for being chosen, they
+       * are simply the person holding the dial.
+       *
+       * Scales the resolve lump linearly from 1.0 at `nearYards` down to
+       * `farMultiplier` at `farYards`, clamped at both ends.
+       */
+      falloff?: { nearYards: number; farYards: number; farMultiplier: number }
+    }
   /**
    * Carry a debuff clear of the raid before it expires.
    *
@@ -376,6 +392,85 @@ export type Rule =
    * teaching this fight.
    */
   | { type: 'windPair'; pushYards: number }
+  /**
+   * Carry a thing to an entity and give it to that entity.
+   *
+   * The Lost Explorers, and the only mechanic in this raid whose answer is a
+   * DESTINATION rather than a distance. Three Disgusting Fish exist in the whole
+   * encounter; each one found in a junk box, carried on foot, and walked into one
+   * of the three explorers. Feeding resets Mor'zahi's bar to zero and empowers
+   * the boss that ate it — permanently, and only once per boss.
+   *
+   * Deliberately NOT a `carryOut`. A carryOut is a liability you dump where it
+   * hurts nobody; this is a tool with an address, and every part of the decision
+   * — which boss, and whether you are about to waste it on one that has already
+   * eaten — is about which address you pick.
+   *
+   * Feeding an already-empowered boss is REJECTED and the fish is kept. A
+   * misclick on a three-body council must not be an unrecoverable wipe, and
+   * nothing about a rejected feed is ever recorded as a failure.
+   */
+  | { type: 'feed'; feedRange: number; costId: string }
+  /**
+   * Two opposed element debuffs dealt out at once, each curable only by the
+   * other's ground.
+   *
+   * Frostfire Volley. Some non-tanks are given Burning Flames and the rest
+   * Piercing Frost; every carrier drips a pool of their OWN element under their
+   * feet, and the debuff comes off only by standing in a pool of the OPPOSITE
+   * one. Two carriers therefore cure each other by trading ground, which is the
+   * whole mechanic and the reason a bot always carries the opposite of the
+   * player's.
+   *
+   * Being handed an element is never a fault — the same convention as `aimAway`
+   * and `carryOut`, where being chosen is not a mistake. Failing to trade is:
+   * a second volley landing on a carrier who still has one detonates
+   * `deathId`, and that is where the death is attributed.
+   *
+   * The README recorded "the engine has no polarity primitive" as a known gap.
+   * This is it.
+   */
+  | { type: 'polarity'; firePoolId: string; frostPoolId: string; deathId: string }
+  /**
+   * A patch of one element that cures the other.
+   *
+   * The ground half of `polarity`. Standing in it does nothing at all unless you
+   * are carrying the opposite element, in which case it strips the debuff. It is
+   * never damage and never a failure, which is why it cannot be an `avoid` with
+   * the harm switched off: the renderer's verb palette would paint the cure red.
+   */
+  | { type: 'elementPool'; element: 'fire' | 'frost' }
+  /**
+   * Contact launches you into the air.
+   *
+   * Bouncy Mushrooms. Touching one is always correct play and can never be
+   * scored — the ability data calls the airborne debuff "the SUCCESS signal,
+   * never a failure" in as many words. The mushroom is consumed and the player
+   * is airborne for `launchMs`, which is the only thing in this engine that a
+   * `wave` cannot reach.
+   *
+   * `count` here rather than on `MechanicDef` because these scatter across the
+   * floor like pickups instead of fanning off a caster, and the scatter branch
+   * in `fire()` is the one that already knows how to do that.
+   */
+  | { type: 'launchPad'; count: number; launchMs: number }
+  /**
+   * A ground-level front that passes UNDER an airborne player and kills a
+   * grounded one.
+   *
+   * Blast Wave — the deadliest id in the fight, 18 killing blows on the Mythic
+   * PTR sample, more than any other ability. Its tactic file says the only
+   * answer is being airborne on a Bouncy Mushroom when it passes, and this file
+   * used to record that as unmodellable and draw the wave as an annulus you ran
+   * out of. That taught the wrong habit: the answer is not to be somewhere else,
+   * it is to be off the floor.
+   *
+   * So the shape is deliberately large enough that outrunning it is not the
+   * play. `PlayerState.aloft` is the exemption, and it is the ONLY exemption —
+   * a blanket "airborne beats ground AoE" rule would let a Crosswinds knock
+   * dodge arbitrary telegraphs.
+   */
+  | { type: 'wave' }
 
 /**
  * One entity in the encounter.
@@ -448,6 +543,21 @@ export interface BossEntityDef {
    * would teach a raider to waste a pull on a target that cannot die.
    */
   untargetable?: boolean
+  /**
+   * Walks a circle instead of following a tank.
+   *
+   * Trader Gebbo "just walks round in a circle on his own" — he is the third
+   * body on a two-tank council, and an untanked entity in this engine simply
+   * never moved, which made "no boss is static" false and made his Throw Junk
+   * land in the same place every cast.
+   *
+   * The circle's centre and radius are load-bearing, not decoration: United
+   * Defense links the council when the widest pair is inside 30 yards, and the
+   * design contract is that a link is caused by a TANK dragging Nama or Iku into
+   * his path, never by Gebbo wandering into a station he could not avoid. The
+   * boss file states the arithmetic that guarantees it.
+   */
+  patrol?: { centre: Vec; radius: number; degPerSec: number; startDeg?: number }
   /**
    * Which group is parked on this entity. Only meaningful on a `sided` fight,
    * where each half of the raid owns one golem and must stay out of the other's
@@ -751,6 +861,27 @@ export interface MechanicDef {
    */
   count?: number
   /**
+   * Total spread of a fanned `count`, in degrees, centred on the cast's own
+   * angle — which for a boss-origin cast is the caster's facing.
+   *
+   * Tempest sends nine vortices out in every direction and never needed this, so
+   * the default stays a full circle and both existing fans are untouched. Shell
+   * Spin is three shells thrown FORWARD — one down the middle and one off each
+   * shoulder — and a fan that wrapped around the boss would put a shell behind
+   * him, which is the one place the mechanic says you are safe.
+   *
+   * The copies land on the endpoints INCLUSIVE: `count: 3, fanDeg: 70` is -35,
+   * 0 and +35 degrees off the facing, not three shells at 0, 23 and 47. A full
+   * circle divides the other way round on purpose, because there the first and
+   * last bearing would otherwise be the same spoke.
+   *
+   * A fanned cast also spawns ON its origin rather than on the usual ring: a
+   * `line` measures forward from its anchor, so pushing three lanes eight yards
+   * out along their own bearings leaves a dead gap between the boss and the
+   * start of every one of them.
+   */
+  fanDeg?: number
+  /**
    * How many bodies a `carryOut` lands on at once. One of them is always you.
    *
    * Not `count`, and the two must not be merged. `count` fans copies of a shape
@@ -979,6 +1110,57 @@ export interface MechanicDef {
    * trains both halves rather than whichever one they happened to be assigned.
    */
   alternatesWith?: { defId: string }
+  /**
+   * Only fires while the named entity has eaten a fish.
+   *
+   * The three explorers each gain one extra ability when empowered and keep
+   * their whole base rotation — Mighty Thud does not replace Shell Spin, it
+   * arrives on top of it. Gated in `fire()` so it also covers combo parts,
+   * queued channels and anything a phase opens with.
+   */
+  empoweredOnly?: string
+  /**
+   * Only fires once ANY of these entities is dead.
+   *
+   * Relentless Escalation, Cataclysmic Invocation and Smashing Shovel are the
+   * price of an unsynchronised kill: Nama gets his when Gebbo or Iku falls, Iku
+   * gets hers when Nama or Gebbo falls. An array rather than a single id because
+   * that is how the encounter states it, and collapsing it to one entity would
+   * make two thirds of the punishment unreachable.
+   */
+  unlockedByDeathOf?: string[]
+  /**
+   * Fire this many copies one at a time, `gapMs` apart, each aimed at the next
+   * NEAREST non-tank raider.
+   *
+   * Mighty Thud. "Targets 3 non-tank players and jumps to them starting with the
+   * closest, then the next closest, then the last." Distinct from `count`, which
+   * fans copies around the caster simultaneously: three simultaneous soaks is a
+   * choice of which one to stand in, three sequential ones ordered by proximity
+   * is a rota you have to read, and the second is the mechanic.
+   */
+  leaps?: { count: number; gapMs: number }
+  /**
+   * Fraction of the raid bar each UNCOLLECTED pickup costs when the window
+   * closes. Defaults to the ordinary 0.09 / 0.16-if-lethal chip.
+   *
+   * Throw Junk demands every box off the floor inside ten seconds. Authored as
+   * the ordinary chip, missing all of them cost the raid a third of a bar and
+   * the ten-second clock meant nothing. Authored as a literal instant wipe, one
+   * box behind a Shell Spin stun ended the pull with no way to play out of it.
+   * A per-box cost heavy enough that three misses wipe is the honest middle, and
+   * it keeps the repo's rule that eating a pickup can never be a failure.
+   */
+  missCost?: number
+  /**
+   * One of these pickups is hiding something, until `maxTotal` have been found.
+   *
+   * "Find the fish". The boxes are identical until opened; the one that was
+   * hiding a Disgusting Fish drops it where it stood, and after three have been
+   * found Throw Junk keeps firing and hides nothing — which is when the bar
+   * stops being resettable and the enrage becomes real.
+   */
+  hides?: { defId: string; maxTotal: number }
   /**
    * This mechanic IS the fight's stack counter, and `lethalAt` of it kills.
    *
@@ -1274,6 +1456,58 @@ export interface AltarDef {
   expulsionId: string
 }
 
+/**
+ * A mechanic on its own clock rather than its turn in the shared `loop`.
+ *
+ * `loop` gives a fight one beat and derives every recurrence from it, which is
+ * the right model when the source data has no intervals in it — it was written
+ * for exactly that, and `BossDef.loop` says so. Where real intervals ARE known
+ * it cannot represent them: Shell Spin every 30s from t=5 and Blink Nova every
+ * 30s from t=10 is two mechanics sharing a period at different offsets, which is
+ * a shape a round-robin has no way to make.
+ *
+ * A mechanic listed here is removed from the `loop` rotation. Having both would
+ * double-fire it, and the timeline is the more specific statement.
+ *
+ * Staging: `introEverySec` / `unlockedCount()` walk the `loop` in one entry at a
+ * time so a trainer does not open with everything firing. A timeline entry
+ * states its own first cast, so `startSec` IS its introduction and it bypasses
+ * staging by definition. Do not gate it a second time — that is precisely the
+ * kind of thing that silently double-counts.
+ *
+ * A timeline belongs to the fight rather than to a stage. `phases` override
+ * `loop` and `loopIntervalSec` together; nothing here is phase-aware, because
+ * the two bosses with stages have no timeline and a per-stage clock is a
+ * decision nobody has had to make yet.
+ */
+export interface TimedCast {
+  /** Mechanic id. Must resolve, and must NOT also appear in `loop`. */
+  id: string
+  /** First cast, in seconds after the pull. */
+  startSec: number
+  /** Seconds between casts. Omit for a one-shot, or when `rearmOn` drives it. */
+  everySec?: number
+  /**
+   * Re-armed by an EVENT rather than by a period.
+   *
+   * Throw Junk is the case and it is the whole shape of the Lost Explorers: the
+   * first one is on the clock at 30s, and every one after it waits for the
+   * empowered ability the previous fish bought to actually happen. A fixed
+   * period would either arrive before the player had anything to do with it or
+   * leave the bar climbing against a fish that does not exist yet.
+   *
+   * Listed as mechanic ids rather than as a named event so the engine stays
+   * boss-agnostic — the fight says WHICH casts re-arm it, the engine only knows
+   * that some do.
+   *
+   * Only a DORMANT entry is armed, so it is the FIRST of a run of qualifying
+   * casts that starts the clock. Gebbo's empowerment is a pair and its last
+   * beat is the blast wave; naming the beat that counts is the fight's job, not
+   * the engine's.
+   */
+  rearmOn?: { anyOf: string[]; delaySec?: number }
+}
+
 export interface BossDef {
   key: string
   name: string
@@ -1335,12 +1569,74 @@ export interface BossDef {
   /** Seconds between loop entries. */
   loopIntervalSec: number
   /**
+   * Mechanics on their own clocks. Anything here is excluded from `loop`.
+   *
+   * Optional, and a fight that omits it behaves exactly as it did before
+   * timelines existed — seven of the eight bosses in this tier are in that
+   * position, so the round-robin stays the default rather than a fallback.
+   */
+  timeline?: TimedCast[]
+  /**
    * Seconds before the next mechanic in `loop` joins the rotation. Mechanics are
    * introduced one at a time rather than all at once. Defaults to 14.
    */
   introEverySec?: number
+  /**
+   * The order an ALLY walks a fish into a body, when the player did not take it.
+   *
+   * Entity ids, best first; anyone already fed is skipped. Declaring it is what
+   * switches the raid's backstop on at all, so a fight with no `feed` mechanic
+   * is untouched by its existence.
+   *
+   * The directive is explicit that the player has a strong chance of finding the
+   * fish and a bot finds it otherwise, and that what a missed fish costs you is
+   * the CHOICE rather than the reset — so the raid has to be able to finish the
+   * errand. Without this the fish simply lay where it fell on any pull the
+   * player could not leave (a tank never leaves their boss), Mor'zahi's bar was
+   * unresettable through no decision of theirs, and the enrage was scenery.
+   *
+   * The raid waits before taking it. First refusal belongs to the player: an
+   * ally that pounced on the fish the frame it dropped would be playing the one
+   * decision this fight is built around on their behalf.
+   */
+  feedPriority?: string[]
   energyPerSec: number
   atFullEnergy?: string
+  /**
+   * What killed the raid when the energy bar filled.
+   *
+   * Mor'zahi's bar IS the enrage — feeding a fish is the only thing that empties
+   * it, and routing it through `atFullEnergy` would make it self-emptying and
+   * delete the enrage entirely. So the bar keeps the engine's own wipe path and
+   * this names the ability responsible, so the debrief says Final Ascension
+   * rather than a generic line.
+   */
+  enrageName?: string
+  /**
+   * The rest of the raid chips whatever the player is NOT shooting.
+   *
+   * Generalised from the split-raid drain that keeps the far golem moving on the
+   * Entombed Sentinels. On a three-body council nobody is parked on a side, so
+   * the gate is the entity your last shot connected with: everything else drains
+   * toward you and stops `chipLag` short, which means YOU set the pace and the
+   * balance between the three is steered purely by where you point.
+   *
+   * Also suppresses the per-shot multi-entity multiplier. That multiplier exists
+   * because your shots were the only damage in the fight and had to be split
+   * three ways; with the raid chipping too it triple-counts, and a 210-second
+   * fight ended in 32.
+   */
+  alliesChipOffTarget?: boolean
+  /**
+   * How far behind your focus the raid's chip stops, in fractional health.
+   * Defaults to the split-raid value.
+   *
+   * This is the health spread the fight settles at when you never switch, and it
+   * is set ABOVE the 10% the kill-spread warning fires at on purpose: the
+   * warning is meant to be the default state late in a pull, and evening the
+   * three out by switching targets is meant to be a job rather than a footnote.
+   */
+  chipLag?: number
   /** Always-on mechanics, e.g. Ula'tek's Presence attrition. */
   ambient?: string[]
   /**
@@ -1359,7 +1655,22 @@ export interface BossDef {
   enrageText?: string
   /** Enrage timer. Survive past it and the boss wins. */
   pullLengthSec: number
-  /** Boss health pool. You win by emptying it, Pineapplia-style. */
+  /**
+   * Boss health pool, as a MULTIPLE of the ordinary one. You win by emptying it,
+   * Pineapplia-style.
+   *
+   * 1 is the pool every fight in this tier has always had: your damage is scaled
+   * so a clean pull kills at roughly 0.46 x `pullLengthSec`, and 2 is twice as
+   * much health to get through in the same enrage.
+   *
+   * It was inert for a long time — declared here, read by nothing — and boss
+   * health was purely a function of `pullLengthSec`, which welded two separate
+   * questions together: you could not make a fight LONGER without also making it
+   * TANKIER. The Lost Explorers is the fight that needs them apart, because its
+   * length is emergent from a chain of event gates rather than set by a clock,
+   * and the kill-pacing target ("the third empowered mechanic lands at about 10%
+   * on each body") has no lever until this one is real.
+   */
   maxHp: number
   /** Real boss this parodies — kept so the training still transfers. */
   realName: string
@@ -1408,6 +1719,15 @@ export interface Instance {
    */
   reach?: number
   drift?: Vec
+  /**
+   * This junk box is the one hiding a Disgusting Fish.
+   *
+   * Decided when the boxes are scattered rather than when one is opened, because
+   * "find the fish" only means anything if the answer was already there. Picking
+   * it at open time would make every box the fish box until three had been
+   * found, which is a formality wearing a search's clothes.
+   */
+  hidesFish: boolean
   /**
    * The ADD that cast this, by `Add.uid`, when an add cast it.
    *
@@ -1522,6 +1842,23 @@ export interface Ally {
   gash: number
   gashMs: number
   /**
+   * Which Frostfire element this raider carries, cured only by the other one.
+   *
+   * One of them always has the opposite of yours, reserved when the volley is
+   * dealt rather than searched for each tick — the same defect `windMate` exists
+   * to avoid. A partner who might already have cleared is not a partner.
+   */
+  element: 'fire' | 'frost' | null
+  elementMs: number
+  /**
+   * ms this raider is airborne off a Bouncy Mushroom.
+   *
+   * Allies need their own copy of `PlayerState.aloft` because the raid has to be
+   * SEEN answering Blast Wave. An instruction nineteen bodies stand still
+   * through is an instruction the player has only been told, never shown.
+   */
+  aloft: number
+  /**
    * Stacks of the fight's `counter` this raider is carrying.
    *
    * Beside `gash` because it is the same kind of thing — a per-body count the
@@ -1572,6 +1909,16 @@ export interface PlayerState {
   venom: number
   /** ms of Tempest slow left. The healer's dispel is what clears it. */
   slowMs: number
+  /**
+   * Which Frostfire element you are carrying, cured only by the other one.
+   *
+   * Not in `carrying`, which is keyed by mechanic id and expires on its own. An
+   * element is not a clock you wait out — it is a state with exactly one exit,
+   * and the exit is a patch of the other element's ground.
+   */
+  element: 'fire' | 'frost' | null
+  /** ms of `element` left. Zero when you are clean. */
+  elementMs: number
   /**
    * An impulse carrying the player somewhere they did not walk.
    *

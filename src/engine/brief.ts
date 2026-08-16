@@ -16,6 +16,22 @@ function listOf(parts: string[]): string {
 // role even has the button — so the instruction is computed from the same data
 // the failure is computed from. They cannot disagree.
 
+/**
+ * Compile-time exhaustiveness, deliberately inert at runtime.
+ *
+ * The dispatch below is the whole reason this file exists: a rule type is
+ * mapped to the sentence a raider reads on a paused screen. A 27th `Rule`
+ * variant that fell through it would either crash the panel or, worse, inherit
+ * somebody else's instruction — and a briefing that confidently tells you the
+ * wrong thing is the one failure mode a trainer cannot afford. It fails the
+ * build here instead.
+ *
+ * It does not throw. The briefing is on screen mid-pull with the fight held
+ * behind it, so the fallback is a sentence that is never wrong rather than a
+ * blank panel.
+ */
+function exhaustive(_never: never): void {}
+
 /** The imperative a role should hear for this mechanic, and whether it is theirs. */
 export interface RoleBrief {
   /** Two or three words: the thing to do. Also what the voice says. */
@@ -94,6 +110,15 @@ export function briefForAdd(def: AddDef, role: Role): RoleBrief {
 export function briefFor(def: MechanicDef, role: Role): RoleBrief {
   const kit = abilitiesFor(role)
   const mine = def.roles.includes(role) && !def.collective
+  // How many copies a narrow fan throws. Zero on everything that is not one,
+  // including Tempest's nine vortices — a fan that goes all the way round has
+  // no gaps to aim for and no front to be behind, so it is not this shape.
+  //
+  // Gated on `line` as well as on `fanDeg`, so this and the renderer's lane
+  // pass agree about what a lane is. A briefing that promised gaps the canvas
+  // was not drawing would be the two halves of the same mechanic disagreeing,
+  // which is the failure this whole file exists to prevent.
+  const fanned = def.fanDeg !== undefined && def.shape?.kind === 'line' ? (def.count ?? 0) : 0
 
   // An authored line wins over the derived one, but only the line — the verb
   // still comes from the rule so the spoken vocabulary stays the same across
@@ -115,6 +140,25 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         return {
           verb: 'MOVE OUT',
           line: 'Get off it and stay off it. This ground does not expire — it is part of the floor for the rest of the pull, and the room only gets smaller from here.',
+          yours: mine,
+        }
+      }
+      // A fanned `line` is not one shape to step out of.
+      //
+      // `count` copies leave the caster at once inside `fanDeg`, they keep
+      // travelling, and the floor between two of them is safe — so WHICH WAY
+      // you move is the entire mechanic, and "move out" is true of every
+      // direction including the one that kills you. Backing away is along the
+      // lane and the lane is quicker than a player; across is two yards.
+      //
+      // Checked BEFORE the two travelling-ground branches below, and it has to
+      // be: a fan of lanes also carries `driftSpeed` (that is what "they keep
+      // going" means), so a `driftSpeed` test placed first would swallow every
+      // fan in the raid and brief three separable lanes as one drifting shape.
+      if (fanned > 1 && def.fanDeg !== undefined) {
+        return {
+          verb: 'MIND THE LANES',
+          line: `${fanned} of them leave at once, fanned across the ${Math.round(def.fanDeg)} degrees in front of the caster, and they keep going. Step SIDEWAYS into the gap between two lanes — backing away leaves you in one, and it is faster than you are. Behind the caster is the safest floor in the room.${def.lethal ? ' This one kills outright.' : ''}`,
           yours: mine,
         }
       }
@@ -216,12 +260,34 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         yours: def.roles.includes(role),
       }
 
-    case 'collect':
+    case 'collect': {
+      // What a miss actually costs, taken from the fight's own number rather
+      // than described in one sentence for every fight that has this shape.
+      // "Goes off on the whole raid" is true of a droplet that chips the bar
+      // and of a crate where three left standing end the pull, and on the
+      // second one it is useless — a raider cannot tell an errand from the
+      // thing that decides the night.
+      const miss = def.missCost ?? 0
+      const fatal = miss > 0 ? Math.max(1, Math.ceil(1 / miss)) : 0
+      const cost = fatal > 0 && fatal <= 4
+        ? `Every one still standing when the window closes takes a hard bite out of the raid bar, and ${fatal} of them is the pull.`
+        : 'Anything still on the floor when the timer runs out goes off on the whole raid.'
+      // Not everybody can leave to sweep. Where a fight says so, "not your job"
+      // printed directly above an instruction to run over them is the same
+      // contradiction `beInside` records below, pointing the other way.
+      if (!def.roles.includes(role)) {
+        return notYours(
+          `${role === 'tank'
+            ? 'You are holding a boss and never leave it, so the sweep belongs to everybody else'
+            : 'This half is assigned to somebody else'}. ${cost} Watch the window close rather than the floor — it is the one thing here you can lose without ever having been able to touch it.`,
+        )
+      }
       return {
         verb: 'RUN OVER IT',
-        line: 'Run over them to clear them. Picking one up is the job — anything still on the floor when the timer runs out goes off on the whole raid.',
+        line: `Run over them to clear them. Picking one up is the job and it is never scored against you. ${cost}`,
         yours: mine,
       }
+    }
 
     case 'carryOut':
       // A carry with a destination is a tool, not a liability.
@@ -442,7 +508,92 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         yours: mine,
       }
 
+    case 'feed':
+      // A destination, not a distance. Every part of the decision is WHICH boss,
+      // so the line has to say that the choice is permanent and that a boss which
+      // has already eaten will refuse it — a raider who does not know that reads
+      // a rejected feed as a bug and stops trying.
+      //
+      // Whoever is not searching never carries one, and what they lose by that
+      // is the CHOICE rather than the reset: an ally that finds it feeds by a
+      // fixed order and the bar empties either way. Saying so is the difference
+      // between a mechanic happening to you and a mechanic you are watching.
+      if (!def.roles.includes(role)) {
+        return notYours('You will not be the one carrying it. Whoever finds it feeds a boss on a fixed order and the bar empties just the same — what you lose is the pick, not the reset. Watch which one lights up, because its extra ability is what you are about to be playing against for the rest of the pull.')
+      }
+      return {
+        verb: 'FEED A BOSS',
+        line: role === 'healer'
+          ? 'Walk the fish into a boss that has not eaten one. It empties the bar — that reset is your entire reprieve, and there are only three of them in the pull — and permanently empowers whatever it feeds, so pick deliberately.'
+          : 'Walk the fish into a boss that has not eaten one. It resets the bar and empowers what it feeds — pick deliberately. One that is already empowered simply refuses it and you keep carrying it.',
+        yours: mine,
+      }
+
+    case 'polarity':
+      // Tanks are never handed an element, and the pools are not damage, so the
+      // honest tank instruction is "stay off both" rather than any version of
+      // dodge. Everyone else gets the trade, because the trade is the mechanic.
+      if (role === 'tank') {
+        return notYours('Tanks are never given an element. Stay out of both pools — standing in the wrong one does nothing for you and takes the cure off the raider who needed it.')
+      }
+      return {
+        verb: 'OPPOSITE POOL',
+        line: 'You are given Fire or Frost and you drip a pool of your OWN element wherever you walk. The only thing that takes it off you is standing in a pool of the OTHER one, so find the raider carrying the opposite and trade ground. Still carrying it when the next volley lands detonates on you, and that one kills.',
+        // Same call as `beInside`: `collective` means "never name an individual
+        // in the debrief", not "not your job". The volley is disclaimed; being
+        // told it is not yours directly above an instruction to trade pools would
+        // contradict the line it sits on.
+        yours: def.roles.includes(role),
+      }
+
+    case 'elementPool':
+      if (role === 'tank') {
+        return notYours('Tanks are never given an element, so neither pool has anything to say to you. Keep out of both and hold your boss where the carriers can meet.')
+      }
+      return {
+        verb: 'OPPOSITE POOL',
+        line: `This is a pool of ${def.rule.element === 'fire' ? 'Fire' : 'Frost'}. It cures the raider carrying ${def.rule.element === 'fire' ? 'Frost' : 'Fire'} and does nothing whatever for anybody else — your cure is the pool of the element you are NOT carrying, and standing in your own is a wasted run.`,
+        yours: def.roles.includes(role),
+      }
+
+    case 'launchPad':
+      // Touching one is always correct play and can never be scored. Saying so
+      // matters: every other contact hazard in this raid punishes you, and a
+      // raider who reads a mushroom as one more circle stays on the floor and
+      // dies to the wave.
+      return {
+        verb: 'GET AIRBORNE',
+        line: `Run over a mushroom. It throws you into the air for ${(def.rule.launchMs / 1000).toFixed(0)} seconds, and being airborne is the only thing Blast Wave passes under — touching one is never a mistake, so take one early rather than late.`,
+        yours: mine,
+      }
+
+    case 'wave':
+      return {
+        verb: 'GET AIRBORNE',
+        line: 'A ground-level front that crosses the whole room from the bomb. You do not outrun it and there is nowhere on the floor to stand — be off the floor on a Bouncy Mushroom when it arrives.',
+        yours: mine,
+      }
+
     case 'raidDamage': {
+      // The one raidDamage anybody has a dial on. Nothing about it can be
+      // failed — the target is not at fault for being chosen — but how far they
+      // are standing decides how big it lands on everybody else, and a mechanic
+      // with a dial nobody is told about is a mechanic nobody plays.
+      //
+      // The distance is measured from the RAID, not from the caster. That is
+      // the mechanic: she blinks onto the marked player and the arrival catches
+      // whoever is standing near them, so the job is to be away from PEOPLE.
+      // Written as distance from the boss, the line quietly endorsed running
+      // straight through the melee stack to get behind him — which does not
+      // reduce the hit by a single point and drops it on everybody.
+      if (def.rule.falloff) {
+        const f = def.rule.falloff
+        return {
+          verb: 'RUN FAR',
+          line: `The marked player gets landed on and the raid eats the arrival — and the distance that counts is from the GROUP, not from the boss. The further the marked player is from everybody else, the smaller it lands, down to ${Math.round(f.farMultiplier * 100)}% of it at ${f.farYards} yards. Running around the boss while staying inside the raid changes nothing. If it is on you, take it to empty floor; if it is not, watch that whoever has it does.`,
+          yours: def.roles.includes(role),
+        }
+      }
       // The fight's stack counter. Everything else in this branch is a number a
       // healer covers; this one is a resource every raider spends the pull
       // managing, and it kills the body carrying it at a stated count.
@@ -519,5 +670,12 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         ? { verb: 'HEAL THROUGH', line: 'Unavoidable raid damage. There is nothing to dodge — cover it with cooldowns.', yours: false }
         : notYours('Unavoidable raid damage. Nothing to dodge and nothing you can do wrong here.')
     }
+
+    default:
+      exhaustive(def.rule)
+      // Unreachable while every variant above is named, and a sentence rather
+      // than a throw for the reason given on `exhaustive`. It is also the only
+      // line in this file that is safe to be wrong about: it claims nothing.
+      return notYours('Nothing here is scored against you. Keep doing your own job through it.')
   }
 }

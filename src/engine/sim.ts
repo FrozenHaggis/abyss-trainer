@@ -473,6 +473,20 @@ export interface World {
    * venom by then, and the debrief has somewhere to grow into.
    */
   soakRunClean: boolean
+  /**
+   * Bumped every time a channel opens. Identity, not a count — it exists so a
+   * thing that may happen once per channel can tell one channel from the next.
+   */
+  channelEpoch: number
+  /**
+   * The channel in which the player last paid for a globule soak.
+   *
+   * Caustic Deluge puts ten globules on a small floor and the player is charged
+   * for the ones they touch, so a correct route was costing six stacks against a
+   * spec that asks for one. Equal to `channelEpoch` means this Deluge has
+   * already taken its stack and the rest are cleared for free.
+   */
+  venomSoakEpoch: number
   /** How many times each mechanic that splits the raid in half has been cast. */
   altCount: Record<string, number>
   /** Helical Toxins: the sum a pair has to reach between them. */
@@ -1198,6 +1212,9 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     seqPending: null,
     sweepCasts: {},
     soakRunClean: true,
+    // Start apart, so the first globule of the first channel is chargeable.
+    channelEpoch: 1,
+    venomSoakEpoch: 0,
     altCount: {},
     pairTarget: 0,
     pairPartnerId: -1,
@@ -3560,6 +3577,11 @@ function resolveInstance(w: World, inst: Instance) {
     for (let i = 0; i < ch.count; i++) {
       w.queue.push({ id: ch.defId, atMs: w.elapsedMs + i * ch.everyMs, at: at?.[i] })
     }
+    // A new channel: a new soak allowance for the player. See the globule
+    // pickup in step() — one Caustic Deluge can only ever cost them one stack,
+    // however many of its ten globules they end up walking over.
+    w.channelEpoch++
+
     // The channel stacks the tank it is channelling into, once, as it opens.
     //
     // Caustic Deluge is the Twin Fangs' swap driver and Envenomed is what it
@@ -7120,7 +7142,35 @@ export function step(w: World, input: Input, dtMs: number) {
       if (touched) {
         inst.answered = true
         inst.timer = 0
-        giveVenom(w, eater, inst.def.applies?.soak ?? 0)
+        // ── one soak stack per channel, for the player ──
+        //
+        // "The player needs to soak one and this gives them 1 stack. The rest of
+        // the non tank AI players needs to soak the rest." Measured against that
+        // intent, the fight was charging six: ten globules land in a small wedge,
+        // three to six of them inside a globule radius of a body that was already
+        // standing there, and every one the player crossed on their way anywhere
+        // took another stack. A competent healer reached the lethal ten at 82
+        // seconds having played the mechanic correctly.
+        //
+        // So the SOAK is capped at one per channel. The globule is still cleared
+        // — walking over it still spares the raid the rupture, which is the whole
+        // point of the pickup — it simply cannot cost the player a second stack
+        // in the same Caustic Deluge. Everything else that applies venom is
+        // untouched: waves, splashes, spit, the beam and Emergence all still bill
+        // every time, because those are things you failed to dodge rather than a
+        // job you were sent to do.
+        //
+        // Allies are not capped and do not need to be: the sweeper rota hands
+        // them roughly one apiece, and `giveVenom` on an ally is what makes the
+        // lowest-stack-first ordering mean anything.
+        const soak = inst.def.applies?.soak ?? 0
+        const mine = eater === null
+        if (soak > 0 && mine && w.venomSoakEpoch === w.channelEpoch) {
+          // Already paid this channel. Cleared, not charged.
+        } else {
+          if (soak > 0 && mine) w.venomSoakEpoch = w.channelEpoch
+          giveVenom(w, eater, soak)
+        }
       }
     }
 

@@ -35,6 +35,15 @@ jobs:
       - name: Honesty tests
         run: npm test
 
+      # The balance sweep, compared against its committed per-cell baseline.
+      # It had no assertion and no exit code until now, `npm test` never matched
+      # it, and nothing here ran it — so nine failing cells sat next to a green
+      # build for the life of the project. A cell changing in EITHER direction
+      # now fails: a fight getting easier is the one a trainer should fear most,
+      # and no aggregate score can see it.
+      - name: Balance sweep
+        run: npm run playtest
+
       - name: Build
         run: npm run build
 

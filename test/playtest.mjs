@@ -1,5 +1,6 @@
 import { createWorld, step, buildResult, seedRng, TICK_MS } from '../.playtest/sim.mjs'
 import { BOSSES } from '../.playtest/registry.mjs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 
 // Headless playtest across every boss and every role.
 //
@@ -85,6 +86,50 @@ function play(boss, role, smart, seed, side = 'green') {
   const OPPOSITE = { N: 'S', S: 'N', E: 'W', W: 'E' }
   let ticks = 0
   while (w.player.alive && !w.killed && w.elapsedMs / 1000 < boss.pullLengthSec && ticks < 40000) {
+    if (!smart) {
+      // A careless PLAYER, not a statue.
+      //
+      // Everything below used to sit inside `if (smart)`, so the careless pass
+      // never set a key and never pulled a trigger — `firing` stayed false from
+      // its initialiser. That is why every careless row printed `acc 0%` and
+      // `boss 100%`: it was attrition killing a mannequin, and it would have
+      // printed the same 27 deaths with every mechanic in the raid deleted.
+      // Half of the README's bar — "a careless player dies" — was not being
+      // measured at all, and it is the half that matters for a trainer.
+      //
+      // Careless means: shoots constantly, wanders, dodges nothing, presses
+      // nothing. It still avoids the two things that are not carelessness but
+      // suicide — walking off the platform, and standing in a hole in the floor
+      // — because a player who falls off at four seconds measures nothing
+      // either. The heading comes off the tick count, so runs stay reproducible.
+      input.firing = true
+      input.aim = null
+      const base = (Math.floor(ticks / 100) * 2.399963) % (Math.PI * 2)
+      // Turn AWAY from a wall or a hole rather than heading for the middle of
+      // the room. "Back to the centre" was the obvious fallback and it is
+      // suicide on the two fights that put a hole in the centre: on Vashnik it
+      // walked into the Malignant Cavity at five seconds every time, in every
+      // role, having measured nothing at all. Sweep for a heading that is
+      // survivable and take the first one.
+      let cx = Math.cos(base)
+      let cy = Math.sin(base)
+      for (let t = 0; t < 8; t++) {
+        const a = base + t * (Math.PI / 4)
+        const dx = Math.cos(a)
+        const dy = Math.sin(a)
+        const ahead = { x: w.player.pos.x + dx * 8, y: w.player.pos.y + dy * 8 }
+        if (!onFloor(boss, ahead.x, ahead.y)) continue
+        const intoHole = w.instances.some(i =>
+          i.def.rule.type === 'lethalGround' && i.def.shape &&
+          Math.hypot(ahead.x - i.pos.x, ahead.y - i.pos.y) < (i.def.shape.radius ?? 10) + 4)
+        if (intoHole) continue
+        cx = dx
+        cy = dy
+        break
+      }
+      input.right = cx > 0.3; input.left = cx < -0.3
+      input.down = cy > 0.3; input.up = cy < -0.3
+    }
     if (smart) {
       // Crude "good player": run from the nearest unresolved avoid-telegraph,
       // soak what needs soaking, run debuffs out, stay on the platform.
@@ -200,11 +245,42 @@ function play(boss, role, smart, seed, side = 'green') {
       // job: walk it onto the pile so the detonation burns them. Running it out
       // to an empty corner is a clean-looking failure — the Amani all stand back
       // up and the bot never learns why the next phase was unwinnable.
-      const burning = carrying && (w.corpses ?? []).some(c => !c.burned)
+      //
+      // Gated on the stage that actually RAISES the bodies, matching the engine's
+      // own `burnsCorpses`. Ungated it fired in Stage One too, where nothing can
+      // burn and the errand is pure loss.
+      const raises = !!boss.phases?.[w.phaseIndex]?.resurrectCorpsesAs
+      // And only corpses that can be burned from ground you survive. A marching
+      // add is only retired at `lenOf(add.pos) < 4`, so an Amani dies well inside
+      // the Soulcoil Well and leaves its body there — for a corpse at radius rc
+      // the nearest safe standing point is 13 - rc away, so anything inside rc=7
+      // is unburnable by ANY player. The bot used to walk at the nearest corpse
+      // regardless, get shoved back out by the well's weight-60 exclusion, and
+      // sit in a two-tick limit cycle at r=22 until the flame killed it at 24.
+      const holes = w.instances.filter(i => i.def.rule.type === 'lethalGround' && i.def.shape)
+      const blast = 6
+      // Reachable means reachable FROM WHERE THE BOT WILL STAND, which is the
+      // hazard's radius plus the 9-yard berth it keeps below — not merely from
+      // the hazard's edge. That difference is the whole bug: a corpse ten yards
+      // out is burnable in principle from the Well's lip and completely
+      // unreachable to something that refuses to come within twenty-two, so the
+      // bot walked at it, got shoved back out, and sat in a two-tick limit cycle
+      // at r=21.6 until the flame it was carrying killed it at 24.
+      //
+      // A human might well take the risk. The bot deliberately does not, and it
+      // is the more honest instrument for it: an errand that can only be run by
+      // standing on the edge of instant death is a fight problem, and papering
+      // over it with a suicidal bot would hide exactly the geometry defect that
+      // needs deciding.
+      const reachable = c => holes.every(h => {
+        const d = Math.hypot(c.pos.x - h.pos.x, c.pos.y - h.pos.y)
+        return d >= (h.def.shape.radius ?? 10) + 9 - blast
+      })
+      const burning = carrying && raises && (w.corpses ?? []).some(c => !c.burned && reachable(c))
       if (burning) {
         let corpse = null, cd = Infinity
         for (const c of w.corpses) {
-          if (c.burned) continue
+          if (c.burned || !reachable(c)) continue
           const d = Math.hypot(c.pos.x - w.player.pos.x, c.pos.y - w.player.pos.y)
           if (d < cd) { cd = d; corpse = c }
         }
@@ -212,8 +288,24 @@ function play(boss, role, smart, seed, side = 'green') {
           tx += (corpse.pos.x - w.player.pos.x) / (cd || 1) * 10
           ty += (corpse.pos.y - w.player.pos.y) / (cd || 1) * 10
         }
-      } else if (carrying && r < 26) {
-        tx += w.player.pos.x / r * 3; ty += w.player.pos.y / r * 3
+      } else if (carrying) {
+        // Run it out to the distance THIS mechanic asks for, not to a literal.
+        // The 26 that used to be here is some other fight's number: Nek'zali's
+        // Essence Rend wants 30 and its Slithering Flame 24, so the carrier
+        // parked at exactly 26.0 every time and failed the first 100% of the
+        // time. Weighted by how far short it is, so it is not out-voted by the
+        // repulsion from the puddles it has been dropping.
+        let need = 0
+        for (const i of w.instances) {
+          if (i.resolved || i.def.rule.type !== 'carryOut') continue
+          if (!i.carriedByPlayer) continue
+          need = Math.max(need, i.def.rule.minDistance)
+        }
+        if (need > 0 && r < need + 2) {
+          const push = Math.min(20, 4 + (need + 2 - r) * 2)
+          tx += (w.player.pos.x / r) * push
+          ty += (w.player.pos.y / r) * push
+        }
       }
 
       // ── ground that kills on contact ──
@@ -559,6 +651,33 @@ function play(boss, role, smart, seed, side = 'green') {
         ty += (dy / d) * 26
       }
 
+      // ── body-blocking ──
+      //
+      // An `intercept` add is stopped by standing in its way; killing it is not
+      // the job and for some of them is not even possible. This lived in the
+      // targeting loop below, where it added to tx/ty a hundred lines AFTER
+      // those were read into the movement input and one tick before they were
+      // reset — so it has never moved the bot an inch, and every Coiled Altar
+      // cell has carried `Fragment of Malacrass` failures for the life of the
+      // project as a result.
+      //
+      // Nearest one only. A summed attraction to two of them steers to the
+      // midpoint and blocks neither, which is the defining failure of a
+      // force-field controller and the reason this has to be a choice.
+      if (!anchoredTank) {
+        let block = null
+        for (const a of w.adds) {
+          if (!a.alive || a.def.job !== 'intercept') continue
+          const d = Math.hypot(a.pos.x - w.player.pos.x, a.pos.y - w.player.pos.y)
+          if (!block || d < block.d) block = { a, d }
+        }
+        if (block) {
+          const d = block.d || 1
+          tx += ((block.a.pos.x - w.player.pos.x) / d) * 10
+          ty += ((block.a.pos.y - w.player.pos.y) / d) * 10
+        }
+      }
+
       // ── resolve the desired direction against hard constraints ──
       //
       // Summed forces cannot express "never", only "strongly prefer", and every
@@ -627,15 +746,32 @@ function play(boss, role, smart, seed, side = 'green') {
         if (!a.alive || a.def.job === 'leave') continue   // never shoot an orb
         const d = Math.hypot(a.pos.x - w.player.pos.x, a.pos.y - w.player.pos.y)
         // Intercept adds are blocked with your body, not shot.
-        if (a.def.job === 'intercept') {
-          if (d < td) { td = d; tx += (a.pos.x - w.player.pos.x) / (d || 1) * 3; ty += (a.pos.y - w.player.pos.y) / (d || 1) * 3 }
-          continue
-        }
+        //
+        // Handled with the other movement forces, well above — see the body
+        // block there. Adding to tx/ty from HERE was the defect: they have
+        // already been read into input.right/left/up/down by this point and are
+        // reset to 0 next tick, so the force was computed and discarded on every
+        // tick since it was written.
+        if (a.def.job === 'intercept') continue
         // Only URGENT adds pull damage off the boss: one whose fuse is running
         // out, or one that still has a shield to break. A bot that shot every
         // add on sight never touched the boss at all on the add-heavy fights —
         // 98% accuracy and 98% boss health, because every shot went into crates.
-        const urgent = a.def.fuseSec >= 900 ? false : (a.fuse ?? 0) < 9000 || a.shield > 0
+        //
+        // Urgency is TIME TO LEAK, not time on the fuse. An add with a march
+        // leaks by ARRIVING — `lenOf(add.pos) < 4` in the engine — and Vashnik
+        // says so in as many words: "fuseSec is set clear of the crawl ... so it
+        // is ARRIVING that leaks, not a timer running out somewhere else." Read
+        // off the fuse alone, a Clotting Venom crawling 40 yards at 1.6 yd/s
+        // arrives at t+25 but does not look urgent until t+21, leaving a
+        // four-second window to land eight shots; its splits arrive before they
+        // ever qualify. The bot was watching the wrong clock on the one fight
+        // where the boss file had deliberately moved it.
+        const gap = Math.hypot(a.pos.x, a.pos.y) - 4
+        const toArrive = a.def.marchSpeed ? Math.max(0, gap / a.def.marchSpeed) : Infinity
+        const toFuse = a.def.fuseSec >= 900 ? Infinity : (a.fuse ?? 0) / 1000
+        const toLeak = Math.min(toArrive, toFuse)
+        const urgent = a.def.fuseSec >= 900 ? false : toLeak < 9 || a.shield > 0
         if (!urgent) continue
         // Hold the second of a pair that must not die together. "Kill it fast"
         // is the wrong reflex on the Burning Venoms — cleaving both down inside
@@ -643,7 +779,10 @@ function play(boss, role, smart, seed, side = 'green') {
         // measures the fight as impossible when it is merely disciplined.
         const w2 = a.def.noSimultaneousDeath
         if (w2 && (w.elapsedMs - (w.addDeathMs?.[a.def.id] ?? -1e9)) < w2.withinSec * 1000) continue
-        if (d < td) { td = d; target = a }
+        // Most urgent, not nearest. With several on the floor the nearest is
+        // routinely the one with the most time left, so the bot kept re-picking
+        // a comfortable target while the one about to leak walked in.
+        if (toLeak < td) { td = toLeak; target = a }
       }
       input.firing = true
       input.aim = target ? { x: target.pos.x, y: target.pos.y } : null
@@ -673,6 +812,15 @@ function play(boss, role, smart, seed, side = 'green') {
       // that the flurry is too hard.
       if (w.player.health < 0.55 && !w.player.cooldowns.defensive) input.pressed.push('defensive')
       if (w.raidHealth < 0.5 && !w.player.cooldowns.raidcd) input.pressed.push('raidcd')
+      // Spend the damage cooldown. The bot has owned `burst` on the tank and dps
+      // bars for the life of the project and has never once pressed it, while
+      // the engine TRIPLES its damage for ten seconds and records a scored
+      // failure against it for letting a burn window pass unspent. Held for the
+      // burn window where the fight declares one, otherwise spent on cooldown.
+      if (!w.player.cooldowns.burst) {
+        const burn = boss.mechanics.some(m => m.rule.type === 'burnWindow')
+        if (!burn || w.burnMs > 0) input.pressed.push('burst')
+      }
       if (w.elapsedMs % 900 < TICK_MS) input.pressed.push('dispel', 'interrupt')
     }
     step(w, input, TICK_MS)
@@ -701,6 +849,8 @@ function play(boss, role, smart, seed, side = 'green') {
 
 const pad = (s, n) => String(s).padEnd(n)
 let clears = 0, expected = 0
+/** Every cell's outcome, for the golden file compared at the bottom. */
+const cells = {}
 
 // BOSS= and ROLE= narrow the sweep to one cell. Tuning a single fight meant
 // waiting out twenty-six others every time, which is long enough that you stop
@@ -728,6 +878,17 @@ for (const [label, smart] of [['careless', false], ['competent', true]]) {
         const acc = res.shotsFired ? Math.round((res.shotsHit / res.shotsFired) * 100) : 0
         const cleared = wins > SEEDS.length / 2
         if (smart) { expected++; if (cleared) clears++ }
+        cells[`${label}/${boss.key}${side ? '/' + side : ''}/${role}`] = {
+          wins,
+          cleared,
+          // The outcome, not the timing. Survival seconds and boss health drift
+          // with any tuning change and would make the golden file a tripwire
+          // nobody could read. What a reviewer needs to see is a cell changing
+          // STATE, and which mechanic changed its mind about killing you.
+          outcome: cleared ? 'KILL' : (res.deathCause || 'enrage'),
+          failures: Object.fromEntries(
+            res.failures.map(f => [f.name, f.count]).sort((a, b) => a[0].localeCompare(b[0]))),
+        }
         console.log(
           `  ${pad(boss.key + (side ? '/' + side : ''), 18)} ${pad(role, 7)} ` +
           `${String(res.survivedSec).padStart(3)}s  ` +
@@ -748,3 +909,43 @@ for (const [label, smart] of [['careless', false], ['competent', true]]) {
 }
 
 console.log(`\ncompetent clears: ${clears}/${expected}`)
+
+// ── the golden file ──
+//
+// GOLDEN=write records the current sweep; otherwise it is compared, and any cell
+// that changed in EITHER direction fails the run with a non-zero exit.
+//
+// Until now this script had no assertion and no exit code, `npm test` did not
+// match it, and CI never ran it — so nine failing cells sat alongside a green
+// build for the life of the project. A number in a report nobody can fail is not
+// a check, it is a mood.
+//
+// Per cell rather than in aggregate, because the aggregate cannot see the two
+// things that matter most. A bot change once moved two cells in OPPOSITE
+// directions and left the headline at exactly 18/27 — invisible. And no total
+// can ever detect a fight getting EASIER, which is the failure mode a trainer
+// should fear most.
+const GOLD = 'test/playtest.golden.json'
+if (process.env.GOLDEN === 'write') {
+  writeFileSync(GOLD, JSON.stringify(cells, null, 2) + '\n')
+  console.log(`\nwrote ${Object.keys(cells).length} cells to ${GOLD}`)
+} else if (!ONLY_BOSS && !ONLY_ROLE && !process.env.SEED && existsSync(GOLD)) {
+  const gold = JSON.parse(readFileSync(GOLD, 'utf8'))
+  const diffs = []
+  for (const key of new Set([...Object.keys(gold), ...Object.keys(cells)])) {
+    const a = gold[key]
+    const b = cells[key]
+    if (!a) { diffs.push(`+ ${key} is new`); continue }
+    if (!b) { diffs.push(`- ${key} has gone`); continue }
+    if (a.cleared !== b.cleared || a.wins !== b.wins || a.outcome !== b.outcome) {
+      diffs.push(`~ ${key}: ${a.outcome} ${a.wins}/3  ->  ${b.outcome} ${b.wins}/3`)
+    }
+  }
+  if (diffs.length) {
+    console.error(`\n${diffs.length} cell(s) changed against ${GOLD}:\n  ` + diffs.join('\n  '))
+    console.error('\nIf the change is intended, re-record with:  GOLDEN=write npm run playtest')
+    process.exitCode = 1
+  } else {
+    console.log(`\nall ${Object.keys(cells).length} cells match ${GOLD}`)
+  }
+}

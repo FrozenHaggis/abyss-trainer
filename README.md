@@ -124,7 +124,55 @@ The bot is a measuring instrument, so what it cannot do is a blind spot in the
 measurement rather than a fact about the fight. It could not press taunt, a
 defensive or a raid cooldown at all until Sszorak needed all three, and until
 then every number this harness produced was a careless player wearing a careful
-label.
+label. It still cannot pre-position for a cast that has not happened, commit to
+one of two identical targets, or hold damage to delay a phase — so a red cell
+is a question, not a verdict.
+
+That mattered more than it sounds. Nine cells were failing; investigating them
+one at a time took the score from 18/27 to 24/27 **without tuning a single
+fight's difficulty down**. Four of the six recovered were bot defects — it read
+adds' fuses on the one boss that leaks by arrival instead, hard-coded another
+fight's carry distance, and computed a body-block force a hundred lines after
+the heading had already been read. Every one printed as a fight being too hard.
+
+### The golden file
+
+`test/playtest.golden.json` records all 54 cells — both passes, every boss, side
+and role — as outcome, seed count and failure histogram. The sweep compares
+against it and **exits non-zero if any cell changes in either direction**;
+`GOLDEN=write npm run playtest` re-records it deliberately.
+
+The aggregate cannot do this job. A bot change once moved two cells in opposite
+directions and left the headline at exactly 18/27, which is a regression no
+number would ever have shown. And no total can detect a fight getting *easier* —
+the failure mode a trainer should fear most.
+
+### The careless half of the bar
+
+"A careless player dies" was not being measured at all. The whole bot lived
+inside `if (smart)`, so the careless pass never set a key and never pulled a
+trigger — which is why every careless row read `acc 0%`. It was attrition
+killing a mannequin, and it would have printed the same 27 deaths with every
+mechanic in the raid deleted.
+
+It is a real careless player now: shoots constantly, wanders, dodges nothing,
+presses nothing, and avoids only the two things that are suicide rather than
+carelessness — the platform edge and a hole in the floor. It clears **8 of 27**.
+All three Ula'tek roles, and all three Vashnik roles, hand a player who dodged
+nothing a KILL screen with five to thirteen recorded failures against them.
+
+Vashnik joined that list the moment its adds were fixed to spawn only from their
+own fountain, which halved the add load — the fight had been leaning on a
+scheduler bug for its difficulty, and correcting the mechanic exposed that it
+has no teeth without it. That is a tuning conversation, and a good example of
+why the two halves of this bar have to be watched together: the change was
+unambiguously correct and it made the trainer worse at teaching.
+
+That is a worse number than the competent one, and it is the half that carries
+the teaching. It is recorded rather than asserted, because what the target
+should be is a product decision — and because the two halves are coupled, every
+point of difficulty removed to lift the competent score is also handed to the
+careless player.
 
 ## Known gaps
 

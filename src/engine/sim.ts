@@ -88,6 +88,21 @@ const WIND_REACH = 26
  * and tight enough that standing vaguely nearby is not the answer.
  */
 const WIND_LANE = 6
+/**
+ * Close enough to collide, whichever side of them you are on.
+ *
+ * The line-up test below is directional and has to be: two raiders blown the
+ * same way do not meet, and standing on the wrong side of your partner means the
+ * wind pulls you apart rather than together. But at arm's length the direction
+ * stops meaning anything — two bodies a couple of yards apart, thrown at each
+ * other, collide — and the ability data agrees, since Turbulent Gusts
+ * "dissipates if two carriers collide".
+ *
+ * Without this, "run to your partner" was a knife edge: stop a foot short and
+ * you live, coast a foot past and you die, on a line nobody can see. That is not
+ * a mechanic anybody can play, and it is the instruction the fight gives.
+ */
+const WIND_TOUCH = 7
 /** How hard the Maelstrom's gales push, in yards/sec. Below run speed on purpose. */
 const GALE_SPEED = 8.5
 /**
@@ -146,13 +161,19 @@ function clockPoint(boss: BossDef, c: Compass): Vec {
  */
 function windCancels(mine: Compass, from: Vec, theirs: Compass | null, at: Vec): boolean {
   if (!theirs || theirs !== OPPOSITE[mine]) return false
-  const dir = COMPASS[mine]
   const dx = at.x - from.x
   const dy = at.y - from.y
+  // Touching. At this range which side of them you are on is not a real
+  // question — see WIND_TOUCH.
+  if (Math.hypot(dx, dy) <= WIND_TOUCH) return true
+  const dir = COMPASS[mine]
   const along = dx * dir.x + dy * dir.y
   const across = Math.abs(dx * -dir.y + dy * dir.x)
   return along > 0 && along <= WIND_REACH && across <= WIND_LANE
 }
+
+/** The collision range, for the renderer's partner ring. */
+export const WIND_TOUCH_YARDS = WIND_TOUCH
 
 // ── randomness ───────────────────────────────────────────────────────────────
 // Seedable, so a headless balance run is reproducible.
@@ -4343,14 +4364,22 @@ function allyThink(w: World) {
           a.want.x = hold.x - dir.x * 8
           a.want.y = hold.y - dir.y * 8
         } else if (a.windMate === 0) {
-          // Holding YOUR opposite. They come to your axis and stop just outside
-          // the range that would cancel it, because closing the last few yards
-          // themselves would answer the mechanic for you — the same bargain the
-          // orb partner makes on the Coiled Altar.
-          const held = clampToArena(w.boss, {
-            x: w.player.pos.x + COMPASS[OPPOSITE[a.wind]].x * (WIND_REACH + 4),
-            y: w.player.pos.y + COMPASS[OPPOSITE[a.wind]].y * (WIND_REACH + 4),
-          }, arena * 0.12)
+          // Holding YOUR opposite — and holding STILL, in the middle of the room.
+          //
+          // This was measured from the player: "thirty yards along your own
+          // bearing from wherever you happen to be standing". Which meant it
+          // moved every time the player did. They walked at their partner, the
+          // partner walked away by exactly as much, and the two of them drifted
+          // to the rim together with the mechanic never resolving — a carrot on
+          // a stick, on a platform that kills you for reaching the end of it.
+          //
+          // A fixed mark instead, and the middle of the room is the right one:
+          // it gives the player somewhere to BE rather than something to chase,
+          // and it is the one part of the floor where lining up does not also
+          // mean standing next to the edge. The player still has to work out
+          // which SIDE of them to stand on, which is the actual mechanic — get
+          // it wrong and the two of you are blown apart rather than together.
+          const held = clampToArena(w.boss, { x: 0, y: 0 }, arena * 0.12)
           a.want.x = held.x
           a.want.y = held.y
         } else {
@@ -5333,6 +5362,52 @@ export function summonedIds(boss: BossDef): Set<string> {
 }
 
 /**
+ * Adds that only exist as the PIECES of another add.
+ *
+ * A Clotting Venom splits into two on death and both halves carry on crawling at
+ * the pool. That is a consequence of killing something, not a thing the room
+ * sends at you — so the wave timer must not deal one out on its own. It did:
+ * the filter below excluded set-piece and summoned adds but never split targets,
+ * so "Clotting Venom split" arrived off the rim with no parent, at the generic
+ * spawn radius, on a timer.
+ *
+ * Derived from the adds list rather than flagged on the add, for the same reason
+ * `summonedIds` is derived from the mechanics: authoring a new split cannot then
+ * forget to switch the wave off. Splitting itself is untouched — the halves
+ * still appear at the corpse, which is the whole lesson of "kill it early and
+ * far from the pool".
+ */
+/**
+ * Adds that belong to an ALTAR, and arrive only when it is drained.
+ *
+ * The red fountain sends the Clotting Venom, the orange one the Burning Venom,
+ * the purple one the Shrouded Venom — each out of its own plinth, which is why
+ * `drainAltars` spawns them at `a.def.pos` rather than on a ring. The colour is
+ * the fight's whole vocabulary: the raid calls "orange and purple are up" and
+ * knows from that alone what is walking at the Cavity and from where.
+ *
+ * The wave timer was dealing the same three out on a 26-second cadence from the
+ * generic spawn ring as well, so venoms arrived from nowhere in particular,
+ * attached to no drink, in a colour nobody had called. Two sources for one add
+ * and only one of them a mechanic — the same defect `summonedIds` and `splitIds`
+ * exist to prevent, in its third variation.
+ *
+ * Derived from the altar list rather than flagged on the add, so wiring up a
+ * fourth fountain cannot forget to switch its wave off.
+ */
+export function altarIds(boss: BossDef): Set<string> {
+  const out = new Set<string>()
+  for (const a of boss.altars ?? []) out.add(a.addId)
+  return out
+}
+
+export function splitIds(boss: BossDef): Set<string> {
+  const out = new Set<string>()
+  for (const a of boss.adds ?? []) if (a.splits) out.add(a.splits.intoId)
+  return out
+}
+
+/**
  * Which raider an add fixates on.
  *
  * "Three random non-tank players" — with two constraints the word "random" does
@@ -5673,7 +5748,12 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // three more would put fixate frontals on the raid with no cast to read
     // them off. Derived from the mechanic list rather than flagged on the add,
     // so wiring up a summon cannot forget to switch the wave off.
-    const list = w.boss.adds.filter(a => !a.phaseOnly && !summonedIds(w.boss).has(a.id))
+    // Nor the pieces of another add, nor anything a fountain sends — see
+    // splitIds and altarIds. What is left is trash the room throws on a timer,
+    // which is the only thing this scheduler was ever for.
+    const list = w.boss.adds.filter(a =>
+      !a.phaseOnly && !summonedIds(w.boss).has(a.id)
+      && !splitIds(w.boss).has(a.id) && !altarIds(w.boss).has(a.id))
     // Never more than a handful on the field. A wave landing on top of a wave
     // you have not cleared is a wipe you cannot play out of, and it teaches
     // nothing except that the trainer is unfair.
@@ -7290,11 +7370,32 @@ export function step(w: World, input: Input, dtMs: number) {
   // zero on its own leaves half the raid with nothing to fight and half a fight
   // that cannot end, and the encounter's own answer to uneven damage is to heal
   // the weaker back up rather than to let it fall over.
+  //
+  // A golem held at the pin also stops being a TARGET, which is the half of this
+  // that was missing and it made the fight unfinishable for two roles out of
+  // three. `alive` was only ever cleared in the shot loop above, on `hp <= 0` —
+  // so getting your golem to the pin and then past it needed a single shot worth
+  // more than 0.005. Per shot, with two entities up on a 160 second pull:
+  //
+  //     dps     0.005435   clears it
+  //     tank    0.004457   does not
+  //     healer  0.004076   does not
+  //
+  // A tank or healer chipped their golem to 0.0005, this block restored it to
+  // 0.005, and that loop ran until the enrage — the "3% wipe" in the balance
+  // table. There is no burn window on this fight and no `burst` on a healer's
+  // bar, so no amount of skill got past it either.
+  //
+  // Nothing about the MECHANIC changes: the golem still parks at half a percent
+  // and still waits for its twin, exactly as written above. It simply stops
+  // soaking shots that can no longer move it, so `nearestBoss` sends you to the
+  // survivor — which is what a dps has always experienced, and the only reading
+  // under which all three roles are playing the same fight.
   if (w.boss.sided) {
     const live = w.bosses.filter(b => !b.def.untargetable)
     const allDown = live.every(b => b.hp <= 0.005)
     for (const b of live) {
-      if (b.hp <= 0.005 && !allDown) b.hp = 0.005
+      if (b.hp <= 0.005 && !allDown) { b.hp = 0.005; b.alive = false }
       else if (allDown) { b.hp = 0; b.alive = false }
     }
   }

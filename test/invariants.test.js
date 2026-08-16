@@ -301,10 +301,24 @@ test('sweep: every summons names a real add, and takes it off the wave timer', (
   }
   // The scheduler has to be the thing that enforces it, rather than each boss
   // remembering to flag its own adds.
+  //
+  // Checked by NAME rather than by matching the filter expression letter for
+  // letter. The literal-text version broke the moment a third exclusion was
+  // added to the same line, which is a test failing because the code got more
+  // correct — and it is the reason `test/engine.test.js` now checks the actual
+  // behaviour of this filter on a running pull.
   const sim = readFileSync('src/engine/sim.ts', 'utf8')
-  assert.match(sim, /w\.boss\.adds\.filter\(a => !a\.phaseOnly && !summonedIds\(w\.boss\)\.has\(a\.id\)\)/,
-    'the wave scheduler still deals out summoned adds — Venomous Emergence and the trash ' +
-    'timer would both be delivering Spawn of Vexhul, and only one of them is a mechanic')
+  const at = sim.indexOf('const list = w.boss.adds.filter(')
+  const filter = at < 0 ? '' : sim.slice(at, at + 240)
+  assert.ok(filter, 'the wave scheduler no longer builds its list with a filter')
+  for (const [what, needle] of [
+    ['set-piece adds (the Echoes of Jawae as Stage One trash)', 'phaseOnly'],
+    ['summoned adds (Venomous Emergence and the trash timer both delivering Spawn of Vexhul)', 'summonedIds'],
+    ['split children (a Clotting Venom half arriving off the rim with no parent)', 'splitIds'],
+  ]) {
+    assert.ok(filter.includes(needle),
+      `the wave scheduler still deals out ${what} — only one of the two sources is a mechanic`)
+  }
 })
 
 // ── 11. A fixated cast is wired to a rule that can actually be aimed ──────────

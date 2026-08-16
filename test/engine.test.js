@@ -79,6 +79,83 @@ test('a raid knockback throws the player across the room, not onto the boss', as
   }
 })
 
+// A split child is what an add BECOMES, not something the room sends at you.
+//
+// The wave timer excluded set-piece and summoned adds but never split targets,
+// so Vashnik's "Clotting Venom split" arrived off the rim on a timer, at the
+// generic spawn radius, with no parent — an add whose entire meaning is "you
+// killed the thing that made me" appearing when nothing had been killed.
+//
+// Checked on a running pull rather than by matching the filter expression: the
+// source-text version of this check broke the moment a third exclusion was added
+// to the same line, which is a test failing because the code got MORE correct.
+test('split children only ever arrive from their parent dying', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'vashnik')
+  const parents = (boss.adds ?? []).filter(a => a.splits)
+  assert.ok(parents.length > 0, 'vashnik no longer declares a splitting add — check is vacuous')
+  const childIds = new Set(parents.map(a => a.splits.intoId))
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  const input = {
+    up: false, down: false, left: false, right: false, pressed: [], aim: null, firing: true,
+  }
+
+  let orphans = 0
+  let fromParent = 0
+  for (let i = 0; i < 60 * 300; i++) {
+    // Keep the pull running. This is a test of the WAVE SCHEDULER, not of
+    // survival, and a stationary player dies to Vashnik at 40 seconds — long
+    // before the timer has cycled far enough down the add list to reach a split
+    // child. With the defect reinstated the pull has to reach ~100s before the
+    // first orphan appears, so a check that ends when the player does silently
+    // measures nothing and reports success.
+    w.player.alive = true
+    w.player.health = 1
+    w.raidHealth = 1
+    for (const b of w.bosses) { b.alive = true; b.hp = Math.max(b.hp, 0.5) }
+    const before = new Set(w.adds.map(a => a.uid))
+    // Positions, not just identities. "Did any parent die this tick" is too
+    // loose: a Clotting Venom LEAKING into the pool also clears its `alive` flag,
+    // so a rim-spawned orphan arriving on the same tick was being waved through
+    // as legitimate — the check passed with the defect reinstated. A real split
+    // is fanned within a few yards of the corpse (`spawnAdds(..., at = add.pos)`),
+    // and a rim spawn is out at `spawnRadius`, so position separates them cleanly.
+    const parentsBefore = w.adds
+      .filter(a => a.alive && a.def.splits)
+      .map(a => ({ uid: a.uid, x: a.pos.x, y: a.pos.y }))
+    // Shoot the splitting add on sight. The shipped bot targets adds by fuse and
+    // cannot kill a Clotting Venom before it crawls into the pool, so a default
+    // pull produces no splits at all and this check would measure nothing — the
+    // vacuity guard below caught exactly that.
+    const parent = w.adds.find(a => a.alive && a.def.splits)
+    input.aim = parent ? { x: parent.pos.x, y: parent.pos.y } : null
+    step(w, input, TICK_MS)
+    // Alive-only. A parent killed by a SHOT is flagged dead in the shot loop but
+    // not spliced out of `w.adds` until the next tick's stepAdds — so a membership
+    // test alone reports the parent as still present on the exact tick its halves
+    // appear, which is every legitimate split.
+    // Alive-only. A parent killed by a SHOT is flagged dead in the shot loop but
+    // not spliced out of `w.adds` until the next tick's stepAdds, so a membership
+    // test alone reports it as still present on the exact tick its halves appear.
+    const now = new Set(w.adds.filter(a => a.alive).map(a => a.uid))
+    const corpses = parentsBefore.filter(p => !now.has(p.uid))
+    for (const a of w.adds) {
+      if (before.has(a.uid) || !childIds.has(a.def.id)) continue
+      const born = corpses.some(c => Math.hypot(a.pos.x - c.x, a.pos.y - c.y) < 8)
+      if (born) fromParent++
+      else orphans++
+    }
+  }
+
+  assert.ok(fromParent + orphans > 0,
+    'no split child appeared in a whole pull — the check would pass without measuring anything')
+  assert.equal(orphans, 0,
+    `${orphans} split children spawned with no parent dying (and ${fromParent} legitimately). ` +
+    'The wave timer is dealing out the pieces of an add as though they were trash')
+})
+
 // The wind partner used to hold a spot measured from the PLAYER — thirty yards
 // along their bearing from wherever they happened to be standing. So it moved
 // every time the player did: they walked at it, it walked away by exactly as

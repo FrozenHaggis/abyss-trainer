@@ -1,0 +1,577 @@
+{
+  "careless/nekzali/tank": {
+    "wins": 1,
+    "cleared": false,
+    "outcome": "enrage",
+    "failures": {
+      "Echo of Jawae": 2,
+      "Hollowing Strikes": 2,
+      "Hungering Pyre": 3,
+      "Possession Barrage": 1,
+      "Restless Amani": 7
+    }
+  },
+  "careless/nekzali/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "enrage",
+    "failures": {
+      "Echo of Jawae": 1,
+      "Essence Rend": 1,
+      "Hungering Pyre": 2,
+      "Latent Cultist": 1,
+      "Restless Amani": 8
+    }
+  },
+  "careless/nekzali/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Echo of Jawae": 2,
+      "Essence Rend": 2,
+      "Hungering Pyre": 4,
+      "Latent Cultist": 1,
+      "Restless Amani": 6
+    }
+  },
+  "careless/sentinels/green/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Living Venom": 3,
+      "Toxic Droplets": 5,
+      "Ula'tek's Dominance": 12,
+      "Venom Coagulation": 1
+    }
+  },
+  "careless/sentinels/green/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Helical Toxins",
+    "failures": {
+      "Helical Toxins": 1,
+      "Living Venom": 1,
+      "Toxic Droplets": 7,
+      "Venom Coagulation": 2
+    }
+  },
+  "careless/sentinels/green/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Living Venom": 1,
+      "Toxic Droplets": 10,
+      "Venom Coagulation": 2
+    }
+  },
+  "careless/sentinels/red/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Living Venom",
+    "failures": {
+      "Venom Coagulation": 2
+    }
+  },
+  "careless/sentinels/red/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Helical Toxins",
+    "failures": {
+      "Blighted Blood": 1,
+      "Helical Toxins": 1,
+      "Unstable Miasma": 1,
+      "Venom Coagulation": 2
+    }
+  },
+  "careless/sentinels/red/dps": {
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Unstable Miasma": 2,
+      "Venom Coagulation": 2
+    }
+  },
+  "careless/vashnik/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Burning Venom": 2,
+      "Clotting Venom": 1,
+      "Deadly Venom": 1,
+      "Dripping Fangs": 1,
+      "Shrouded Venom": 1,
+      "Stygian Burst": 2
+    }
+  },
+  "careless/vashnik/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Burning Venom": 1,
+      "Clotting Blood": 1,
+      "Clotting Venom": 1,
+      "Deadly Venom": 1,
+      "Exploding Infection": 1,
+      "Plague Wave": 1,
+      "Stygian Burst": 1
+    }
+  },
+  "careless/vashnik/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Burning Venom": 1,
+      "Clotting Venom": 2,
+      "Deadly Venom": 1,
+      "Exploding Infection": 1,
+      "Stygian Burst": 1
+    }
+  },
+  "careless/explorers/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Blast Wave",
+    "failures": {
+      "Blast Wave": 1,
+      "Icebound Flames": 1,
+      "Mighty Thud": 1,
+      "Useless Junk": 2
+    }
+  },
+  "careless/explorers/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Blast Wave",
+    "failures": {
+      "Blast Wave": 1,
+      "Icebound Flames": 1,
+      "Mighty Thud": 1,
+      "Useless Junk": 2
+    }
+  },
+  "careless/explorers/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Blast Wave",
+    "failures": {
+      "Blast Wave": 1,
+      "Icebound Flames": 1,
+      "Mighty Thud": 1,
+      "Useless Junk": 2
+    }
+  },
+  "careless/sszorak/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Fell off the platform",
+    "failures": {
+      "Falling": 1,
+      "Ravage": 3,
+      "Tempest": 1,
+      "Viscous Cyst": 1
+    }
+  },
+  "careless/sszorak/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Fell off the platform",
+    "failures": {
+      "Falling": 1,
+      "Raging Crosswinds": 1
+    }
+  },
+  "careless/sszorak/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Fell off the platform",
+    "failures": {
+      "Falling": 1,
+      "Raging Crosswinds": 1
+    }
+  },
+  "careless/twinfangs/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Fell into the acid",
+    "failures": {
+      "Falling": 1
+    }
+  },
+  "careless/twinfangs/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Fell into the acid",
+    "failures": {
+      "Falling": 1
+    }
+  },
+  "careless/twinfangs/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Fell into the acid",
+    "failures": {
+      "Falling": 1
+    }
+  },
+  "careless/coiledaltar/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Coalesced Venom": 1,
+      "Deathguard & Soulbound": 2,
+      "Eternal Nightfall": 1,
+      "Fragment of Malacrass": 2,
+      "Guillotine": 1,
+      "Spiteful Soulcoiler": 2,
+      "Volatile Venom": 1,
+      "Widow's Kiss": 1
+    }
+  },
+  "careless/coiledaltar/healer": {
+    "wins": 1,
+    "cleared": false,
+    "outcome": "enrage",
+    "failures": {
+      "Coalesced Venom": 1,
+      "Deathguard & Soulbound": 3,
+      "Eternal Nightfall": 2,
+      "Fragment of Malacrass": 2,
+      "Guillotine": 1,
+      "Spiteful Soulcoiler": 2,
+      "Venomfang": 2,
+      "Volatile Venom": 2,
+      "Widow's Kiss": 1
+    }
+  },
+  "careless/coiledaltar/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Raid wiped — healing could not keep up",
+    "failures": {
+      "Coalesced Venom": 1,
+      "Deathguard & Soulbound": 2,
+      "Eternal Nightfall": 1,
+      "Fragment of Malacrass": 2,
+      "Guillotine": 1,
+      "Spiteful Soulcoiler": 2,
+      "Volatile Venom": 1,
+      "Widow's Kiss": 1
+    }
+  },
+  "careless/ulatek/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Blightscale Shrieker": 1,
+      "Blightscale Viper": 2,
+      "Doomscale Eggs": 1,
+      "Doomscale Warden": 1,
+      "Malice": 1,
+      "Serpent's Bite": 1,
+      "Venomous Heart": 1,
+      "Volatile Purge": 1
+    }
+  },
+  "careless/ulatek/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Acidic Burst": 1,
+      "Blightscale Shrieker": 1,
+      "Blightscale Viper": 2,
+      "Doomscale Eggs": 2,
+      "Doomscale Warden": 1,
+      "Malice": 2,
+      "Poisonous Bite": 1,
+      "Serpent's Bite": 1,
+      "Volatile Purge": 1
+    }
+  },
+  "careless/ulatek/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Acidic Burst": 1,
+      "Blightscale Viper": 2,
+      "Doomscale Eggs": 2,
+      "Doomscale Warden": 1,
+      "Malice": 1,
+      "Serpent's Bite": 1,
+      "Vicious Echoes": 1,
+      "Volatile Purge": 1
+    }
+  },
+  "competent/nekzali/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Cremation": 2,
+      "Echo of Jawae": 1,
+      "Hollowing Strikes": 1,
+      "Hungering Pyre": 2,
+      "Possession Barrage": 4,
+      "Restless Amani": 3
+    }
+  },
+  "competent/nekzali/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Latent Cultist",
+    "failures": {
+      "Essence Rend": 1,
+      "Hungering Pyre": 1,
+      "Latent Cultist": 1
+    }
+  },
+  "competent/nekzali/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Cremation": 2,
+      "Echo of Jawae": 1,
+      "Hungering Pyre": 2,
+      "Restless Amani": 1
+    }
+  },
+  "competent/sentinels/green/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Living Venom": 2,
+      "Toxic Droplets": 6
+    }
+  },
+  "competent/sentinels/green/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Living Venom": 4,
+      "Venom Coagulation": 2
+    }
+  },
+  "competent/sentinels/green/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Living Venom": 2
+    }
+  },
+  "competent/sentinels/red/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Venom Coagulation": 1
+    }
+  },
+  "competent/sentinels/red/healer": {
+    "wins": 1,
+    "cleared": false,
+    "outcome": "Blood Venom",
+    "failures": {
+      "Blighted Blood": 1,
+      "Blood Venom": 1,
+      "Venom Coagulation": 1
+    }
+  },
+  "competent/sentinels/red/dps": {
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Venom Coagulation": 1
+    }
+  },
+  "competent/vashnik/tank": {
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Burning Venom": 1,
+      "Caustic Explosion": 1,
+      "Clotting Venom": 1,
+      "Deadly Venom": 1
+    }
+  },
+  "competent/vashnik/healer": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "enrage",
+    "failures": {
+      "Burning Venom": 1,
+      "Caustic Explosion": 1,
+      "Clotting Blood": 1,
+      "Congealing Bolt": 1,
+      "Deadly Venom": 1,
+      "Umbral Ejection": 1
+    }
+  },
+  "competent/vashnik/dps": {
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Burning Venom": 1,
+      "Deadly Venom": 1
+    }
+  },
+  "competent/explorers/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Aftershock": 1,
+      "Useless Junk": 1
+    }
+  },
+  "competent/explorers/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Aftershock": 1,
+      "Icebound Flames": 1,
+      "Useless Junk": 1
+    }
+  },
+  "competent/explorers/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Aftershock": 1
+    }
+  },
+  "competent/sszorak/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Caustic Claws": 2,
+      "Caustic Residue": 2
+    }
+  },
+  "competent/sszorak/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Caustic Claws": 1,
+      "Caustic Residue": 1
+    }
+  },
+  "competent/sszorak/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Caustic Claws": 1,
+      "Caustic Residue": 1
+    }
+  },
+  "competent/twinfangs/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Envenomed": 1,
+      "Stir the Depths": 1,
+      "Stone Breaker": 1,
+      "Vile Flood": 1
+    }
+  },
+  "competent/twinfangs/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Stone Breaker": 1,
+      "Vile Flood": 2
+    }
+  },
+  "competent/twinfangs/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Stone Breaker": 1,
+      "Vile Flood": 1
+    }
+  },
+  "competent/coiledaltar/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Coalesced Venom": 2,
+      "Deathguard & Soulbound": 4,
+      "Spiteful Soulcoiler": 1,
+      "Widow's Kiss": 1
+    }
+  },
+  "competent/coiledaltar/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Coalesced Venom": 4,
+      "Deathguard & Soulbound": 3,
+      "Eternal Nightfall": 1,
+      "Spiteful Soulcoiler": 1,
+      "Venomfang": 1,
+      "Widow's Kiss": 1
+    }
+  },
+  "competent/coiledaltar/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Coalesced Venom": 2,
+      "Deathguard & Soulbound": 3
+    }
+  },
+  "competent/ulatek/tank": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Blightscale Viper": 1,
+      "Malice": 1
+    }
+  },
+  "competent/ulatek/healer": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Blightscale Shrieker": 1,
+      "Blightscale Viper": 1,
+      "Malice": 2
+    }
+  },
+  "competent/ulatek/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Malice": 1
+    }
+  }
+}

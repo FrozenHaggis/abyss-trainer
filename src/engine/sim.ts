@@ -3518,6 +3518,28 @@ export function summonedIds(boss: BossDef): Set<string> {
 }
 
 /**
+ * Adds that only exist as the PIECES of another add.
+ *
+ * A Clotting Venom splits into two on death and both halves carry on crawling at
+ * the pool. That is a consequence of killing something, not a thing the room
+ * sends at you — so the wave timer must not deal one out on its own. It did:
+ * the filter below excluded set-piece and summoned adds but never split targets,
+ * so "Clotting Venom split" arrived off the rim with no parent, at the generic
+ * spawn radius, on a timer.
+ *
+ * Derived from the adds list rather than flagged on the add, for the same reason
+ * `summonedIds` is derived from the mechanics: authoring a new split cannot then
+ * forget to switch the wave off. Splitting itself is untouched — the halves
+ * still appear at the corpse, which is the whole lesson of "kill it early and
+ * far from the pool".
+ */
+export function splitIds(boss: BossDef): Set<string> {
+  const out = new Set<string>()
+  for (const a of boss.adds ?? []) if (a.splits) out.add(a.splits.intoId)
+  return out
+}
+
+/**
  * Which raider an add fixates on.
  *
  * "Three random non-tank players" — with two constraints the word "random" does
@@ -3853,7 +3875,9 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // three more would put fixate frontals on the raid with no cast to read
     // them off. Derived from the mechanic list rather than flagged on the add,
     // so wiring up a summon cannot forget to switch the wave off.
-    const list = w.boss.adds.filter(a => !a.phaseOnly && !summonedIds(w.boss).has(a.id))
+    // Nor are the pieces of another add — see splitIds.
+    const list = w.boss.adds.filter(a =>
+      !a.phaseOnly && !summonedIds(w.boss).has(a.id) && !splitIds(w.boss).has(a.id))
     // Never more than a handful on the field. A wave landing on top of a wave
     // you have not cleared is a wipe you cannot play out of, and it teaches
     // nothing except that the trainer is unfair.
@@ -5112,11 +5136,32 @@ export function step(w: World, input: Input, dtMs: number) {
   // zero on its own leaves half the raid with nothing to fight and half a fight
   // that cannot end, and the encounter's own answer to uneven damage is to heal
   // the weaker back up rather than to let it fall over.
+  //
+  // A golem held at the pin also stops being a TARGET, which is the half of this
+  // that was missing and it made the fight unfinishable for two roles out of
+  // three. `alive` was only ever cleared in the shot loop above, on `hp <= 0` —
+  // so getting your golem to the pin and then past it needed a single shot worth
+  // more than 0.005. Per shot, with two entities up on a 160 second pull:
+  //
+  //     dps     0.005435   clears it
+  //     tank    0.004457   does not
+  //     healer  0.004076   does not
+  //
+  // A tank or healer chipped their golem to 0.0005, this block restored it to
+  // 0.005, and that loop ran until the enrage — the "3% wipe" in the balance
+  // table. There is no burn window on this fight and no `burst` on a healer's
+  // bar, so no amount of skill got past it either.
+  //
+  // Nothing about the MECHANIC changes: the golem still parks at half a percent
+  // and still waits for its twin, exactly as written above. It simply stops
+  // soaking shots that can no longer move it, so `nearestBoss` sends you to the
+  // survivor — which is what a dps has always experienced, and the only reading
+  // under which all three roles are playing the same fight.
   if (w.boss.sided) {
     const live = w.bosses.filter(b => !b.def.untargetable)
     const allDown = live.every(b => b.hp <= 0.005)
     for (const b of live) {
-      if (b.hp <= 0.005 && !allDown) b.hp = 0.005
+      if (b.hp <= 0.005 && !allDown) { b.hp = 0.005; b.alive = false }
       else if (allDown) { b.hp = 0; b.alive = false }
     }
   }

@@ -53,6 +53,43 @@ export type Rule =
   /** Outside the shape at resolve = failure. Soaks, and "stay in melee". */
   | { type: 'beInside' }
   /**
+   * One cast that bites several times in the same place, and each bite takes a
+   * stack of the fight's `counter` off every body standing in it — but only the
+   * first bite a body takes. A second bite of the same cast kills them.
+   *
+   * Ravenous Feast, and the only thing on the Twin Fangs that moves the counter
+   * downward. The raid leader states the whole rule in two sentences: "the
+   * player needs to stand in it to remove 1 stack ... the player can only be in
+   * the circle when it expires once and remove 1 stack, standing in the circle
+   * more than one time kills them." The real ability is the same shape — the
+   * tactic file's `1310096` Feasted "blocks further removal for 8s and
+   * multiplies Feast damage by nine", which is a second bite being fatal
+   * expressed as a number rather than as a rule.
+   *
+   * Emphatically NOT `beInside`. That judges the player's feet at one resolve
+   * moment and scores them for being outside, and being outside is CORRECT PLAY
+   * for two of the three bites. The only failure here is greed: taking a second
+   * one. A raider at zero stacks who never goes near it has played it perfectly
+   * and must never be named for it.
+   *
+   * `bites` fire `biteGapMs` apart out of one instance, re-armed at the end of
+   * `resolveInstance` rather than spawned as `channel` children. Children go
+   * back through `fire()`/`spawn()` and re-roll their origin, and the mechanic's
+   * defining property is that the circle "will expire 3 times but spawn in the
+   * same place each time" — a place the raid can commit to walking to and out of
+   * three times. Re-arming one instance gives that for free, and `Instance.fed`
+   * can then be the memory of who has already had theirs.
+   *
+   * The tank holding the entity that CAST it is exempt from all of it — no shed,
+   * no feeding, no death — for the same reason `groupSoak` exempts the same body
+   * from the Mutilated Gash: the melee leash welds them inside the circle and
+   * walking out of it is a raid wipe, so the mechanic would kill them on bite
+   * two for doing their job perfectly. They still count as a body. The
+   * consequence is deliberate and worth knowing: a tank welded to the caster can
+   * never shed either, so their count only ever climbs.
+   */
+  | { type: 'shedStack'; amount: number; bites: number; biteGapMs: number }
+  /**
    * Several small pickups that vanish the instant someone runs over them.
    * Anything still on the floor when the timer expires ruptures onto the raid.
    *
@@ -79,6 +116,39 @@ export type Rule =
    * failure is a state you are allowed to sit in, not an event you miss.
    */
   | { type: 'keepApart'; minYards: number }
+  /**
+   * A tanked entity that punishes the raid whenever its own holder walks out of
+   * range of it. The mirror of `keepApart`: that one is two tanks who must not
+   * come together, this one is one tank who must not leave.
+   *
+   * Concentrated Spittle and Clotted Bolt, one per serpent. The ability data
+   * calls both "a range check, not a dodgeable mechanic — Vexhul pelts her
+   * current target only when they are out of melee, so any occurrence means the
+   * tank walked out", and the raid leader states the consequence in one
+   * sentence: "the tanks must never move out of melee range of the bosses
+   * otherwise they both start doing heavy raid damage and wipe the raid very
+   * quickly." So there is nothing to dodge and nothing to press. It is a place
+   * you have to keep standing, all pull, while everything else in the fight
+   * tries to move you.
+   *
+   * Judged continuously and PER HOLDER, keyed on `BossUnit.targetId`. Both halves
+   * matter. Continuously, because — exactly like `keepApart` and the tank swap —
+   * the failure is a state you are allowed to sit in rather than an event you
+   * miss. Per holder, because there are two serpents and two tanks: the Vexhul
+   * tank wandering is Vexhul's range check going off, and telling the Ithraz
+   * tank about it would blame them for standing where the fight put them.
+   *
+   * `maxYards` is NOT melee range and must not be confused with it. `MELEE_RANGE`
+   * is 5, and on this floor 5 is unsatisfiable: the serpents are coiled in the
+   * acid three yards off the top edge, the nearest walkable floor to either of
+   * them is 3.00 yards away, and the AI tank station is 4.947 — so a literal
+   * melee leash would have both tanks permanently failing from the pull with
+   * nowhere on the platform to go. The number is a leash a tank can actually
+   * hold, wide enough to survive Stone Breaker's push and walk its three pools,
+   * and the static sweep in invariants.test.js re-checks it against the real
+   * polygon so it can never silently become unsatisfiable again.
+   */
+  | { type: 'holdMelee'; maxYards: number }
   /**
    * Contact kills outright — a hole in the floor, not a mechanic. Checked every
    * tick rather than at a resolve moment, and it never expires.
@@ -140,6 +210,14 @@ export type Rule =
    * Uncoiled Wrath, the uncapped rage the survivor gains when the first dies,
    * forces a synchronised kill." The Coiled Altar links its pair the same way
    * in Stage Three: "killing one berserks the other".
+   *
+   * Overrunning the window is a WIPE, not a chip off the raid bar. The raid
+   * leader's words are "if one dies and the other isnt dead within 5 seconds its
+   * a wipe due to uncoiled wrath", and the survivor's rage is uncapped in both
+   * fights that carry this rule — there is no number at which it stops. A drain
+   * taught the wrong lesson twice over: it said the sync kill was a healing
+   * check, and because the clock reset and the drain repeated, a pull could
+   * survive four or five overruns and still be a kill.
    */
   | { type: 'syncKill'; withinSec: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */
@@ -178,10 +256,65 @@ export type Rule =
    * project already had to fix once in the analyser.
    */
   | { type: 'raidDamage'; dps: number }
-  /** Carry a debuff at least this far from the arena centre before it expires. */
-  | { type: 'carryOut'; minDistance: number }
-  /** Get knocked, but not off the platform. Failure is leaving the arena. */
+  /**
+   * Carry a debuff clear of the raid before it expires.
+   *
+   * `minDistance` is measured from the ARENA CENTRE, not from the raid, and that
+   * is the whole reason the other two fields exist. On a round room the centre
+   * is where the raid stands, so "far from the middle" and "far from people" are
+   * the same sentence. On a room that is not round they come apart, and the Twin
+   * Fangs is the proof: the wedge is 32 yards of bounding radius but only 3.3% of
+   * its floor is 26 yards from the centre, only two points in that 3.3% are 12
+   * yards apart, and the whole northern ledge — where both tanks live — tops out
+   * at 18.87. A three-carrier `carryOut` at 26 was therefore unsatisfiable for
+   * the third carrier and automatically failed anybody standing on the ledge, on
+   * a fight where two of the raid's bodies are welded there.
+   *
+   * `edgeWithin` says the drop has to be AT the rim rather than merely far out —
+   * "the player and any ai bots that get this needs to drop at the edge of the
+   * platform" — which is a demand the geometry can always meet, because every
+   * room has a rim however oddly it is shaped.
+   *
+   * `apart` says two carriers may not drop on the same spot: "without stacking
+   * on each other". Measured between the live carriers of the SAME mechanic, so
+   * it is a spread rule rather than a distance-from-the-group one.
+   *
+   * Both are optional and both default to off, which is exactly what the other
+   * nine `carryOut`s in the raid want: a round floor plus a single carrier needs
+   * neither clause, and adding them there would be inventing a demand the fight
+   * never made.
+   */
+  | { type: 'carryOut'; minDistance: number; edgeWithin?: number; apart?: number }
+  /**
+   * Get knocked. Failure is leaving the arena.
+   *
+   * By default the rim catches you — you are shoved back on, take a scrape and
+   * are named for it. A `survive` that also declares `offPlatform` does not
+   * catch you: the landing is left where the push put it and the floor check at
+   * the top of `step` turns it into the fall. That is Stone Breaker, where being
+   * thrown into the venom is the whole reason the knock is a decision.
+   */
   | { type: 'survive' }
+  /**
+   * A pool only the tank holding the casting entity may soak, and MUST.
+   *
+   * Stone Breaker's three slams. Not `beInside`: that judges the player's feet
+   * and pays a flat raid chip whether or not any body covered it, so nineteen
+   * raiders standing anywhere would satisfy it and the tank's job would not
+   * exist. Not `faceAway` or `tankSwap` either — both are pinned to entity 0 by
+   * the ownership sweep, and this one is Ithraz's.
+   *
+   * The rule is one-sided in both directions. The named tank has to be standing
+   * in it when it lands, and nobody else may be scored on it at all: a dps
+   * caught in a swirly is taking damage they should have walked out of, not
+   * failing a soak they were never assigned.
+   *
+   * `missFires` is the mechanic id that goes off when the pool lands on nobody
+   * — the untanked variant, which on the Twin Fangs pushes the whole raid into
+   * the acid. Naming it in data rather than hard-coding the consequence keeps
+   * the punishment visible in the boss file next to the thing that causes it.
+   */
+  | { type: 'tankSoak'; missFires: string }
   /**
    * A stacking tank debuff. The boss applies a stack to whoever it is on; the
    * off-tank taunts before it turns lethal. Only scored when you are the tank.
@@ -599,6 +732,20 @@ export interface MechanicDef {
    */
   count?: number
   /**
+   * How many bodies a `carryOut` lands on at once. One of them is always you.
+   *
+   * Not `count`, and the two must not be merged. `count` fans copies of a shape
+   * around a rolled point on the floor; this deals a carried debuff out to
+   * several DIFFERENT raiders, each of whom then walks their own one somewhere
+   * else. The spec asks for the second thing — "the player and any ai bots that
+   * get this needs to drop at the edge of the platform, without stacking on each
+   * other" — and a fan of three circles on top of one body is not it.
+   *
+   * Left unset the mechanic lands on one body, which is what the other nine
+   * `carryOut`s in the raid already do and must keep doing.
+   */
+  carriers?: number
+  /**
    * The copies travel OUTWARD from where they spawned rather than on random
    * bearings.
    *
@@ -607,6 +754,38 @@ export interface MechanicDef {
    * and both tanks cannot leave.
    */
   radialDrift?: boolean
+  /**
+   * An `origin: 'edge'` hazard rises from a NAMED stretch of rim and travels
+   * inward across the floor, instead of appearing anywhere on it and wandering.
+   *
+   * Degrees, measured from the arena centre the way `arenaEdge` measures them:
+   * +x is 0 and +y is 90, and on the Twin Fangs +y is the mouth end of the
+   * wedge. `{ fromDeg: 10, toDeg: 170 }` is therefore "somewhere along the
+   * southern rim", which is the whole of Stir the Depths' geometry — the waves
+   * come out of the venom at the wide end and run up the room, so every raider's
+   * escape is northward or sideways and never back toward the pocket.
+   *
+   * Four separate behaviours hang off this field being PRESENT, and all four
+   * are gated on the field rather than on `origin === 'edge'` for one reason:
+   * the raid's other edge mechanic is the Coiled Altar's Axegrinder, whose own
+   * comment says it "comes off the wall and ricochets". A random facing and the
+   * bounce at the rim ARE that mechanic. Making every edge spawn inward-facing,
+   * or suppressing the bounce for every edge origin, would silently turn an axe
+   * that criss-crosses the room into one that crosses it once and leaves.
+   *
+   *   • the spawn bearing is rolled inside the arc rather than round the circle
+   *   • the hazard faces inward (see `radialDrift`, which then carries it there)
+   *     with a spread, so six of them cross in six directions rather than all
+   *     funnelling through the middle of the room
+   *   • it does not bounce off the far rim: it has crossed the platform and gone
+   *     back into the sea it came out of, so it is retired instead
+   *   • it is judged on CONTACT rather than at the instant it resolves. The
+   *     other way round, a hazard that is live for a four-second crossing would
+   *     be scored on where one arbitrary frame of it found you — see the
+   *     exemption in `case 'avoid'` and the branch that replaces it in the
+   *     linger tick, which bills the body once per hazard rather than per frame.
+   */
+  edgeArc?: { fromDeg: number; toDeg: number }
   /**
    * Whatever this spawns lands on the nearest of 12, 3, 6 or 9 o'clock.
    *
@@ -656,6 +835,58 @@ export interface MechanicDef {
   /** Pushes the player this many yards away from the shape's origin. */
   knockbackYards?: number
   /**
+   * The knock is NOT clamped back onto the rim, and every body it catches goes
+   * — the raid as well as you.
+   *
+   * `survive` was written as a shove you get scolded for: the landing is pulled
+   * back inside the floor, a failure is recorded, and you carry on. That is the
+   * right model for Circling Prey and the wrong one for Stone Breaker, where the
+   * raid leader's ruling is explicit — being thrown off the platform kills you.
+   * Measured over the real wedge, a 10-yard push away from Ithraz makes 46% of
+   * the floor a fatal place to stand and everything at y >= 14 certain death, so
+   * this flag turns a knockback nobody had to think about into the fight's one
+   * real positioning decision.
+   *
+   * Two things ride on it together and they must never be separated. Allies are
+   * thrown and killed by the same code the player is, AND the ally AI gets a
+   * knock-aware pre-position (`allyThink` step 6e). Without the second, 31 of the
+   * 72 bearings the raid used to gather on are fatal and a single cast kills
+   * roughly eight raiders — see the comment on that step.
+   *
+   * The precedent is `windPair`, which has done exactly this since the Sszorak
+   * work: it does not kill anybody itself, it simply leaves the body outside the
+   * polygon and lets the floor check in `step` do the rest. So this needs no
+   * `lethal` — which matters, because lethality is derived from the ability's
+   * category and Stone Breaker's is Important, not Deadly.
+   */
+  offPlatform?: boolean
+  /**
+   * Resolving this lands a tank stack of ANOTHER mechanic on the caster's
+   * current tank. Names that mechanic's id, and that mechanic must carry a
+   * `tankSwap` rule.
+   *
+   * Envenomed is not a cast. It is what Caustic Deluge does to the tank it is
+   * already channelling into — "+10% Caustic Deluge damage taken, stacking, ten
+   * stacks per channel" — so the stack has to ride the channel rather than
+   * arrive on a timer of its own. Without this the def would sit in the boss
+   * file and never fire, because `case 'tankSwap'` only stacks when the mechanic
+   * ITSELF resolves and Envenomed has nothing of its own to resolve.
+   *
+   * On the PARENT, unlike everything else about a channel. The tank is stacked
+   * by the channel as a whole, once — the splashes are the raid's problem and
+   * the tank is the one body on the field they are not aimed at.
+   *
+   * ONE stack per channel, not the tooltip's ten. The engine's tank-stack model
+   * is scaled to firings throughout — `maxStacks` counts casts and stacks decay
+   * at 0.35/s while untanked — so ten per channel would trip a swap inside a
+   * single Deluge and the number would stop meaning anything.
+   *
+   * This replaced `tradeTanksOnClean`, which made Stone Breaker the swap. The
+   * raid leader corrected that: Stone Breaker is a soak the tanks take turns at,
+   * and the turns fall out of Envenomed doing the swapping.
+   */
+  stacksTank?: string
+  /**
    * Which half of a split raid this belongs to. A side-tagged mechanic only
    * fires at that group, and is only scored against the player when they are
    * running with it.
@@ -697,8 +928,19 @@ export interface MechanicDef {
    *
    * Soulcoil Ignition is four Soulcoil Rites a second apart. Rolling it into a
    * single lump of damage would hide the thing the healer actually has to cover.
+   *
+   * `ringYards` and `arcDeg` place the run instead of leaving each beat to roll
+   * its own spot: the children are fanned across an arc in front of the caster,
+   * on the floor, in the order they fire. Stone Breaker is three slam pools laid
+   * out around Ithraz, and a tank cannot be asked to walk a sequence that lands
+   * somewhere different every time. Omit both and every beat rolls its own
+   * origin exactly as Soulcoil Ignition always has.
+   *
+   * Different mechanism from the `count` fan in `fire`, and kept apart from it
+   * on purpose — see `arcOnFloor`. The fan puts a ring AROUND a point all at
+   * once; this lays a bounded arc, sequenced, with the endpoints included.
    */
-  channel?: { defId: string; count: number; everyMs: number }
+  channel?: { defId: string; count: number; everyMs: number; ringYards?: number; arcDeg?: number }
   /**
    * Energy granted to the boss when this resolves.
    *
@@ -718,6 +960,100 @@ export interface MechanicDef {
    * trains both halves rather than whichever one they happened to be assigned.
    */
   alternatesWith?: { defId: string }
+  /**
+   * This mechanic IS the fight's stack counter, and `lethalAt` of it kills.
+   *
+   * Eternal Venom. The Twin Fangs tactic file opens by calling the encounter "a
+   * resource problem: Eternal Venom arrives from seven sources continuously ...
+   * and is shed only one per player per Ravenous Feast", and a trainer that
+   * models that as a raid-damage floor is teaching a different fight — one where
+   * every source is interchangeable with every other and none of them is worth
+   * dodging in particular.
+   *
+   * Declared in DATA rather than hard-coded in the engine so that everything
+   * which needs the number finds the same one: the HUD, the briefing, the
+   * debrief and the death all read `mechanics.find(m => m.counter)`. There is
+   * exactly one counter per fight by construction — a second would give the HUD
+   * two bars and the player no idea which one kills them.
+   *
+   * Only the PLAYER reaching `lethalAt` ends the pull. An ally who gets there
+   * dies where they stand and the run carries on: their body is a real loss —
+   * the raid bar drops and they leave the soak rota — but a pull that ended
+   * because the AI misplayed its globules would be a wipe with nothing the
+   * player could have done, which is the defect class this project keeps
+   * having to re-fix.
+   */
+  counter?: { lethalAt: number }
+  /**
+   * How many stacks of the fight's `counter` this mechanic hands out, and to whom.
+   *
+   * Three different bodies, because Caustic Globule pays three different ones
+   * out of a single def and no scalar could express it:
+   *   • `hit`   — the body that stood in it. Never the body it was AIMED at:
+   *               being chosen is not billed anywhere in this engine.
+   *   • `raid`  — everybody, player and allies alike. Venomous Emergence, and a
+   *               globule nobody swept.
+   *   • `soak`  — the one body that ran over the pickup on purpose. Correct play
+   *               that still costs a stack, which is the whole tension of the
+   *               soak rota.
+   *
+   * `everyMs` is how long before the SAME body can be billed again by the same
+   * instance. Omit it and one instance bills each body exactly once, which is
+   * right for anything that resolves; a lingering beam you can walk back into
+   * needs a period or it charges once and then becomes free floor.
+   */
+  applies?: { hit?: number; raid?: number; soak?: number; everyMs?: number }
+  /**
+   * How long this shape sits on the floor inert before it reads as dangerous.
+   *
+   * Caustic Deluge's splashes land as pale rings and only bite 1.5 seconds
+   * later. That delay is the whole reason ten circles across a small wedge is a
+   * room you can walk through rather than a carpet: the raid reads where the
+   * pair went while it is still harmless, and moves once.
+   *
+   * RENDER-ONLY, and deliberately so. `avoid` is judged exactly once, at
+   * resolve, so an armed-vs-unarmed circle scores identically and there is
+   * nothing here for the engine to branch on — the telegraph IS the window.
+   * That makes this a drawing instruction and not a rule, which is why it must
+   * never reach `brief.ts`, a tooltip, `what:`, `good:` or `failText:`. Told
+   * "it arms after a second and a half", a raider starts counting; shown a ring
+   * that goes from pale to lit, they look at the floor. Pinned by a test.
+   */
+  armsAfterMs?: number
+  /**
+   * A beam that TURNS while it is live. Vile Flood, and nothing else in the raid.
+   *
+   * Every other shape in this engine is aimed once and then either sits there or
+   * drifts in a straight line. This one is a cast that is still happening: the
+   * cone switches on pointing somewhere and arcs round the platform for the
+   * whole of its `lingerMs`, so what a raider has to read is not where it is but
+   * which way it is going and how much floor it has left to cover.
+   *
+   *   • `startDeg` — the bearing it switches on at, degrees, +x is 0 and +y is
+   *     90, measured from the CASTER. It is deliberately a bearing with no floor
+   *     under it: the beam has to come on over water and arrive at the platform
+   *     already moving, or the raiders standing where it starts are hit by
+   *     something that was never telegraphed anywhere.
+   *   • `degPerSec` — how fast it turns. The binding constraint is the TRAILING
+   *     edge at the furthest floor point: turn faster than a player can run
+   *     sideways and the beam is not dodgeable, it is a die roll. Measured on
+   *     the Twin Fangs wedge, 15°/s is 9.49 yd/s at the furthest floor point,
+   *     against `PLAYER_SPEED` of 14.
+   *   • `mirror` — alternate the handedness cast by cast, reflecting the whole
+   *     sweep about the room's x = 0 axis (bearing θ becomes 180 - θ and the
+   *     turn reverses). Three Submerges in a pull, and a beam that always went
+   *     the same way would have one memorised answer; mirrored, the half of the
+   *     room that stays clear is the other half every time. Only sound in a room
+   *     that is symmetric about that axis — this wedge is, exactly — because the
+   *     guarantee that the sweep leaves a lane is proved against the polygon and
+   *     a reflection only preserves it if the polygon is preserved.
+   *
+   * The cost is charged on CONTACT rather than at the resolve, for the same
+   * reason a Stir the Depths wave is: there is no instant at which a ten-second
+   * torrent "goes off". See the exemption in `case 'avoid'` and the branch that
+   * replaces it in the linger tick.
+   */
+  sweep?: { startDeg: number; degPerSec: number; mirror?: boolean }
 }
 
 /**
@@ -828,6 +1164,63 @@ export interface PhaseDef {
    * and the wind either runs a beat nobody expected or never reverses.
    */
   windToCysts?: boolean
+  /**
+   * A SCRIPT rather than a metronome: each entry waits for the one before it.
+   *
+   * Every other rotation in this raid is a clock. `loopIntervalSec` elapses, the
+   * next id in `loop` fires, and whether the previous mechanic has finished is
+   * nobody's business — which is right for a fight whose mechanics are supposed
+   * to pile on top of one another, and wrong for the Twin Fangs, where the raid
+   * leader's description is a list of "once this completes". "The Stone Breaker
+   * and soaks do not happen at the same time as the Caustic Deluge and the
+   * Globules" is not a gap you can hand-tune into an interval; it is a
+   * dependency, and the only honest way to express it is to make the next step
+   * wait.
+   *
+   * So on a sequential stage `loopIntervalSec` stops being the period and
+   * becomes the BEAT BETWEEN steps: the gap from the previous step closing to
+   * the next one being cast. A stage with nothing pending counts that gap down
+   * and fires; a stage waiting on a step does not count at all.
+   *
+   * Two consequences worth stating, because both look like bugs from outside:
+   *
+   *   • the whole loop is unlocked from the first tick. `unlockedCount`
+   *     introduces mechanics a few at a time, which on a scripted stage would
+   *     not slow the fight down, it would REORDER it — the first pass would run
+   *     the first two steps twice over and the strict order the script exists to
+   *     express would be a fiction.
+   *   • the stage ends when the last step closes. That is its exit condition and
+   *     it needs no field of its own, exactly as the pairing and the Maelstrom
+   *     exits need none: the script running out IS the stage being over.
+   *
+   * What counts as "closed" is `stepClosure` in sim.ts, and it is the load-
+   * bearing piece — see the comment there before changing anything about it.
+   */
+  sequential?: boolean
+  /**
+   * Entities that leave their station for the duration of the stage.
+   *
+   * "When submerge happens Vexhul will disappear and reappear in the pocket and
+   * start channeling Vile Flood ... Ithraz also disappears and spawns out in the
+   * acid." Both go somewhere OFF the walkable floor and come back to exactly
+   * where they were when the stage ends, which is why this is a phase-scoped
+   * position and emphatically not an edit to `entities[]`: their start positions
+   * are the fight's furniture for the other ninety percent of the pull, and a
+   * stage that permanently moved them would silently rewrite every measurement
+   * taken against them.
+   *
+   * It is not only a visual. Three things read it and have to:
+   *
+   *   • a `holdMelee` leash is SUSPENDED for a relocated entity. The serpents
+   *     are unreachable and immune for the intermission, so a range check
+   *     judged during one is an instant wipe for doing what the stage asks.
+   *   • the ally tanks stop being tanks for the duration and rejoin the raid,
+   *     rather than walking to a station that is now in the acid.
+   *   • anything anchored on the caster — a boss-origin cone, a channel's arc —
+   *     is laid from wherever the entity has gone, which is the point: Vile
+   *     Flood has to sweep out of the pocket and not off the ledge.
+   */
+  relocate?: { id: string; to: Vec }[]
 }
 
 /**
@@ -931,6 +1324,20 @@ export interface BossDef {
   atFullEnergy?: string
   /** Always-on mechanics, e.g. Ula'tek's Presence attrition. */
   ambient?: string[]
+  /**
+   * What the debrief says when the energy bar fills and nothing spends it.
+   *
+   * The hard end of a pull is normally "the bar filled — enraged", and on the
+   * six fights whose bar really is an enrage meter that is the truth. On the
+   * Twin Fangs it is a lie: nothing feeds the bar per second, Vile Flood puts 34
+   * on it, and 34/68/102 means the bar is a Submerge counter — the pull ends
+   * because "if the boss isnt dead by the 3rd submerge, the raid wipes", which
+   * is a mechanic with a name and a cause the player can do something about.
+   * A death screen that blamed a timer would send them away practising nothing.
+   *
+   * Omit and the generic line stands.
+   */
+  enrageText?: string
   /** Enrage timer. Survive past it and the boss wins. */
   pullLengthSec: number
   /** Boss health pool. You win by emptying it, Pineapplia-style. */
@@ -982,6 +1389,63 @@ export interface Instance {
    */
   reach?: number
   drift?: Vec
+  /**
+   * The ADD that cast this, by `Add.uid`, when an add cast it.
+   *
+   * `fromId` cannot answer this. It is set from the owning ENTITY — the def's
+   * `from` — so a Corrosive Spit fired out of the pocket by a Spawn of Vexhul
+   * points at Vexhul, nineteen yards away on the other side of the room, and
+   * nothing on the instance knew which of the three spawns actually cast it.
+   *
+   * Which mattered the moment one of them died mid-cast: dead adds are dropped
+   * wholesale from `w.adds` and nothing swept the instances, so a five-second
+   * beam outlived its caster and fired into the player from a corpse. Killing
+   * the spawns fast is the entire lever on this fight's venom income, so a beam
+   * that survives its caster quietly punishes the exact play being taught.
+   *
+   * Deliberately generic rather than a Corrosive Spit special case: every add in
+   * the raid with a `casts` link has the same defect the day it is written.
+   */
+  castByAddUid?: number
+  /**
+   * Body id -> the ms at which this instance last charged them a counter stack.
+   *
+   * -1 is the player, anything else an `Ally.id`, matching `aimedAt`. Kept on the
+   * INSTANCE rather than on the body because the question is "has this beam
+   * already billed me", and a flag on the body would let one hazard's charge
+   * pay for standing in another's.
+   */
+  touchMs?: Record<number, number>
+  /**
+   * `shedStack` only: how many bites of this cast are still to come, counting
+   * the one currently in the air.
+   *
+   * Set on the first resolve and counted down by the re-arm at the bottom of
+   * `resolveInstance`. `undefined` means "not started yet", which is why every
+   * read of it falls back to the rule's own `bites` rather than to zero.
+   */
+  bitesLeft?: number
+  /**
+   * `shedStack` only: the bodies this cast has already fed.
+   *
+   * -1 is the player and anything else is an `Ally.id`, the same convention as
+   * `aimedAt` and `touchMs`. On the INSTANCE rather than on the bodies because
+   * the memory is "has THIS cast fed you", and it has to be forgotten when the
+   * cast ends — a flag on the body would carry across to the next Ravenous
+   * Feast and quietly make the second one lethal from its first bite.
+   */
+  fed?: number[]
+  /**
+   * `sweep` only: how fast and which way this beam is turning, radians a second.
+   *
+   * Signed, and the sign is the whole of what `sweep.mirror` decides — so the
+   * handedness is settled once, at the cast, and every tick afterwards is
+   * `angle += spin * dt` with nothing left to look up. Storing the rate rather
+   * than the angle turned means the instance never has to remember where it
+   * started, and `angle` stays the single source of truth for where the beam is
+   * pointing, which is what the renderer and `isInside` both read.
+   */
+  spin?: number
 }
 
 /** A simulated raid member. Nineteen of them, so group mechanics are real. */
@@ -1038,6 +1502,18 @@ export interface Ally {
   /** Mutilated Gash stacks. A second one on a live stack kills them. */
   gash: number
   gashMs: number
+  /**
+   * Stacks of the fight's `counter` this raider is carrying.
+   *
+   * Beside `gash` because it is the same kind of thing — a per-body count the
+   * fight applies and the body eventually dies of — and for the same reason it
+   * has to exist at all: "the rest of the non-tank AI players soak the rest" is
+   * fiction unless the raid can actually be charged for it. Nineteen bodies that
+   * eat globules for free make the player's own soak a formality.
+   *
+   * An ally at the lethal count dies where they stand and the pull carries on.
+   */
+  venom: number
 }
 
 export interface PlayerState {
@@ -1067,6 +1543,14 @@ export interface PlayerState {
   /** Mutilated Gash stacks, and how long the current one has left. */
   gash: number
   gashMs: number
+  /**
+   * Stacks of the fight's `counter` you are carrying. Reaching `lethalAt` ends
+   * the pull, and the debrief names the counter rather than chip damage.
+   *
+   * Never falls off on its own, and only one mechanic in the raid takes any of
+   * it back off you — which is what makes it a currency rather than a debuff.
+   */
+  venom: number
   /** ms of Tempest slow left. The healer's dispel is what clears it. */
   slowMs: number
   /**
@@ -1133,4 +1617,27 @@ export interface RunResult {
    * healed up to match and the difference is progress thrown away.
    */
   entityDelta?: number
+  /**
+   * The highest the player's `counter` reached, and the worst any single ally
+   * carried. Only present on a fight that has a counter at all.
+   *
+   * Two numbers rather than one because they fail in opposite directions and
+   * the fix is different for each. Your own peak is your footwork. The raid's
+   * peak is the soak rota: if that climbs while yours does not, the pull was
+   * lost to globules nobody swept, and telling the player to dodge better would
+   * be pointing them at the wrong half of the fight.
+   */
+  venomPeak?: number
+  venomRaidPeak?: number
+  /**
+   * How many stacks the PLAYER got back off, across the whole pull.
+   *
+   * The third number, and the one that says whether they played the economy or
+   * merely survived it. A peak of six with nothing shed is a raider who never
+   * found a Ravenous Feast bite; a peak of six with four shed is a raider who
+   * took ten and worked. Yours only, not the raid's: the AI's bite rota is not
+   * something the player can influence, and reporting it here would read as a
+   * score for something they did.
+   */
+  venomShed?: number
 }

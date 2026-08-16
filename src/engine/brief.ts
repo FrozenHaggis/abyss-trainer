@@ -1,5 +1,11 @@
 import type { AddDef, MechanicDef, Role } from './types'
-import { abilitiesFor } from './sim'
+import { abilitiesFor, carryOutClauses } from './sim'
+
+/** "a", "a and b", "a, b and c" — one clause list read as a sentence. */
+function listOf(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
 
 // What a given role is actually supposed to DO about a given mechanic.
 //
@@ -112,6 +118,39 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
           yours: mine,
         }
       }
+      // Ground that TRAVELS. "Step out of the marked ground before it lands" is
+      // the instruction for a circle that appears, waits and goes off, and it is
+      // wrong in both halves for something that is already live and coming at
+      // you: there is no moment it lands, and the ground you are standing on is
+      // safe right up until it is not. Three mechanics in the raid are this —
+      // the Twin Fangs' waves, Sszorak's Tempest vortices and the Coiled Altar's
+      // Axegrinder — and all three were being briefed as puddles.
+      //
+      // What the raider needs is the one thing a still picture cannot give them:
+      // read the heading, and judge the floor by where the thing is GOING.
+      //
+      // A beam that TURNS is a third thing again, and neither line above fits
+      // it. It is not a pool that lands and it is not travelling somewhere you
+      // can step across: it is pinned to its caster and walking round the room,
+      // so the floor behind it is finished with for the rest of the cast and the
+      // floor in front of it becomes dangerous at a rate you can count. Told to
+      // "move out" a raider sidesteps and is caught by the next second of it.
+      if (def.sweep) {
+        return {
+          verb: 'READ THE ARC',
+          line: 'This one turns. It switches on out over the water and then sweeps round the platform, so the whole question is which way it is going — read that while it is still off the floor, and either stay ahead of it or step in behind it once it has passed, because ground it has already crossed is safe for the rest of the cast. Running sideways while it catches you up is how people die to this: at the far end of the room the beam moves nearly as fast as you do.',
+          yours: mine,
+        }
+      }
+      if (def.driftSpeed) {
+        return {
+          verb: 'READ THE DRIFT',
+          line: def.lethal
+            ? 'This one is moving, and it kills outright. Do not judge it by where it is — judge it by where it is heading, and clear the whole lane in front of it rather than sidestepping the shape.'
+            : 'This one is moving. Do not judge it by where it is — judge it by where it is heading: step across its path early, or in behind one that has already gone past, and never let it walk onto you while you are looking at something else.',
+          yours: mine,
+        }
+      }
       return {
         verb: 'MOVE OUT',
         line: def.lethal
@@ -153,6 +192,30 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       })
     }
 
+    case 'shedStack':
+      // Three sentences, and the order of them is the mechanic: it gives a
+      // stack back, you may only take one, and a second one kills.
+      //
+      // The last clause is the one that has to be unambiguous. Every other soak
+      // in the raid rewards more bodies for longer, and a raider who has learned
+      // that habit will stand in this until it stops — which is the most common
+      // first blood on the real fight. So the sentence says outright that the
+      // right answer is to walk out and let the next group have theirs.
+      //
+      // And it says what to do at zero. The engine's prompt is silent there on
+      // purpose, so the panel is the only place a raider can find out WHY they
+      // are being told nothing: a bite spent carrying no stacks buys nothing and
+      // costs them the cast, and the stack they pick up two mechanics later is
+      // then theirs until the next one.
+      return {
+        verb: 'IN ONCE, THEN OUT',
+        line: `The only thing in the fight that takes a stack back, and it takes exactly ${def.rule.amount === 1 ? 'one' : def.rule.amount}. It bites ${def.rule.bites} times without moving, so the raid splits into ${def.rule.bites} groups and each takes one bite — get in for yours, get straight out, and stay out for the other two. Being in it a second time on the same cast kills you outright. If you are carrying nothing, do not go in at all: you would burn your one bite for a stack you do not have and have no way to shed the next one.`,
+        // Nobody is ever blamed for staying out of it — that is correct play for
+        // two bites in three — so `roles` here is about who the fight expects to
+        // be in the rota at all, and every body in the raid carries the counter.
+        yours: def.roles.includes(role),
+      }
+
     case 'collect':
       return {
         verb: 'RUN OVER IT',
@@ -174,9 +237,17 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       // lethal pool in the middle "away from the group" and "away from the
       // centre" can point in opposite directions — so the old wording could
       // send a carrier straight at the thing that kills on contact.
+      //
+      // The clauses are read out of the engine rather than written here, and
+      // that is the whole point of `carryOutClauses`. This panel is read before
+      // the pull, the prompt is shouted during it, and the resolve decides
+      // whether you failed — three accounts of one rule, which on Coiling Ichor
+      // had already drifted apart: the mechanic demands a rim drop and a spread
+      // as well as a distance, and a briefing naming only the distance was
+      // describing a different mechanic from the one being scored.
       return {
         verb: 'RUN IT OUT',
-        line: `You are carrying it. Get at least ${def.rule.minDistance} yards out from the middle of the room before it expires, drop it there, and come back.`,
+        line: `You are carrying it. Before it expires be ${listOf(carryOutClauses(def.rule).map(c => c.says))}, drop it there, and come back.`,
         yours: mine,
       }
 
@@ -252,6 +323,26 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
             yours: mine,
           }
 
+    case 'holdMelee':
+      // The tank's half and everybody else's half are different sentences, and
+      // the second one is not "nothing to do here". A leash nobody can help with
+      // is still the fastest way this fight ends: the bar empties in about four
+      // seconds, which is inside a healer's reaction time, so the only useful
+      // thing the other eighteen bodies can know is what the sudden collapse
+      // was — and, for the raid, not to drag their tank out of position chasing
+      // a soak or a stack.
+      //
+      // The yardage is spoken plainly rather than dressed up as "melee range",
+      // because it is not melee range and a tank told to be in melee would try
+      // to stand on a serpent that is coiled in the acid.
+      return role === 'tank'
+        ? {
+            verb: 'STAY ON IT',
+            line: `Do not leave it. Anything further than about ${def.rule.maxYards} yards from the one you are holding and it stops attacking you and starts on the raid instead — there is no cast to read, no cooldown that answers it, and the raid bar is gone in seconds. Sidestep on the spot, and if something throws you, walk straight back before you do anything else.`,
+            yours: mine,
+          }
+        : notYours(`The tanks are welded to their serpents — anything past about ${def.rule.maxYards} yards and it turns on the raid instead. Nothing here is yours except not pulling them off it: never make a tank chase you, and expect the bar to fall off a cliff rather than sag if one of them is dragged out.`)
+
     case 'keepApart':
       return role === 'tank'
         ? { verb: 'PULL THEM APART', line: `Hold them at least ${def.rule.minYards} yards apart. Let them close and both gain 99% damage reduction — your damage stops mattering.`, yours: mine }
@@ -270,16 +361,46 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         : notYours('A burn window for the damage dealers. Keep the raid up so they can use it.')
 
     case 'survive':
-      return {
-        verb: 'BRACE',
-        line: 'You are going to be knocked. Position so the push carries you across the floor rather than off the edge.',
+      // A knock the rim catches and a knock it does not are two different
+      // mechanics wearing one rule, and one line cannot serve both. "Brace" is
+      // sound advice for a shove that ends on the floor and it is how you die to
+      // the other kind: bracing means standing still, and standing still is the
+      // failure when half the room's landings are in the acid.
+      //
+      // WHERE the safe half of the floor is stays in the boss file. It is a fact
+      // about one polygon — this rule is also Ula'tek's Circling Prey, on a
+      // completely different room — so the derived line says the band exists and
+      // `MechanicDef.brief` says where it is. That is exactly the split the
+      // override was added for.
+      return override({
+        verb: def.offPlatform ? 'GET OFF THE EDGE' : 'BRACE',
+        line: def.offPlatform
+          ? 'This one does not stop you at the edge. Everyone is thrown the same distance directly away from the caster, so where you are standing when it goes off decides whether you land on the floor or in what is under it — and a large part of this room has nothing under it. Move BEFORE the cast finishes: get well inside, on the caster\'s side of the room, and leave yourself the length of the push between you and the far edge.'
+          : 'You are going to be knocked. Position so the push carries you across the floor rather than off the edge.',
         yours: mine,
-      }
+      })
+
+    case 'tankSoak':
+      // Only one person in the raid can answer this, and the other nineteen
+      // being told to stay off it is half the mechanic — an unsoaked one does not
+      // merely go unhealed, it wipes the group.
+      return role === 'tank'
+        ? {
+            verb: 'SOAK THEM ALL',
+            line: 'These are yours, and only yours — you have to be standing in every one of them as it lands, in the order they appear. They are laid out around the boss so you can read the whole run off the first one: walk the line, do not chase it. Miss a single pool and nobody is struck, which is far worse than you taking all three.',
+            yours: mine,
+          }
+        : notYours('One tank eats every one of these. Get out of them and stay out — a body in the swirly is standing where the soak has to happen, and it takes the slam for nothing.')
 
     case 'syncKill':
+      // The window is spoken, and it is spoken as a wipe rather than as damage.
+      // "Leaving one behind enrages it" is true and useless: it describes a
+      // debuff on a boss, when what the raider needs to know is that the pull is
+      // over. The number comes off the rule so the sentence cannot drift from
+      // what the engine counts.
       return {
         verb: 'EVEN THEM OUT',
-        line: 'They do not share a health pool. Keep the bars level and kill them together — leaving one behind enrages it.',
+        line: `They do not share a health pool, and the survivor's rage has no cap. Keep the bars level all the way down and kill them together — more than ${def.rule.withinSec} seconds between the two deaths and the one still standing wipes you, however healthy the raid was a moment earlier.`,
         yours: mine,
       }
 
@@ -322,6 +443,23 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       }
 
     case 'raidDamage': {
+      // The fight's stack counter. Everything else in this branch is a number a
+      // healer covers; this one is a resource every raider spends the pull
+      // managing, and it kills the body carrying it at a stated count.
+      //
+      // `yours` is true for all three roles regardless of the def's own `roles`,
+      // and that is not an oversight. `roles` decides who gets BLAMED, and
+      // nobody is ever blamed for a counter — but every body in the raid carries
+      // one and every body dies at the cap, so a dps reading "not your job" above
+      // the thing that is about to kill them would be the panel lying.
+      const cap = def.counter
+      if (cap) {
+        return {
+          verb: 'WATCH YOUR STACKS',
+          line: `Permanent, and it never falls off on its own — ${cap.lethalAt} stacks kills you. Everything this fight does hands them out: standing in something, soaking a pickup, a globule nobody swept, the cast that summons the adds. Only one ability in the whole fight takes one back, and only one at a time, so treat every avoidable stack as one you cannot get rid of.`,
+          yours: true,
+        }
+      }
       // A proximity aura is the one raidDamage that IS positional. Both Marks
       // carry a radius, stack forever, and stack from EACH golem you are inside
       // — so "nothing to dodge and nothing you can do wrong" was the exact
@@ -345,6 +483,27 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
           verb: 'ADDS INCOMING',
           line: 'The cast itself cannot be dodged or stopped — what matters is what it leaves behind. Watch where they surface and get on them immediately: every one still alive keeps casting, so a slow kill is not a slow kill, it is another mechanic on the raid.',
           yours: true,
+        }
+      }
+      // A channel is a run of casts, not a cast.
+      //
+      // Caustic Deluge is the case that forced this: dps: 0 on the parent, so it
+      // fell into the branch below and the panel said "this does no damage on
+      // its own — it multiplies everything else", which is the Soulcoil stack
+      // text and describes a completely different thing. What the cast bar
+      // actually means is that five separate deliveries are coming, and the one
+      // you are looking at is the first of them.
+      //
+      // Note what this does NOT say: nothing about how long a circle sits inert
+      // before it starts to bite. That is a floor telegraph, it is drawn and
+      // never written down, and this file must not learn the field's name — the
+      // rule is pinned by a test that greps this file for it.
+      if (def.channel) {
+        const beat = def.channel.everyMs / 1000
+        return {
+          verb: 'IT COMES IN BEATS',
+          line: `The cast bar is not the hit. It opens a channel that lands ${def.channel.count} separate times, one every ${beat === Math.round(beat) ? beat : beat.toFixed(1)}s — so plan for the whole run of them rather than for the moment the bar fills, and do not settle anywhere until the last one is down.`,
+          yours: def.roles.includes(role),
         }
       }
       // A counter with no damage of its own. Saying "heal through it" invites a

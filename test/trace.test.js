@@ -524,7 +524,10 @@ for (const [key, dir] of present) {
     const phases = phaseDefs(key)
     // `windToCysts` is an exit like the others: the Maelstrom ends when every
     // glob on the floor has burst, and entering it guarantees there are two.
-    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead', 'windToCysts']
+    // `sequential` is one for the same reason — a script ends when it runs out
+    // of script, so a scripted stage cannot be a dead end unless its `loop` is
+    // empty, which the id-resolution sweep above already forbids.
+    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead', 'windToCysts', 'sequential']
     for (const p of phases.slice(0, -1)) {
       const id = strField(p, 'id') ?? '?'
       assert.ok(EXITS.some(field => new RegExp(`\\b${field}:`).test(p)),
@@ -540,7 +543,13 @@ for (const [key, dir] of present) {
       const last = phases[phases.length - 1]
       const id = strField(last, 'id') ?? '?'
       const wraps = phases.every(p => EXITS.some(f => new RegExp(`\\b${f}:`).test(p)))
-      const cycles = /endsAtFullEnergy/.test(phases[0])
+      // Two ways a stage list can wrap. Sszorak's flurry ends when the bar fills
+      // and hands the fight to the Maelstrom, which hands it back. The Twin
+      // Fangs' cadence ends when its script runs out and hands the fight to the
+      // Submerge, which hands it back — the same wrap, expressed with a
+      // different exit, and reading only for `endsAtFullEnergy` would have let a
+      // scripted last stage with no way out through unchecked.
+      const cycles = /endsAtFullEnergy|sequential/.test(phases[0])
       if (cycles) {
         assert.ok(wraps,
           `${key} cycles its stages, so phase '${id}' is not the last one — it hands the ` +
@@ -921,4 +930,196 @@ test('avoid frontals do not track the player', () => {
   const body = sim.slice(i, i + 320)
   assert.ok(body.includes("rule.type === 'faceAway'"),
     'boss frontals track unconditionally — an avoid cone glued to the player cannot be dodged')
+})
+
+// ── the stack economy ────────────────────────────────────────────────────────
+//
+// One removal is the fight's central claim, and the easiest thing in it to
+// erode. The Twin Fangs tactic file: Eternal Venom "arrives from seven sources
+// continuously ... and is shed only one per player per Ravenous Feast". The
+// moment anything else quietly takes a stack off — a phase transition tidying
+// up, a revive, a helpful clamp — the fight stops being a resource problem and
+// becomes seven flavours of dodging, which is the encounter it was already
+// being taught as.
+//
+// So this pins the direction of travel: venom goes UP everywhere and comes DOWN
+// in exactly one function, which exactly one rule may call.
+test('only one function anywhere can take a stack off the counter', () => {
+  const sim = readFileSync('src/engine/sim.ts', 'utf8')
+  const lines = sim.split(/\r?\n/)
+
+  // Where `shedVenom` begins and ends. Bounded by the next top-level closing
+  // brace rather than by a character count, because a window measured in
+  // characters is a window that expires the first time somebody adds a comment.
+  const start = lines.findIndex(l => /function shedVenom\b/.test(l))
+  assert.ok(start >= 0, 'sim.ts has no shedVenom — the counter has no single home for removals')
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i] === '}') { end = i; break }
+  }
+
+  // Every line in the engine that writes a body's venom count at all.
+  const writes = lines
+    .map((text, i) => ({ text, n: i }))
+    .filter(l => /\.venom\s*(\+=|-=|\+\+|--|=[^=])/.test(l.text))
+  assert.ok(writes.length > 0, 'nothing in sim.ts writes a venom count — this check would be vacuous')
+
+  for (const w of writes) {
+    if (/\.venom\s*\+=/.test(w.text)) continue          // upward, and anything may do that
+    if (w.n > start && w.n < end) continue              // the one legitimate home
+    // The drill revive is the single exception, and it is not a shed: a drill
+    // rep is a fresh pull of one mechanic, so the count starts over with you.
+    // Left standing it would kill you on rep ten with a death the drill itself
+    // caused, and then do it again, faster, forever.
+    assert.match(w.text.trim(), /^w\.player\.venom = 0$/,
+      `sim.ts:${w.n + 1} lowers a venom count outside shedVenom: ${w.text.trim()}`)
+    assert.ok(lines.slice(Math.max(0, w.n - 12), w.n).some(l => l.includes('w.drillId && !w.player.alive')),
+      `sim.ts:${w.n + 1} zeroes venom somewhere other than the drill revive`)
+  }
+
+  // And who may call it. Ravenous Feast is the fight's one shedder; the rule it
+  // lands as is `shedStack`. Until that rule exists there must be no callers at
+  // all — an uncalled removal is safe, a removal wired to something else is the
+  // whole defect.
+  const callers = [...sim.matchAll(/shedVenom\(/g)]
+    .map(m => m.index)
+    .filter(i => !/function shedVenom\($/.test(sim.slice(Math.max(0, i - 24), i + 10)))
+  const shed = sim.indexOf("case 'shedStack':")
+  for (const at of callers) {
+    assert.ok(shed > 0 && at > shed && at < sim.indexOf('break', shed),
+      'shedVenom is called from outside the shedStack rule — Ravenous Feast is the only ' +
+      'thing on this fight that takes a stack back off anybody')
+  }
+})
+
+// ── the arming delay stays on the floor ──────────────────────────────────────
+//
+// Caustic Deluge's splashes land inert and bite 1.5 seconds later. That is a
+// DRAWING instruction and nothing else: `avoid` is judged once, at resolve, so
+// an armed circle and an unarmed one score identically and there is nothing for
+// the engine to branch on. The raid leader's requirement is exact — the delay
+// may be read in render.ts and nowhere else, and it must never appear in a
+// briefing, a tooltip, `what:`, `good:` or `failText:`.
+//
+// The reason is a teaching one rather than a tidiness one. Told "it arms after a
+// second and a half", a raider starts counting; shown a ring that goes from pale
+// to lit, they look at the floor, which is where the answer is and where it will
+// still be on a fight whose numbers nobody published. It survives exactly one
+// well-meaning edit, so it is pinned here.
+test('the arming delay is drawn and never spoken', () => {
+  const FIELD = 'armsAfterMs'
+  const render = readFileSync('src/engine/render.ts', 'utf8')
+  assert.ok(render.includes(FIELD),
+    `render.ts no longer reads ${FIELD} — the circles draw as live hazards from the frame ` +
+    'they land, which is the carpet the delay exists to prevent. If the field is gone, ' +
+    'delete this test with it rather than letting it pass vacuously')
+
+  const brief = readFileSync('src/engine/brief.ts', 'utf8')
+  assert.ok(!brief.includes(FIELD),
+    `brief.ts mentions ${FIELD}. The arming window is a floor telegraph, not a rule — ` +
+    'a raider told the number counts instead of looking')
+
+  // Everywhere else in the app. types.ts declares it and render.ts reads it; the
+  // boss files carry it as data. Any other file is somebody wiring a drawing
+  // hint into behaviour or into text.
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)])
+  const allowed = new Set([join('src', 'engine', 'types.ts'), join('src', 'engine', 'render.ts')])
+  const sources = walk('src').filter(f => /\.tsx?$/.test(f))
+  assert.ok(sources.length > 5, 'found almost no source files — this check would be vacuous')
+  for (const f of sources) {
+    if (allowed.has(f) || f.startsWith(join('src', 'bosses'))) continue
+    assert.ok(!readFileSync(f, 'utf8').includes(FIELD),
+      `${f} reads ${FIELD}. It is render-only: types.ts declares it, render.ts draws it, ` +
+      'the boss files set it, and nothing else may know it exists')
+  }
+
+  // And the defs that declare it must not describe it either. A tooltip is the
+  // same leak as a briefing, one file further out.
+  for (const [key] of present) {
+    for (const m of mechanicDefs(key)) {
+      if (!new RegExp(`\\b${FIELD}:`).test(m.blk)) continue
+      for (const field of ['what', 'good', 'failText', 'brief']) {
+        const text = strField(m.blk, field)
+        if (!text) continue
+        assert.ok(!/\barm(s|ed|ing)?\b|\bactivat/i.test(text),
+          `${key}/${m.id}: its ${field} line talks about the circle arming — ` +
+          `"${text}". The delay is shown on the floor, never written down`)
+      }
+    }
+  }
+})
+
+// The count is engine state, and the interface only ever reads it. A HUD or a
+// debrief that "tidied up" a stack would be doing the one thing the fight says
+// nothing but Ravenous Feast may do, from a file nobody would think to look in.
+test('nothing outside the engine writes a venom count', () => {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)])
+  const sources = walk('src').filter(f => /\.tsx?$/.test(f) && f !== join('src', 'engine', 'sim.ts'))
+  assert.ok(sources.length > 5, 'found almost no source files — this check would be vacuous')
+  for (const f of sources) {
+    for (const [i, line] of readFileSync(f, 'utf8').split(/\r?\n/).entries()) {
+      assert.ok(!/\.venom\s*(\+=|-=|\+\+|--|=[^=])/.test(line),
+        `${f}:${i + 1} writes a venom count from outside the simulation: ${line.trim()}`)
+    }
+  }
+})
+
+// ── the counter's cap is the number the fight tells you ──────────────────────
+//
+// This one was live on the panel for the whole of the Twin Fangs'
+// implementation: `venom.what` read "At 9 stacks
+// 1292348 executes the carrier" — the number in data/abilities — above a
+// `counter` that kills at 10, which is the raid leader's number and the one the
+// engine obeys. Nine is what the raider counts to; ten is what kills them.
+//
+// A trainer may absolutely disagree with its source data. What it may not do is
+// disagree with ITSELF on the one number a raider is going to count, so the rule
+// is that every "N stacks" in a countered def's own prose is the cap. Where the
+// data says something else, say so in a comment — comments are stripped before
+// this runs, and recording the contradiction is the house style.
+//
+// The roles half is the same claim from the other end. This def used to be
+// `['healer']`, from when it was nothing but a raid-damage floor and the count
+// was somebody else's arithmetic. A counter is on every body in the room: the
+// tank welded to a serpent who can never shed, the dps paying a stack per
+// globule, the healer watching the bar. All three of them die of it, so all
+// three of them are briefed on it.
+test('a lethal counter is briefed to everyone, at the number that actually kills', () => {
+  let checked = 0
+
+  for (const [key] of present) {
+    for (const m of mechanicDefs(key)) {
+      const counter = literalAfter(m.blk, 'counter')
+      if (!counter) continue
+      checked++
+
+      const cap = Number(/lethalAt:\s*(\d+)/.exec(counter)?.[1])
+      assert.ok(cap > 0, `${key}/${m.id}: counter declares no lethalAt`)
+
+      // `m.blk` is comment-free — see codeOf/stripComments — so this reads the
+      // strings the player is shown and nothing an author wrote to themselves.
+      const quoted = [...m.blk.matchAll(/(\d+)\s*[- ]?stacks?\b/gi)].map(x => Number(x[1]))
+      assert.ok(quoted.length > 0,
+        `${key}/${m.id}: kills at ${cap} stacks and never says so. The cap is the one number ` +
+        'on this fight a raider counts to, and it is not written anywhere they can read it')
+      for (const n of quoted) {
+        assert.equal(n, cap,
+          `${key}/${m.id}: its briefing says "${n} stacks" and the counter kills at ${cap}. ` +
+          'Whichever is right, the panel and the engine cannot both be the authority — fix ' +
+          'the prose and leave a comment recording what the source data claims')
+      }
+
+      const roles = (/roles:\s*\[([^\]]*)\]/.exec(m.blk)?.[1] ?? '')
+        .split(',').map(r => r.trim().replace(/'/g, '')).filter(Boolean)
+      for (const r of ['tank', 'dps', 'healer']) {
+        assert.ok(roles.includes(r),
+          `${key}/${m.id}: a counter that executes at ${cap} is not briefed to a ${r}. ` +
+          'Every body in the raid carries its own count and every one of them can die of it')
+      }
+    }
+  }
+
+  assert.ok(checked > 0, 'no mechanic declares a counter — this check would pass vacuously')
 })

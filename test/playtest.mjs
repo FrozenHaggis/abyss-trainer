@@ -20,6 +20,56 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 // than averaged away.
 const SEEDS = process.env.SEED ? [Number(process.env.SEED)] : [1337, 2024, 90210]
 
+/**
+ * Every `Rule` variant, and what this bot does about it.
+ *
+ * The instrument's own blind spots, written down. The bot is a measuring device,
+ * so a rule it has never heard of does not read as "the bot ignored it" — it
+ * reads as the FIGHT being too hard, and the README records four cells that
+ * printed exactly that way. The last pass shipped four new primitives and the
+ * bot knew about none of them; the verifier then mistook three instrument gaps
+ * for difficulty before finding the cause.
+ *
+ * `invariants.test.js` asserts these keys are exactly the `Rule` union in
+ * types.ts, so a 27th variant breaks the build here until somebody has decided
+ * what a competent player does about it. Deciding "nothing" is allowed and is
+ * why several entries below say so out loud — what is not allowed is nobody
+ * having looked. That test reads this table as TEXT rather than importing it,
+ * because importing this file runs the whole sweep.
+ */
+const BOT_KNOWS = {
+  avoid: 'flees the shape; a fanned lane is left sideways, everything else radially',
+  beInside: 'walks into the soak unless carrying something',
+  collect: 'runs over the nearest pickup unless anchored as a tank',
+  keepApart: 'nothing to press — the anchored-tank leash below is what answers it',
+  lethalGround: 'absolute exclusion, and a hard constraint on the movement resolver',
+  pairUp: 'walks at the partner whose orbs complete its own, steering round the rest',
+  drainNearest: 'deliberately nothing: where the boss stands is the AI tank\'s call',
+  trail: 'keeps moving so the ground it paves is behind it',
+  burnWindow: 'holds `burst` for the window instead of spending it on cooldown',
+  syncKill: 'no fight declares one any more; target discipline is driven by the '
+    + 'engine\'s own kill-spread warning, below',
+  faceAway: 'points the boss away from the raid while holding it',
+  aimAway: 'deliberately nothing: the beam re-aims at the player while it telegraphs, '
+    + 'so there is no pre-position a bot could make',
+  press: 'presses interrupt/dispel on a cadence and taunt off the engine\'s prompt',
+  raidDamage: 'deliberately nothing to dodge — it presses raidcd when the bar drops',
+  carryOut: 'walks it to the distance THIS mechanic asks for, not to a literal',
+  survive: 'deliberately nothing: the knockback is answered by not being at the rim, '
+    + 'which the movement resolver already enforces',
+  tankSwap: 'takes the swap where the fight trips on every cast',
+  combo: 'deliberately nothing: a container that fires its parts, each handled on its own',
+  groupSoak: 'into the cone when its group is called, well clear of it when not',
+  stackingDot: 'deliberately nothing: the two in the raid are consequences of another '
+    + 'mechanic being failed, not casts with an answer of their own',
+  windPair: 'lines up on the partner blown the other way',
+  feed: 'fetches the fish and holds it until the bar is nearly full',
+  polarity: 'deliberately nothing at cast time — the cure is chased off `player.element`',
+  elementPool: 'runs into the OPPOSITE element, outranking a pickup',
+  launchPad: 'gets airborne when a wave is on the floor',
+  wave: 'not dodged — it is answered by being on a mushroom, above',
+}
+
 /** The eight headings WASD can produce, normalised. */
 const S = Math.SQRT1_2
 const DIRS = [
@@ -82,9 +132,31 @@ function play(boss, role, smart, seed, side = 'green') {
   // a recorded failure every single flurry.
   const swapEveryCast = boss.mechanics.some(m =>
     m.rule.type === 'tankSwap' && m.rule.maxStacks <= 1)
+  // What a wave is going to come OUT of.
+  //
+  // A Blast Wave's own telegraph is 2.5 seconds and its only answer is being on
+  // a mushroom, which scatter within 35 yards of the arena centre — so a bot
+  // that waited for the front to appear was starting a thirty-yard sprint with
+  // two and a half seconds to run it, and arrived a stride short. That is not
+  // the fight being hard: the bomb is planted ten seconds before the wave and
+  // any player who has seen this once is standing on a mushroom the whole time.
+  // The bot cannot pre-position for a cast that has not happened, but it can
+  // read a chain that has already started, which is what this is.
+  const waveIds = new Set(boss.mechanics.filter(m => m.rule.type === 'wave').map(m => m.id))
+  const bringsWave = new Set(boss.mechanics
+    .filter(m => m.spawns && waveIds.has(m.spawns.defId)).map(m => m.id))
   const COMPASS = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } }
   const OPPOSITE = { N: 'S', S: 'N', E: 'W', W: 'E' }
   let ticks = 0
+  // Highest instance uid seen, so TRACE can name each cast at the moment it
+  // appears. A timeline fight is judged on WHEN things fire, and the per-second
+  // position dump below cannot answer that question at all — it was written for
+  // a fight whose cadence was one number in the boss file.
+  let lastUid = -1
+  // Mor'zahi's bar as it stood on the tick BEFORE a feed emptied it. The whole
+  // tuning target for `energyPerSec` is "roughly 70% at the moment of a feed",
+  // and that number exists for exactly one tick.
+  let lastEnergy = 0
   while (w.player.alive && !w.killed && w.elapsedMs / 1000 < boss.pullLengthSec && ticks < 40000) {
     if (!smart) {
       // A careless PLAYER, not a statue.
@@ -160,6 +232,38 @@ function play(boss, role, smart, seed, side = 'green') {
           if (d >= i.def.shape.inner - 2) { tx -= f.x * 4 * weight; ty -= f.y * 4 * weight }
           continue
         }
+        // ── a lane is left SIDEWAYS ──
+        //
+        // A `line` is anchored at its caster and measured forward, so the
+        // radial "run away from `pos`" below points straight DOWN it. On a
+        // fanned travelling lane — Shell Spin is three of them off Nama's
+        // shoulders every thirty seconds — that is the one heading that keeps
+        // you in the shell's path for its whole flight, and the shells move at
+        // 9 yd/s against a 14 yd/s run, so the bot outran nothing and was
+        // clipped by lanes it was obediently fleeing. It also read `radius`
+        // off a shape that has none and fell back to 8, so the trigger
+        // distance was a fiction as well.
+        //
+        // The projection is the same `along`/`across` the engine's own hit test
+        // uses, so the bot and the sim cannot disagree about what "in the lane"
+        // means. Escape is perpendicular, toward whichever edge is nearer.
+        if (i.def.shape.kind === 'line' && i.def.fanDeg !== undefined) {
+          const ca = Math.cos(i.angle), sa = Math.sin(i.angle)
+          const rx = w.player.pos.x - i.pos.x, ry = w.player.pos.y - i.pos.y
+          const along = rx * ca + ry * sa
+          const across = -rx * sa + ry * ca
+          const len = i.reach ?? i.def.shape.length
+          // Behind the shell, or well past its reach: not your problem.
+          if (along < -4 || along > len + 6) continue
+          const need = i.def.shape.width / 2 + 5
+          const off = Math.abs(across)
+          if (off < need) {
+            const sgn = across >= 0 ? 1 : -1
+            tx += -sa * sgn * (need - off) * 3 * weight
+            ty += ca * sgn * (need - off) * 3 * weight
+          }
+          continue
+        }
         const reach = (i.def.shape.radius ?? 8) + 6
         if (d < reach) { tx += f.x * (reach / d) * weight; ty += f.y * (reach / d) * weight }
       }
@@ -178,6 +282,128 @@ function play(boss, role, smart, seed, side = 'green') {
       if (near && !anchoredTank && !Object.keys(w.player.carrying).length) {
         tx += (near.pos.x - w.player.pos.x) / (nd || 1) * 12
         ty += (near.pos.y - w.player.pos.y) / (nd || 1) * 12
+      }
+
+      // ── the fish ──
+      //
+      // Fetch it, then walk it into a body. Weighted above an ordinary pickup
+      // because it is not one: a junk box left on the floor costs the raid a
+      // slice of its bar, and a fish left on the floor costs the only thing that
+      // empties Mor'zahi's. Deliberately NOT suppressed while carrying something
+      // else — the errand IS the answer to the enrage, and a bot that put it down
+      // to run a bomb out simply watched the bar fill instead.
+      //
+      // Delivery WAITS for the boxes, though. A carried fish has no timer at all
+      // — `fishCarried` is a flag, and the only cost of holding it is the bar
+      // ticking up — while the crates it came out of have a ten-second window and
+      // charge the raid a third of its health for each one left standing. A bot
+      // that found the fish mid-window and walked fifty yards south to deliver it
+      // abandoned three crates to do so and wiped the raid at forty-eight seconds
+      // holding the thing that would have saved it. Finish the window, then walk.
+      if (!anchoredTank) {
+        const windowOpen = w.instances.some(i =>
+          !i.resolved && !i.answered && i.def.rule.type === 'collect')
+        // And a fish is SPENT deliberately, not reflexively.
+        //
+        // Feeding empties the bar, so feeding at 18% throws away four fifths of
+        // the reset — which is exactly what the bot used to do, three times a
+        // pull, burning about eighty seconds of bar it had been handed for free
+        // and then dying to an enrage that its own haste had brought forward.
+        // The boss file says as much: "a raid cooldown lands on every fish,
+        // because every fish is planned."
+        //
+        // So hold it until the bar is nearly full — unless another fish is
+        // already lying on the floor, in which case this one has to be spent
+        // now or that one rots where it fell and a reset is lost outright.
+        const fishWaiting = w.instances.some(i =>
+          !i.resolved && !i.answered && i.def.rule.type === 'feed')
+        const spendIt = w.bossEnergy >= 70 || fishWaiting
+        if (w.fishCarried && !windowOpen && spendIt) {
+          // A destination, not a distance. Nearest body that has not eaten, and
+          // only those: the renderer draws the link to exactly this set, and
+          // walking into an empowered explorer is a rejected feed and a wasted
+          // walk.
+          let mouth = null, md = Infinity
+          for (const b of w.bosses) {
+            if (b.def.untargetable || !b.alive || b.empowered) continue
+            const d = Math.hypot(b.pos.x - w.player.pos.x, b.pos.y - w.player.pos.y)
+            if (d < md) { md = d; mouth = b }
+          }
+          if (mouth) {
+            tx += (mouth.pos.x - w.player.pos.x) / (md || 1) * 16
+            ty += (mouth.pos.y - w.player.pos.y) / (md || 1) * 16
+          }
+        } else if (!w.fishCarried) {
+          let fish = null, fd = Infinity
+          for (const i of w.instances) {
+            if (i.resolved || i.answered || i.def.rule.type !== 'feed') continue
+            const d = Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
+            if (d < fd) { fd = d; fish = i }
+          }
+          if (fish) {
+            tx += (fish.pos.x - w.player.pos.x) / (fd || 1) * 14
+            ty += (fish.pos.y - w.player.pos.y) / (fd || 1) * 14
+          }
+        }
+      }
+
+      // ── the polarity trade ──
+      //
+      // The debuff comes off in the OPPOSITE element's pool and nowhere else, and
+      // a second volley on a carrier who never traded kills them outright. So
+      // this outranks a pickup: the box costs the raid a fraction of a bar, this
+      // costs the pull. The pools are never `avoid`, so nothing is fleeing them
+      // and no suppression is needed.
+      if (w.player.element) {
+        let cure = null, cd = Infinity
+        for (const i of w.instances) {
+          if (i.def.rule.type !== 'elementPool') continue
+          if (i.def.rule.element === w.player.element) continue
+          const d = Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
+          if (d < cd) { cd = d; cure = i }
+        }
+        if (cure) {
+          tx += (cure.pos.x - w.player.pos.x) / (cd || 1) * 18
+          ty += (cure.pos.y - w.player.pos.y) / (cd || 1) * 18
+        }
+      }
+
+      // ── getting off the floor ──
+      //
+      // A Blast Wave is deliberately too wide to outrun, and the only answer is
+      // to be airborne on a mushroom when it passes. It is not an `avoid`, so the
+      // flee pass above never sees it — a bot without this walks around inside a
+      // front it has no idea is lethal. Highest weight in the file: nothing else
+      // on screen is worth being on the ground for.
+      //
+      // Two behaviours, not one, and the difference is the whole thing. A
+      // mushroom is CONSUMED on contact and the launch lasts three seconds, so
+      // stepping on one early spends the only answer and lands you back on the
+      // floor before the front arrives — the bot did exactly that when it was
+      // first taught to read the bomb, and it cost two cells that had been
+      // clearing. So: while the chain is merely running, WALK OVER AND WAIT a
+      // few yards off the nearest mushroom; once the front is actually on the
+      // floor, step on it. Waiting beside it is what a player who has seen this
+      // fight once does, and it is the only part of it the bot was missing.
+      const waveLive = w.instances.some(i => !i.resolved && i.def.rule.type === 'wave')
+      const chained = w.instances.some(i => !i.resolved && bringsWave.has(i.def.id))
+      if ((waveLive || chained) && w.player.aloft <= 0) {
+        let pad = null, pd = Infinity
+        for (const i of w.instances) {
+          if (i.resolved || i.answered || i.def.rule.type !== 'launchPad') continue
+          const d = Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
+          if (d < pd) { pd = d; pad = i }
+        }
+        if (pad) {
+          // Loiter radius: outside the pad's own trigger so it is not eaten by
+          // accident, inside a stride of it so the last step is instant.
+          const hold = waveLive ? 0 : (pad.def.shape?.radius ?? 4) + 3
+          const push = waveLive ? 24 : 11
+          if (pd > hold) {
+            tx += (pad.pos.x - w.player.pos.x) / (pd || 1) * push
+            ty += (pad.pos.y - w.player.pos.y) / (pd || 1) * push
+          }
+        }
       }
 
       for (const i of w.instances) {
@@ -694,6 +920,52 @@ function play(boss, role, smart, seed, side = 'green') {
       input.firing = true
       input.aim = target ? { x: target.pos.x, y: target.pos.y } : null
 
+      // ── evening out a council ──
+      //
+      // On a fight where the raid chips whatever you are NOT shooting, your
+      // target is the only lever anyone has on the balance between three health
+      // pools — and the three have to die together or the survivors are handed
+      // abilities that grind the raid down. Aiming at the nearest body is the
+      // default and it is exactly wrong here: the nearest is usually the one you
+      // have been killing, so the spread only ever widens.
+      //
+      // Gated on the engine's own warning rather than on a threshold of the
+      // bot's, so the instrument and the fight cannot disagree about when to
+      // switch. Adds still outrank it — a crate rupturing is sooner than a
+      // sync-kill window closing.
+      //
+      // With no aim the engine fires at the NEAREST body, and on a council that
+      // is the one target discipline no competent player has. It is also the one
+      // the fight is built to punish: the raid only chips a body down to
+      // `focus.hp + chipLag`, so your focus sets the floor everything else is
+      // dragged toward. Smeared across three bodies by proximity, that floor
+      // never falls, the raid stops helping, and you personally have to deliver
+      // three health bars — which is why every role sat on a quarter of the
+      // council's health at the enrage regardless of how the numbers were tuned.
+      //
+      // So: hold the LOWEST, because that is what pulls the floor down and takes
+      // the other two with it...
+      if (!target && w.boss.alliesChipOffTarget) {
+        const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
+        const lo = live.length ? Math.min(...live.map(b => b.hp)) : 1
+        // ...right down to the bone, and only THEN even them out.
+        //
+        // Switching away the moment the warning appears looks like obedience and
+        // is the most expensive thing the bot can do. The raid only ever drags a
+        // body to `focus.hp + chipLag`, so the leader's health IS the floor under
+        // the other two: abandon it at 10% and the raid stops chipping at 24%,
+        // and the last two health bars are yours alone. Hold the leader at the
+        // bone instead and the raid delivers the other two to within a chipLag
+        // of it, which is less than half the work and is what "they have to die
+        // together" means in practice.
+        const evenOut = lo <= 0.04
+        let pick = null
+        for (const b of live) {
+          if (!pick || (evenOut ? b.hp > pick.hp : b.hp < pick.hp)) pick = b
+        }
+        if (pick) input.aim = { x: pick.pos.x, y: pick.pos.y }
+      }
+
       // Kick on sight when an add is winding up, otherwise tick over.
       const casting = w.adds.some(a => a.alive && a.def.job === 'kick' && a.castMs >= 0 && !a.kicked)
       if (casting) input.pressed.push('interrupt')
@@ -733,6 +1005,25 @@ function play(boss, role, smart, seed, side = 'green') {
     step(w, input, TICK_MS)
     input.pressed.length = 0
     ticks++
+    // CASTS=1 names every instance the moment it is created. The one question a
+    // timeline raises — did Shell Spin actually fire at 5, 35 and 65 — has no
+    // other answer, and reading it out of the per-second dump means guessing.
+    if (process.env.CASTS) {
+      if (w.bossEnergy < lastEnergy - 1) {
+        console.log(`      FEED  t=${(w.elapsedMs / 1000).toFixed(1)}s  bar was ${lastEnergy.toFixed(0)}%`
+          + `  empowered=${w.bosses.filter(b => b.empowered).map(b => b.def.id).join(',')}`
+          + `  bossHp=${w.bosses.filter(b => !b.def.untargetable).map(b => Math.round(b.hp * 100)).join('/')}`)
+      }
+      lastEnergy = w.bossEnergy
+      let top = lastUid
+      for (const i of w.instances) {
+        if (i.uid <= lastUid) continue
+        if (i.uid > top) top = i.uid
+        console.log(`      cast t=${(w.elapsedMs / 1000).toFixed(1)}s  ${i.def.id}`
+          + (w.bosses ? ` [energy ${Math.round(w.bossEnergy)}]` : ''))
+      }
+      lastUid = top
+    }
     // TRACE=1 prints a per-second dump. Kept in the harness rather than in a
     // throwaway probe because every balance question so far has been answered by
     // watching one pull second by second, and rebuilding the bot in a probe just

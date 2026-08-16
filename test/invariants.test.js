@@ -106,7 +106,13 @@ function realIdIsUnresolved(spells, name, note) {
 // Shipped three times: Noxious Blast, Malignant Burst and Serpent's Bite were
 // all 300-yard raid-wide and all blamed the player for standing somewhere.
 test('sweep: no 300-yard ability is scored per-player on any boss', () => {
-  const SAFE = ['raidDamage', 'press', 'tankSwap', 'keepApart', 'burnWindow', 'syncKill']
+  // `launchPad`, `elementPool` and `feed` join the list because none of them can
+  // put a name in the debrief at all: touching a mushroom, standing in a cure and
+  // walking a fish into a boss are all things the engine refuses to score. A new
+  // Rule member is invisible to this sweep unless it is decided about here, and
+  // `wave` and `polarity` are deliberately NOT here — both can name a player.
+  const SAFE = ['raidDamage', 'press', 'tankSwap', 'keepApart', 'burnWindow', 'syncKill',
+    'launchPad', 'elementPool', 'feed']
   for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
     for (const m of mechanics) {
@@ -125,7 +131,15 @@ test('sweep: no marker or dummy ID can be failed on any boss', () => {
   // it is a container that fires other mechanics and is never scored, which is
   // the only reason Apex Predator — "a server-side dummy with no events, so it
   // never produces a failure" — is allowed to be in the file at all.
-  const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive', 'groupSoak', 'windPair', 'stackingDot']
+  //
+  // `wave` and `polarity` are here because both end with a name attached: a
+  // player caught on the floor by a Blast Wave, and a carrier who walked an
+  // uncleansed element into a second Frostfire Volley. Frostfire Volley's own ID
+  // (1295891) IS a cast marker, and without this line a polarity keyed to it
+  // would have passed silently — it only survives the check because it is
+  // `collective`, which is the honest escape rather than the invisible one.
+  const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive', 'groupSoak', 'windPair',
+    'stackingDot', 'wave', 'polarity']
   for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
     for (const m of mechanics) {
@@ -160,8 +174,8 @@ test('sweep: mechanics the tactic files call collective never name a player', ()
     const tactic = readFileSync(BASE + MD[key], 'utf8')
     const spells = spellsOf(key)
     for (const m of mechanicsOf(key)) {   // guarded by readAllMechanics elsewhere
-      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair'].includes(m.rule)
-          || m.collective) continue
+      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair', 'wave', 'polarity']
+          .includes(m.rule) || m.collective) continue
       const name = spells.get(m.spellId)?.name
       if (!name) continue
       // Find this ability's section and read its Bad line.
@@ -225,7 +239,10 @@ test('sweep: every soak and pickup is reachable inside its telegraph', () => {
       // getting into it has to be possible. It is exempt from the `collective`
       // skip that beInside gets, because being late to THIS one is not merely a
       // missed split — the group that eats the next cone instead dies to it.
-      if (!['beInside', 'collect', 'groupSoak'].includes(m.rule)) continue
+      // `launchPad` and `feed` are "get to a thing" rules like the other three.
+      // A mushroom that despawns before the wave it answers, or a fish that
+      // rots before you can walk it anywhere, is a mechanic with no play in it.
+      if (!['beInside', 'collect', 'groupSoak', 'launchPad', 'feed'].includes(m.rule)) continue
       if (m.collective && m.rule !== 'groupSoak') continue
       const reach = PLAYER_SPEED * Math.max(0, m.telegraphMs / 1000 - REACTION)
       assert.ok(reach >= arena * 0.55,
@@ -405,6 +422,130 @@ test('twinfangs: Venomous Emergence summons spawns that fixate and spit', () => 
   assert.equal(spit.telegraphMs, 5000, 'Corrosive Spit lost its 5s marker window')
 })
 
+// ── 20. The fish economy is finite, and cannot be spent twice ────────────────
+//
+// Three fish exist in the whole encounter and each one empowers one explorer
+// permanently. Both halves of that can be authored wrong in silence: more fish
+// than there are bodies to feed makes the last ones worthless and the enrage
+// unreachable, and a feed range wide enough to touch two explorers at once turns
+// "which one do you empower" — the only decision the mechanic contains — into
+// whichever body the array happened to list first.
+test('sweep: the fish economy is finite and cannot be double-spent', () => {
+  let checked = 0
+  for (const key of BOSSES) {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const mechanics = mechanicsOf(key)
+    const hides = [...src.matchAll(/hides: \{ defId: '(\w+)', maxTotal: (\d+) \}/g)]
+    const feeds = mechanics.filter(m => m.rule === 'feed')
+    if (!hides.length && !feeds.length) continue
+    checked++
+
+    // Targetable entities only. Mor'zahi is the bar, not a mouth.
+    const bodies = [...src.matchAll(/id: '(\w+)',[^\n]*?start: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}([^\n]*)/g)]
+      .filter(m => !/untargetable: true/.test(m[4])).length
+
+    for (const [, defId, maxTotal] of hides) {
+      assert.ok(mechanics.some(m => m.id === defId),
+        `${key}: a pickup hides '${defId}', which is not a mechanic on this boss`)
+      assert.ok(Number(maxTotal) <= bodies,
+        `${key}: ${maxTotal} fish are hidden but only ${bodies} bodies can eat one. Each ` +
+        'boss empowers once, so every fish past the last mouth is found and then wasted')
+    }
+    if (hides.length) {
+      assert.equal(feeds.length, 1,
+        `${key}: ${feeds.length} mechanics carry a 'feed' rule. The engine feeds the FIRST ` +
+        'one it finds, so a second is authored content that can never fire')
+    }
+    const arena = arenaOf(key)
+    for (const m of feeds) {
+      const range = Number(/feedRange:\s*([\d.]+)/.exec(m.blk)?.[1] ?? 0)
+      assert.ok(range > 0, `${key}/${m.id}: a feed with no feedRange — it could never be delivered`)
+      assert.ok(range < arena / 4,
+        `${key}/${m.id}: a ${range}yd feed range on a ${arena}yd floor. Walking the fish to a ` +
+        'CHOSEN body is the whole mechanic, and a range this wide picks the body for you')
+    }
+  }
+  // The regexes above read a shape no other boss uses. If the boss file's layout
+  // drifts they match nothing, the loop `continue`s past every fight, and this
+  // reports success without having looked at anything.
+  assert.ok(checked > 0,
+    'no boss declares a fish economy — either the Explorers lost theirs or the parser ' +
+    'stopped finding it, and this sweep would pass vacuously either way')
+})
+
+// ── 21. A polarity carrier always has a cure on the floor ────────────────────
+//
+// The debuff comes off by standing in the OPPOSITE element and by nothing else,
+// so the two pools are not decoration — they are the entire answer. A polarity
+// pointing at a pool that is not a pool, or at two pools of the same element, or
+// at ground that evaporates before the next volley, is a debuff with no cure and
+// a death nobody in the room could have played out of.
+test('sweep: a polarity carrier always has a cure on the floor', () => {
+  let checked = 0
+  for (const { key, mechanics } of readAllMechanics()) {
+    for (const m of mechanics) {
+      if (m.rule !== 'polarity') continue
+      checked++
+      for (const [field, want] of [['firePoolId', 'fire'], ['frostPoolId', 'frost']]) {
+        const id = new RegExp(`${field}:\\s*'([^']*)'`).exec(m.blk)?.[1]
+        assert.ok(id, `${key}/${m.id}: a polarity with no ${field}`)
+        const pool = mechanics.find(x => x.id === id)
+        assert.ok(pool, `${key}/${m.id}: ${field} names '${id}', which is not a mechanic here`)
+        assert.equal(pool.rule, 'elementPool',
+          `${key}/${id}: named as ${field} but its rule is '${pool.rule}'. Only elementPool cures`)
+        const el = /element:\s*'(\w+)'/.exec(pool.blk)?.[1]
+        assert.equal(el, want,
+          `${key}/${id}: named as ${field} but its element is '${el}'. A carrier sent to their ` +
+          'OWN element stands in it and stays lit')
+        const linger = Number(/lingerMs:\s*(\d+)/.exec(pool.blk)?.[1] ?? 0)
+        assert.ok(linger >= m.telegraphMs,
+          `${key}/${id}: lingers ${linger}ms against a ${m.telegraphMs}ms volley. The cure has ` +
+          'to still be on the floor when the thing it cures arrives')
+      }
+      const deathId = /deathId:\s*'([^']*)'/.exec(m.blk)?.[1]
+      assert.ok(mechanics.some(x => x.id === deathId),
+        `${key}/${m.id}: deathId names '${deathId}', which is not a mechanic on this boss — ` +
+        'the death would be attributed to nothing')
+    }
+  }
+  assert.ok(checked > 0, 'no polarity mechanic in the registry — this sweep would be vacuous')
+})
+
+// ── 22. A wave has a mushroom to jump ────────────────────────────────────────
+//
+// `wave` has exactly one exemption and it is being airborne. If the boss never
+// puts a launch pad on the floor, or puts one there that expires before the wave
+// arrives, the mechanic is not hard — it is unwinnable, and it looks identical
+// to a hard mechanic from every angle except this one.
+test('sweep: a wave always has a mushroom left to jump', () => {
+  let checked = 0
+  for (const { key, mechanics } of readAllMechanics()) {
+    const waves = mechanics.filter(m => m.rule === 'wave')
+    if (!waves.length) continue
+    checked += waves.length
+    const pads = mechanics.filter(m => m.rule === 'launchPad')
+    assert.ok(pads.length > 0,
+      `${key}: declares a wave but no launchPad. Being off the floor is the only answer to a ` +
+      'wave, and there is nothing here to get off the floor with')
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    for (const wave of waves) {
+      // Walk the spawn chain backwards: whatever spawns the wave has its own
+      // telegraph, and the pads have to outlive the whole chain.
+      let chain = wave.telegraphMs
+      for (const m of mechanics) {
+        const sp = new RegExp(`spawns: \\{ defId: '${wave.id}'(?:, delayMs: (\\d+))?`).exec(m.blk)
+        if (!sp) continue
+        chain = Math.max(chain, m.telegraphMs + Number(sp[1] ?? 0) + wave.telegraphMs)
+      }
+      void src
+      assert.ok(pads.some(p => p.telegraphMs > chain),
+        `${key}/${wave.id}: the mushrooms last ${Math.max(...pads.map(p => p.telegraphMs))}ms ` +
+        `but the bomb-to-wave chain takes ${chain}ms. The answer expires before the question`)
+    }
+  }
+  assert.ok(checked > 0, 'no wave mechanic in the registry — this sweep would be vacuous')
+})
+
 /**
  * The arena polygon's corners, or null for a round room.
  *
@@ -552,5 +693,123 @@ test('sweep: an entity placed off the floor is stationary', () => {
         'stationary — the follow step will clamp it onto the platform in the first second ' +
         'and its tank will be sent into the acid to reach it')
     }
+  }
+})
+
+// ── 24. Nothing is scheduled twice, and every timeline id resolves ───────────
+//
+// `timeline` is a second, independent scheduler beside `loop`, and both are
+// plain arrays of strings — so every failure mode here is silent. An id in BOTH
+// fires twice a cycle, which reads as a mechanic being twice as frequent as the
+// fight says it is and as nothing else. An id in NEITHER namespace fires never,
+// and a fight with a mechanic that never happens looks exactly like a fight
+// whose rotation is merely long. And `rearmOn` names mechanics that must exist
+// for a gated cast to ever come back: a typo there does not throw, it simply
+// leaves Throw Junk dormant for the rest of the pull and the enrage arrives for
+// a reason nobody in the room could have seen.
+test('sweep: every timeline id resolves and nothing is scheduled twice', () => {
+  let checked = 0
+  for (const { key, mechanics } of readAllMechanics()) {
+    const src = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const head = src.slice(0, Math.max(0, src.indexOf('mechanics: [')))
+    const block = /\n {2}timeline:\s*\[([\s\S]*?)\n {2}\],/.exec(head)
+    if (!block) continue
+    checked++
+    const ids = new Set(mechanics.map(m => m.id))
+    const loop = new Set()
+    for (const l of src.matchAll(/loop:\s*\[([\s\S]*?)\]/g)) {
+      for (const s of l[1].matchAll(/'([^']+)'/g)) loop.add(s[1])
+    }
+    const entries = [...block[1].matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)].map(m => m[0])
+    assert.ok(entries.length > 0,
+      `${key}: declares a timeline but no entries parsed — this sweep would pass vacuously`)
+    const seen = new Set()
+    for (const e of entries) {
+      const id = /\bid:\s*'([^']+)'/.exec(e)?.[1]
+      assert.ok(id, `${key}: a timeline entry with no id: ${e}`)
+      assert.ok(ids.has(id),
+        `${key}: timeline schedules '${id}', which is not a mechanic on this boss`)
+      assert.ok(!loop.has(id),
+        `${key}: '${id}' is in BOTH loop and timeline, so it fires twice a cycle. The ` +
+        'timeline is the more specific statement — take it out of the loop')
+      assert.ok(!seen.has(id), `${key}: '${id}' appears twice in the timeline`)
+      seen.add(id)
+
+      const start = Number(/\bstartSec:\s*(-?[\d.]+)/.exec(e)?.[1] ?? NaN)
+      assert.ok(Number.isFinite(start) && start >= 0,
+        `${key}/${id}: startSec is ${start}. A first cast has to be at or after the pull`)
+      const every = /\beverySec:\s*(-?[\d.]+)/.exec(e)?.[1]
+      if (every !== undefined) {
+        assert.ok(Number(every) > 0,
+          `${key}/${id}: everySec is ${every}. A period of zero or less fires every frame`)
+      }
+      const rearm = /rearmOn:\s*\{([^}]*\}[^}]*|[^}]*)\}/.exec(e)
+      if (rearm) {
+        const anyOf = /anyOf:\s*\[([^\]]*)\]/.exec(rearm[1])
+        assert.ok(anyOf, `${key}/${id}: a rearmOn with no anyOf — nothing could ever wake it`)
+        const armers = [...anyOf[1].matchAll(/'([^']+)'/g)].map(m => m[1])
+        assert.ok(armers.length > 0,
+          `${key}/${id}: rearmOn.anyOf is empty, so this cast fires once and never again`)
+        for (const a of armers) {
+          assert.ok(ids.has(a),
+            `${key}/${id}: rearmOn names '${a}', which is not a mechanic on this boss. The ` +
+            'cast would go dormant at its first firing and never come back')
+        }
+        assert.ok(every === undefined,
+          `${key}/${id}: declares BOTH everySec and rearmOn. The clock would re-arm it before ` +
+          'the event ever did, and the event gate would never be what brings it back')
+      } else {
+        assert.ok(every !== undefined,
+          `${key}/${id}: has neither everySec nor rearmOn, so it is a one-shot. If that is ` +
+          'meant, say so — every timeline entry so far recurs')
+      }
+    }
+  }
+  assert.ok(checked > 0,
+    'no boss declares a timeline — either the Explorers lost theirs or the parser stopped ' +
+    'finding it, and this sweep would pass vacuously either way')
+})
+
+// ── 25. The bot has heard of every rule in the engine ────────────────────────
+//
+// The playtest bot is a measuring instrument, and what it cannot do is a blind
+// spot in the MEASUREMENT rather than a fact about the fight. That distinction
+// has cost this project real time twice: nine cells were failing and four of the
+// six recovered were bot defects, and the last pass shipped four new primitives
+// the bot knew nothing about, so three instrument gaps printed as the Explorers
+// being too hard before anybody found the cause.
+//
+// A rule the bot has never heard of is therefore not a small omission — it is a
+// number in the balance report that means something other than what it says. So
+// a new `Rule` variant fails here until somebody has written down what a
+// competent player does about it. "Nothing, and here is why" is a perfectly good
+// answer; not having looked is not.
+test('sweep: every Rule variant is declared in the playtest bot', () => {
+  const types = readFileSync('src/engine/types.ts', 'utf8')
+  const union = types.slice(types.indexOf('export type Rule ='))
+  // Stop at the blank line that ends the union, so the shapes below it are not
+  // swept in with it.
+  const body = union.slice(0, union.search(/\r?\n\r?\n/))
+  const variants = [...body.matchAll(/\|\s*\{\s*type:\s*'(\w+)'/g)].map(m => m[1])
+  assert.ok(variants.length >= 20,
+    `parsed only ${variants.length} Rule variants from types.ts — the union's shape has moved ` +
+    'and this check would pass vacuously')
+
+  const bot = readFileSync('test/playtest.mjs', 'utf8')
+  const table = /const BOT_KNOWS = \{([\s\S]*?)\n\}/.exec(bot)
+  assert.ok(table, 'playtest.mjs no longer declares BOT_KNOWS — the bot has no manifest at all')
+  const known = new Set([...table[1].matchAll(/^\s{2}(\w+):/gm)].map(m => m[1]))
+  assert.ok(known.size > 0, 'BOT_KNOWS parsed as empty — this check would pass vacuously')
+
+  for (const v of variants) {
+    assert.ok(known.has(v),
+      `the engine has a '${v}' rule and the playtest bot's manifest does not mention it. A rule ` +
+      'the bot cannot see reads as the FIGHT being too hard, which is how four cells were ' +
+      'misdiagnosed already. Add it to BOT_KNOWS with what a competent player does about it')
+  }
+  for (const k of known) {
+    assert.ok(variants.includes(k),
+      `BOT_KNOWS describes a '${k}' rule that no longer exists in types.ts — the manifest is ` +
+      'drifting away from the engine it is supposed to describe')
   }
 })

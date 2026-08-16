@@ -128,6 +128,20 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       //
       // What the raider needs is the one thing a still picture cannot give them:
       // read the heading, and judge the floor by where the thing is GOING.
+      //
+      // A beam that TURNS is a third thing again, and neither line above fits
+      // it. It is not a pool that lands and it is not travelling somewhere you
+      // can step across: it is pinned to its caster and walking round the room,
+      // so the floor behind it is finished with for the rest of the cast and the
+      // floor in front of it becomes dangerous at a rate you can count. Told to
+      // "move out" a raider sidesteps and is caught by the next second of it.
+      if (def.sweep) {
+        return {
+          verb: 'READ THE ARC',
+          line: 'This one turns. It switches on out over the water and then sweeps round the platform, so the whole question is which way it is going — read that while it is still off the floor, and either stay ahead of it or step in behind it once it has passed, because ground it has already crossed is safe for the rest of the cast. Running sideways while it catches you up is how people die to this: at the far end of the room the beam moves nearly as fast as you do.',
+          yours: mine,
+        }
+      }
       if (def.driftSpeed) {
         return {
           verb: 'READ THE DRIFT',

@@ -2168,3 +2168,467 @@ test('an ally who drops a Coiling Ichor on the raid is not the player’s failur
     'the player was named for a Coiling Ichor an ally dropped in the middle of the room, from a '
     + `rim spot ${Math.hypot(spot.x, spot.y).toFixed(1)}yd out that satisfies every clause of the rule`)
 })
+
+// ── the script ───────────────────────────────────────────────────────────────
+//
+// Everything below measures the SEQUENCE rather than the play, so the probe
+// player is immortal and parked. That is not a way of dodging a hard test — it
+// is the only way to ask the question. A pull that ends at fifty seconds because
+// a do-nothing player walked into Stone Breaker tells you nothing about whether
+// the third Submerge arrives in the right order, and the order is the claim.
+
+/**
+ * Run a Twin Fangs pull for `secs`, keeping the player on their feet, and log
+ * every step the script casts.
+ *
+ * `sweepGlobules` simulates a raid that clears a Caustic Deluge the instant it
+ * lands: it does exactly what the toucher branch in the linger tick does when a
+ * body walks over a pickup — marks it answered and expires it — and nothing
+ * else. It is the lever plan test 3 needs, because how fast the globules go is
+ * the one thing about this fight that the RAID decides.
+ */
+async function runScript(eng, { secs = 250, seed = 7, role = 'dps', sweepGlobules = false } = {}) {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = eng
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  seedRng(seed)
+  const w = createWorld(boss, role, 'green')
+  const cast = []            // { id, t, phase, live, queued, spawnsAlive }
+  const floods = []          // seconds at which each Vile Flood resolved
+  const resolvedFloods = new Set()
+  let firstEnrage = null
+  let pending = null
+
+  for (let i = 0; i < (secs * 1000) / TICK_MS; i++) {
+    step(w, NO_INPUT(), TICK_MS)
+    if (w.seqPending && w.seqPending !== pending) {
+      cast.push({
+        id: w.seqPending,
+        t: w.elapsedMs / 1000,
+        phase: w.phaseIndex,
+        // What was still on the floor at the instant this was cast, by def id,
+        // split by whether it had already gone off.
+        live: w.instances.map(x => ({ id: x.def.id, resolved: x.resolved })),
+        queued: w.queue.map(q => q.id),
+        spawnsAlive: w.adds.filter(a => a.alive && a.def.id === 'spawn').length,
+      })
+    }
+    pending = w.seqPending
+    for (const inst of w.instances) {
+      if (inst.def.id === 'flood' && inst.resolved && !resolvedFloods.has(inst.uid)) {
+        resolvedFloods.add(inst.uid)
+        floods.push(w.elapsedMs / 1000)
+      }
+    }
+    if (!w.player.alive) {
+      if (w.enraged && firstEnrage === null) {
+        firstEnrage = { t: w.elapsedMs / 1000, cause: w.deathCause }
+      }
+      w.player.alive = true
+      w.player.health = 1
+      w.player.venom = 0
+      w.killed = false
+      w.deathCause = null
+    }
+    // Parked out on the right-hand leg — on the floor, out of the way, and
+    // deliberately not moving, so nothing the player does can change the pace.
+    w.player.pos.x = 17
+    w.player.pos.y = 6
+    w.raidHealth = 1
+    if (sweepGlobules) {
+      for (const inst of w.instances) {
+        if (inst.def.id !== 'globule' || inst.resolved || inst.answered) continue
+        inst.answered = true
+        inst.timer = 0
+      }
+    }
+  }
+  return { w, boss, cast, floods, firstEnrage }
+}
+
+// PLAN TEST 1. The whole sequence slice in one assertion.
+//
+// Six steps in the cadence, one in the Submerge, and round again — nothing
+// skipped, nothing out of place, however long the pull runs. This is what
+// `sequential` is for, and it is also the check that catches the two subtler
+// ways the script can come apart: `unlockedCount` drip-feeding the loop, which
+// would run the first two steps over and over for the first half-minute, and a
+// step whose closure never clears, which would stop the fight dead.
+test('the Twin Fangs runs one script, in order, for the whole pull', async () => {
+  const eng = await engine()
+  const { cast, boss } = await runScript(eng, { secs: 250 })
+  const cadence = boss.phases[0].loop
+  const submerge = boss.phases[1].loop
+  const want = [...cadence, ...submerge]
+
+  assert.ok(cast.length >= want.length * 3,
+    `only ${cast.length} steps in 250 seconds — the script stalls somewhere. Cast: ` +
+    cast.map(c => `${c.id}@${c.t.toFixed(0)}`).join(' '))
+
+  for (let i = 0; i < cast.length; i++) {
+    assert.equal(cast[i].id, want[i % want.length],
+      `step ${i} was ${cast[i].id} at ${cast[i].t.toFixed(1)}s, and the script says ` +
+      `${want[i % want.length]}. Full order: ` + cast.map(c => c.id).join(' '))
+  }
+  // ...and the two stages really are alternating, rather than one stage
+  // happening to contain everything.
+  for (const c of cast) {
+    assert.equal(c.phase, submerge.includes(c.id) ? 1 : 0,
+      `${c.id} was cast in stage ${c.phase}`)
+  }
+})
+
+/**
+ * Every def id a step owns, walked out of the boss file rather than out of the
+ * engine — see `stepClosure` in sim.ts for the rule this is a second opinion on.
+ * A test that imported the engine's own answer would agree with it by
+ * construction and catch nothing.
+ */
+function ownedBy(boss, id, out = new Set()) {
+  if (out.has(id)) return out
+  out.add(id)
+  const def = boss.mechanics.find(m => m.id === id)
+  if (!def) return out
+  if (def.channel) ownedBy(boss, def.channel.defId, out)
+  if (def.spawns) ownedBy(boss, def.spawns.defId, out)
+  return out
+}
+
+// PLAN TEST 2. "The Stone Breaker and soaks do not happen at the same time as
+// the Caustic Deluge and the Globules" — the raid leader's sentence, checked as
+// a sentence rather than as a gap somebody tuned.
+//
+// Nothing enforces it directly. It falls out of the closure rule: a globule is a
+// splash's child, a splash is a beat of the Deluge's channel, so the Deluge step
+// is not over until the last pickup is gone. Which is why the Stone Breaker
+// clause below is checked against the FLOOR — no Caustic Deluge object of any
+// kind exists, resolved or otherwise — rather than against any flag the engine
+// keeps.
+test('nothing from the previous step is still in the air when the next one is cast', async () => {
+  const eng = await engine()
+  const { cast, boss } = await runScript(eng, { secs: 250 })
+  const order = [...boss.phases[0].loop, ...boss.phases[1].loop]
+
+  let checkedStoneBreaker = 0
+  for (let i = 1; i < cast.length; i++) {
+    const prev = order[(i - 1) % order.length]
+    const owned = ownedBy(boss, prev)
+    const stillGoing = cast[i].live.filter(l => owned.has(l.id) && !l.resolved)
+    assert.equal(stillGoing.length, 0,
+      `${cast[i].id} was cast at ${cast[i].t.toFixed(1)}s with ` +
+      `${stillGoing.map(s => s.id).join(', ')} from the previous step (${prev}) still telegraphing`)
+    const stillQueued = cast[i].queued.filter(q => owned.has(q))
+    assert.equal(stillQueued.length, 0,
+      `${cast[i].id} was cast with ${stillQueued.join(', ')} still queued by ${prev}`)
+
+    if (cast[i].id !== 'stonebreaker') continue
+    checkedStoneBreaker++
+    const deluge = cast[i].live.filter(l => ownedBy(boss, 'deluge').has(l.id))
+    assert.equal(deluge.length, 0,
+      `Stone Breaker was cast at ${cast[i].t.toFixed(1)}s with ${deluge.length} Caustic Deluge ` +
+      `object(s) still on the floor (${deluge.map(d => d.id).join(', ')}) — the one overlap the ` +
+      'raid leader ruled out by name')
+  }
+  assert.ok(checkedStoneBreaker >= 3, `only ${checkedStoneBreaker} Stone Breakers were checked`)
+})
+
+// PLAN TEST 4, and the other half of the closure rule. It pulls in the exact
+// opposite direction from the test above, which is the point: `summons` must NOT
+// hold the beat, or "whilst the adds are being killed Ithraz casts Coiling
+// Ichor" becomes "the fight stops until the raid finishes a kill". Collapse the
+// two rules into one and whichever of these two tests you did not think about is
+// the one that breaks.
+test('Coiling Ichor is cast with the Spawn of Vexhul still up', async () => {
+  const eng = await engine()
+  const { cast } = await runScript(eng, { secs: 250 })
+  const ichors = cast.filter(c => c.id === 'ichor')
+  assert.ok(ichors.length >= 3, `only ${ichors.length} Coiling Ichors in 250 seconds`)
+  for (const c of ichors) {
+    assert.ok(c.spawnsAlive > 0,
+      `Coiling Ichor was cast at ${c.t.toFixed(1)}s with no Spawn of Vexhul alive. Venomous ` +
+      'Emergence is the step before it and its adds are supposed to still be spitting')
+  }
+})
+
+// PLAN TEST 3. The gate is event-driven, not a metronome.
+//
+// Two identical pulls differing only in how fast the raid clears its globules.
+// If the script were a clock with a dependency painted on it, both would reach
+// their first Submerge at the same second; because it genuinely waits, the raid
+// that sweeps buys back the whole tail of the Caustic Deluge step, every
+// rotation, and arrives measurably sooner.
+test('the script waits for the raid rather than for a clock', async () => {
+  const eng = await engine()
+  const slow = await runScript(eng, { secs: 250, sweepGlobules: false })
+  const fast = await runScript(eng, { secs: 250, sweepGlobules: true })
+
+  assert.ok(slow.floods.length >= 2 && fast.floods.length >= 2,
+    `only ${slow.floods.length}/${fast.floods.length} Submerges were reached`)
+  const gained = slow.floods[0] - fast.floods[0]
+  assert.ok(gained > 3,
+    'the raid that swept every globule the instant it landed reached its first Submerge ' +
+    `${gained.toFixed(2)}s sooner (${fast.floods[0].toFixed(1)}s against ` +
+    `${slow.floods[0].toFixed(1)}s). If that number is zero the gate is still a metronome; if it ` +
+    'is under a second the closure is not really waiting for the pickups')
+  // And it compounds, which is what makes it the pace of the fight rather than a
+  // one-off saving at the start.
+  assert.ok(slow.floods[1] - fast.floods[1] > gained,
+    'the saving did not grow over two rotations, so only the first Deluge is being waited on')
+})
+
+// The third Submerge, and the one hard stop on this fight.
+//
+// "If the boss isnt dead by the 3rd submerge, the raid wipes." There is no
+// machinery behind that at all: `energyPerSec` is zero, Vile Flood puts 34 on
+// the bar, and a bar that fills with nothing to spend it already ends the pull.
+// What this pins is the arithmetic — that it is the THIRD and not the second or
+// the fourth — and that the death says so, which is the whole of
+// `BossDef.enrageText`.
+test('the third Submerge wipes the raid, and the debrief says which one', async () => {
+  const eng = await engine()
+  const { boss, floods, firstEnrage } = await runScript(eng, { secs: 250 })
+  const flood = boss.mechanics.find(m => m.id === 'flood')
+
+  assert.equal(boss.energyPerSec, 0,
+    'something feeds the energy bar on a clock again, so the bar is no longer a Submerge counter')
+  assert.equal(boss.atFullEnergy, undefined,
+    'the bar has a spender again, which means it resets and three Submerges cost nothing')
+  assert.ok(flood.energy * 3 > 100 && flood.energy * 2 <= 100,
+    `Vile Flood puts ${flood.energy} on the bar, which wipes on Submerge number ` +
+    `${Math.ceil(100 / flood.energy)} rather than the third`)
+
+  assert.ok(firstEnrage, 'the pull never ended, so the third Submerge is not a wipe')
+  assert.ok(floods.length >= 3, `only ${floods.length} Vile Floods resolved`)
+  // Within a tick of the third beam switching on, and not the second.
+  assert.ok(Math.abs(firstEnrage.t - floods[2]) < 0.1,
+    `the wipe fired at ${firstEnrage.t.toFixed(1)}s and the third Vile Flood resolved at ` +
+    `${floods[2].toFixed(1)}s`)
+  assert.equal(firstEnrage.cause, boss.enrageText,
+    `the debrief blamed "${firstEnrage.cause}" for a wipe the third Submerge caused`)
+  assert.doesNotMatch(firstEnrage.cause, /bar filled/,
+    'the generic enrage line is back, on a bar that is not a timer')
+})
+
+// The intermission moves both serpents and gives them back.
+//
+// Three separate promises, and the third would be an instant wipe if it were
+// dropped: neither position is somewhere a body can stand, the tanks are not
+// judged against a serpent that is thirty yards out in the acid, and both come
+// home to exactly where the boss file coiled them.
+test('Submerge takes both serpents off the floor and returns them', async () => {
+  const eng = await engine()
+  const { createWorld, step, seedRng, TICK_MS, BOSSES, inArena } = eng
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const relocate = boss.phases.find(p => p.id === 'submerge').relocate
+  assert.equal(relocate.length, 2, 'the Submerge no longer moves both serpents')
+
+  seedRng(7)
+  const w = createWorld(boss, 'tank', 'green')
+  let sawSubmerged = false
+  let leashBrokeDuring = 0
+  let restored = false
+  let ticksIn = 0
+
+  for (let i = 0; i < (200 * 1000) / TICK_MS; i++) {
+    // Which stage the tick RAN in, not which one it ended in. A stage change
+    // happens at the very bottom of `step`, so the tick that first reads
+    // `phaseIndex === 1` afterwards was judged as a cadence tick throughout —
+    // with both serpents still coiled and both leashes rightly live. Reading it
+    // as an intermission tick would blame the Submerge for a tank who was out of
+    // range a moment before it started.
+    const ran = w.phaseIndex
+    step(w, NO_INPUT(), TICK_MS)
+    if (!w.player.alive) {
+      w.player.alive = true
+      w.player.health = 1
+      w.player.venom = 0
+      w.killed = false
+      w.deathCause = null
+    }
+    w.player.pos.x = 17
+    w.player.pos.y = 6
+    w.raidHealth = 1
+    if (ran === 1 && w.phaseIndex === 1) {
+      ticksIn++
+      sawSubmerged = true
+      for (const r of relocate) {
+        const unit = w.bosses.find(b => b.def.id === r.id)
+        assert.equal(unit.pos.x, r.to.x, `${r.id} is not where the Submerge sent it`)
+        assert.equal(unit.pos.y, r.to.y, `${r.id} is not where the Submerge sent it`)
+        assert.equal(inArena(boss, unit.pos), false,
+          `${r.id} submerged onto the floor at (${r.to.x},${r.to.y}) — the raid can stand on it, ` +
+          'and the beam then comes out of a body somebody is standing in')
+      }
+      if (w.leashBroken) leashBrokeDuring++
+    } else if (sawSubmerged) {
+      restored = true
+      for (const b of w.bosses) {
+        assert.equal(b.pos.x, b.def.start.x, `${b.def.id} did not come home after the Submerge`)
+        assert.equal(b.pos.y, b.def.start.y, `${b.def.id} did not come home after the Submerge`)
+      }
+      break
+    }
+  }
+  assert.ok(sawSubmerged, 'the pull never reached a Submerge')
+  assert.ok(ticksIn > 600, `the Submerge lasted ${((ticksIn * 50) / 3 / 1000).toFixed(1)}s`)
+  assert.ok(restored, 'the pull never came back out of the Submerge')
+  // Hazard 4.6. A leash judged against a serpent that has dived is a wipe for
+  // doing what the stage asks, and the two tanks are the two bodies with the
+  // least freedom to answer it.
+  assert.equal(leashBrokeDuring, 0,
+    `a melee leash was live for ${leashBrokeDuring} ticks of the intermission — both serpents are ` +
+    'submerged and immune, so the raid was being drained for standing where it must stand')
+  // The two of them have to read as coming from different places, or the beam
+  // and the swirlies look like one mechanic.
+  const [a, b] = relocate.map(r => r.to)
+  assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 20,
+    `the two submerged positions are only ${Math.hypot(a.x - b.x, a.y - b.y).toFixed(1)}yd apart`)
+})
+
+/**
+ * A Vile Flood drill, with the room the intermission puts it in.
+ *
+ * A drill deliberately throws the stages away — "a drill that phased out from
+ * under you would be a pull with extra steps" — but this mechanic is only ever
+ * cast from the venom pocket, and every number in it is a fact about being cast
+ * from there. So `createDrill` applies the stage's `relocate` even though it
+ * drops the stage, and the assertion below is the only place that is checked.
+ */
+async function floodBench(seed = 7) {
+  const eng = await engine()
+  const { createDrill, seedRng, BOSSES } = eng
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const flood = boss.mechanics.find(m => m.id === 'flood')
+  const pocket = boss.phases.find(p => p.id === 'submerge').relocate
+    .find(r => r.id === 'vexhul').to
+
+  assert.ok(flood.sweep, 'Vile Flood no longer sweeps — everything below would measure a still cone')
+  assert.equal(flood.shape.kind, 'cone', 'Vile Flood is no longer a cone')
+  assert.ok(flood.lingerMs > 0, 'Vile Flood has no linger, so the beam has no life to arc through')
+
+  seedRng(seed)
+  const w = createDrill(boss, 'dps', 'flood')
+  const vexhul = w.bosses.find(b => b.def.id === 'vexhul')
+  assert.equal(vexhul.pos.x, pocket.x,
+    'the Vile Flood drill left Vexhul coiled on the ledge instead of down in the pocket — the ' +
+    'beam then sweeps a different room from the one the intermission plays in')
+  assert.equal(vexhul.pos.y, pocket.y, 'the Vile Flood drill did not move Vexhul into the pocket')
+
+  // One beam at a time. The drill's own rotation would start a second Vile Flood
+  // 3.5 seconds into a fourteen-second cast and the coverage figures would be
+  // measuring two of them.
+  w.boss = { ...w.boss, loop: [], ambient: [], adds: [] }
+  return { ...eng, w, boss, flood, pocket }
+}
+
+// PLAN TEST 12, second half: VILE FLOOD ALWAYS LEAVES A LANE.
+//
+// "Vile Flood should slowly arc around the platform and leave enough space for
+// the player at the end of the platform to also keep avoiding the sanguine storm
+// so they manage this intermission without taking avoidable damage and
+// unnecessary Eternal Venom stacks."
+//
+// That is a geometric promise about a beam, a cone width and a floor, and there
+// is exactly one way to check it: rasterise the real polygon and step the real
+// instance through its whole arc, asking at every sample how much of the room is
+// under it and how much has never been under it at all. Six numbers, all
+// measured, all of which move the moment anybody widens the cone, speeds up the
+// sweep or reshapes the mouth.
+//
+// Both handednesses, because `mirror` alternates them and a lane that only
+// exists one way round is a lane for every other Submerge.
+test('Vile Flood always leaves a lane, whichever way it turns', async () => {
+  const CELL = 0.25
+  const bench = await floodBench()
+  const { w, step, fire, TICK_MS, inArena, isInside, boss, flood, pocket } = bench
+
+  const cells = []
+  for (let x = -24; x <= 24; x += CELL) {
+    for (let y = -17; y <= 22; y += CELL) {
+      const p = { x, y }
+      if (inArena(boss, p)) cells.push(p)
+    }
+  }
+  const AREA = cells.length * CELL * CELL
+  assert.ok(AREA > 1000, `only ${AREA.toFixed(0)} square yards of floor — the raster missed the room`)
+
+  const furthest = Math.max(...cells.map(c => Math.hypot(c.x - pocket.x, c.y - pocket.y)))
+  // The beam has to be able to touch every part of the floor it sweeps over. A
+  // shorter reach leaves a ring of ground the cone passes through without ever
+  // being dangerous, which reads as the mechanic being broken rather than as a
+  // safe spot somebody earned.
+  assert.ok(flood.shape.radius >= furthest,
+    `the beam reaches ${flood.shape.radius}yd and the furthest floor from the pocket is ` +
+    `${furthest.toFixed(2)}yd`)
+  // The TRAILING edge at that furthest point is the fastest piece of floor the
+  // beam covers, and it is what decides whether walking away from it is a
+  // decision or a dice roll. 80% of PLAYER_SPEED, which is 14.
+  const tip = ((flood.sweep.degPerSec * Math.PI) / 180) * furthest
+  assert.ok(tip < 11,
+    `the beam's far edge crosses the floor at ${tip.toFixed(2)} yd/s against a player's 14 — at ` +
+    'that speed the raid cannot outwalk it and the arc stops being readable')
+
+  // Two casts: the first as authored, the second mirrored.
+  const runs = []
+  for (let cast = 0; cast < 2; cast++) {
+    fire(w, 'flood')
+    const inst = w.instances.find(i => i.def.id === 'flood' && !i.resolved)
+    assert.ok(inst, 'the drill did not put a Vile Flood in the air')
+
+    const everSwept = new Uint8Array(cells.length)
+    let peak = 0
+    let leastClearNow = Infinity
+    let atSwitchOn = -1
+    let samples = 0
+    let lastAngle = inst.angle
+
+    for (let i = 0; i < ((flood.telegraphMs + flood.lingerMs + 500) / TICK_MS) | 0; i++) {
+      step(w, NO_INPUT(), TICK_MS)
+      const live = w.instances.find(x => x.uid === inst.uid)
+      if (!live) break
+      if (!live.resolved) continue
+      if (i % 6 !== 0 && atSwitchOn >= 0) continue
+      samples++
+      let now = 0
+      for (let c = 0; c < cells.length; c++) {
+        if (!isInside(live, cells[c])) continue
+        now++
+        everSwept[c] = 1
+      }
+      // The instant it switches on. It has to come on over open water, or the
+      // bodies standing where it starts are hit by something that was never
+      // telegraphed anywhere on the floor.
+      if (atSwitchOn < 0) atSwitchOn = now
+      peak = Math.max(peak, now * CELL * CELL)
+      leastClearNow = Math.min(leastClearNow, (cells.length - now) * CELL * CELL)
+      lastAngle = live.angle
+    }
+
+    const reserve = everSwept.reduce((n, v) => n + (v ? 0 : 1), 0) * CELL * CELL
+    runs.push({ peak, leastClearNow, reserve, atSwitchOn, samples, turned: lastAngle - inst.angle })
+    // Let the beam and its swirlies clear before the next cast, so the second
+    // run measures one beam and not two.
+    for (let i = 0; i < 6000 / TICK_MS; i++) step(w, NO_INPUT(), TICK_MS)
+  }
+
+  for (const [i, r] of runs.entries()) {
+    const which = i === 0 ? 'the beam' : 'the mirrored beam'
+    assert.ok(r.samples > 40, `${which} was only sampled ${r.samples} times`)
+    assert.equal(r.atSwitchOn, 0,
+      `${which} had ${r.atSwitchOn} cells of floor inside it the instant it switched on. The ` +
+      'sweep has to come on over the water and arrive already moving')
+    assert.ok((r.peak / AREA) * 100 < 25,
+      `${which} covers ${((r.peak / AREA) * 100).toFixed(1)}% of the platform at its worst — past ` +
+      'a quarter of a floor this small it stops being a beam and becomes a wall')
+    assert.ok(r.leastClearNow > 200,
+      `${which} leaves only ${r.leastClearNow.toFixed(0)} square yards clear at its worst instant`)
+    assert.ok(r.reserve > 200,
+      `${which} sweeps all but ${r.reserve.toFixed(0)} square yards of the platform. There has to ` +
+      'be an end of the room it never reaches, or "leave enough space for the player at the end ' +
+      'of the platform" is not true and the intermission is unsurvivable standing still')
+  }
+  // ...and the second one really did go the other way, which is the whole of
+  // what `mirror` buys: the half of the room that stays clear is the other half.
+  assert.ok(runs[0].turned * runs[1].turned < 0,
+    `both casts swept the same way (${runs[0].turned.toFixed(2)} and ` +
+    `${runs[1].turned.toFixed(2)} radians), so a raid learns one answer and never has to read it`)
+})

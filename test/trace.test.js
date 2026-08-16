@@ -524,7 +524,10 @@ for (const [key, dir] of present) {
     const phases = phaseDefs(key)
     // `windToCysts` is an exit like the others: the Maelstrom ends when every
     // glob on the floor has burst, and entering it guarantees there are two.
-    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead', 'windToCysts']
+    // `sequential` is one for the same reason — a script ends when it runs out
+    // of script, so a scripted stage cannot be a dead end unless its `loop` is
+    // empty, which the id-resolution sweep above already forbids.
+    const EXITS = ['endsAtBossHp', 'endsAtFullEnergy', 'endsWhenAddsDead', 'windToCysts', 'sequential']
     for (const p of phases.slice(0, -1)) {
       const id = strField(p, 'id') ?? '?'
       assert.ok(EXITS.some(field => new RegExp(`\\b${field}:`).test(p)),
@@ -540,7 +543,13 @@ for (const [key, dir] of present) {
       const last = phases[phases.length - 1]
       const id = strField(last, 'id') ?? '?'
       const wraps = phases.every(p => EXITS.some(f => new RegExp(`\\b${f}:`).test(p)))
-      const cycles = /endsAtFullEnergy/.test(phases[0])
+      // Two ways a stage list can wrap. Sszorak's flurry ends when the bar fills
+      // and hands the fight to the Maelstrom, which hands it back. The Twin
+      // Fangs' cadence ends when its script runs out and hands the fight to the
+      // Submerge, which hands it back — the same wrap, expressed with a
+      // different exit, and reading only for `endsAtFullEnergy` would have let a
+      // scripted last stage with no way out through unchecked.
+      const cycles = /endsAtFullEnergy|sequential/.test(phases[0])
       if (cycles) {
         assert.ok(wraps,
           `${key} cycles its stages, so phase '${id}' is not the last one — it hands the ` +

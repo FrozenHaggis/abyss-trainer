@@ -4,9 +4,12 @@ Every boss split into its phases, derived from the tactic files in
 `raidlens/12.1/VenomousAbyss/<Boss>/<Boss>.md`. Quoted phrases are verbatim from
 those files.
 
-**Three of the eight fights have no phases at all**, and two of them say so in
-as many words. That is a finding, not a gap — encoding invented stages for them
-would make the trainer teach something the fight does not do.
+**Two of the eight fights have no phases at all.** That is a finding, not a gap —
+encoding invented stages for them would make the trainer teach something the
+fight does not do. It was three until the Twin Fangs' own tactic file was read
+against the raid leader's account of the encounter: the file says "a fixed
+cadence gated by an energy bar" and the encounter is a script with an
+intermission in it, which is a stage structure however the guide describes it.
 
 | Boss | Structure | Phases |
 |---|---|---|
@@ -15,7 +18,7 @@ would make the trainer teach something the fight does not do.
 | Vashnik the Malignant | Recurring cycle | **none — stated** |
 | The Lost Explorers | Council | **none** |
 | Sszorak | Recurring cycle | 1 + intermission |
-| The Twin Fangs | Recurring cycle | **none — stated** (+ one end-state) |
+| The Twin Fangs | Recurring cycle | 1 scripted rotation + intermission, cycling |
 | The Coiled Altar | Linear | 3 + intermission |
 | Ula'tek | Linear | 3 |
 
@@ -123,17 +126,40 @@ own — but note what it is NOT: `Howling Maelstrom` (1285732) is a phase marker
 with no cast events, so the stage is detected through `Dig In` exactly as the
 ability data instructs, and nothing in the trainer lets you fail the marker.
 
-### The Twin Fangs — fixed cadence, plus one end-state
+### The Twin Fangs — a scripted rotation and an intermission, cycling
 
 > *"There are no health phases, just a fixed cadence gated by an energy bar."*
+
+The tactic file's sentence is right about health and wrong about the bar, and the
+raid leader's account of the fight is what settles it. Every joint in that
+account is the word "once" — *"the Stone Breaker and soaks do not happen at the
+same time as the Caustic Deluge and the Globules"*, *"once both of these
+abilities have been performed, Vexhul casts Venomous Emergence"*, *"once this
+completes start the intermission phase where the boss casts submerge"*. That is a
+**script**: six steps in a fixed order, each waiting for the one before it to
+finish, and then an intermission. It is authored as two cycling stages with
+`PhaseDef.sequential`, which is what makes "waits for" the mechanism rather than
+a gap somebody tuned.
 
 Vexhul and Ithraz are tanked apart on a shrinking platform and do **not** share a
 health pool.
 
-| State | Trigger | What happens |
+| # | Stage | Entered by | What defines it |
+|---|---|---|---|
+| 1 | **The cadence** | pull, and every Submerge ending | Caustic Deluge → Stone Breaker → Venomous Emergence → Coiling Ichor → Stir the Depths → Ravenous Feast, strictly in that order. A step is over when its channel's beats and everything still telegraphing below them are gone — so the Deluge holds through the last globule's fuse (which is what keeps it off Stone Breaker), a Congealed Gore pool on the rim holds nothing, and the Spawn of Vexhul are still alive and spitting two steps later. |
+| — | **Intermission — Submerge** (`1308556`) | the cadence running out of script | Both serpents leave the floor: Vexhul into the venom pocket to channel **Vile Flood**, a beam that arcs 150° round the platform over ten seconds, and Ithraz out into the acid beside the right leg raining **Sanguine Storm** for the same ten. Both are immune for the duration. Ends when the beam does. |
+
+| End-state | Trigger | What happens |
 |---|---|---|
-| Cadence | pull | **Eternal Venom** arrives from seven sources continuously, kills outright at **9 stacks on Mythic**, and is shed only **one per player per Ravenous Feast**. |
-| **Uncoiled Wrath** | **first boss dies** | The survivor gains uncapped rage. This is what forces a synchronised kill. |
+| **Uncoiled Wrath** | first serpent dies | The survivor gains uncapped rage; the other must die within **5 seconds** or the raid wipes. |
+| **The third Submerge** | energy bar full | Vile Flood is the only thing that feeds the bar, at 34 a cast, so it reads 34 / 68 / 102: *"if the boss isnt dead by the 3rd submerge, the raid wipes."* |
+
+⚠ **The third Submerge is not reachable inside the trainer's own pull clock.** A
+rotation plus its intermission measures 79.8 seconds, so the three Vile Floods
+resolve at roughly 69 / 149 / 229 against a `pullLengthSec` of 200. The wipe is
+implemented and tested; a pull that runs on the clock simply times out first.
+Resolving it means moving one of two settled numbers — the 200, or a Submerge
+after every rotation — and neither is guesswork this file should do.
 
 Nothing here is dispellable.
 

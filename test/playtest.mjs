@@ -257,7 +257,18 @@ function play(boss, role, smart, seed, side = 'green') {
       // The pull scales with how far they have strayed and is capped below the
       // life-critical forces, so the ordering is: never die, then hold station,
       // then everything else.
-      const mine = w.bosses?.find(b => b.targetId === 0)
+      //
+      // ...and it stops the moment the thing being held leaves the floor. A Twin
+      // Fangs Submerge takes both serpents into the acid and suspends both melee
+      // leashes, and the engine's own ally tanks drop their stations and rejoin
+      // the raid for the duration. Without the same rule here the bot spent
+      // every intermission pinned to a corner of the tanks' ledge that Vile
+      // Flood sweeps across, holding position on a boss that was not there — so
+      // the row measured the harness's ignorance of the stage rather than
+      // anything the stage does.
+      const submerged = new Set(
+        (boss.phases?.[w.phaseIndex]?.relocate ?? []).map(r => r.id))
+      const mine = w.bosses?.find(b => b.targetId === 0 && !submerged.has(b.def.id))
       if (mine?.def.tankedApart) {
         const ax = mine.def.start.x, ay = mine.def.start.y
         const d = Math.hypot(ax - w.player.pos.x, ay - w.player.pos.y)

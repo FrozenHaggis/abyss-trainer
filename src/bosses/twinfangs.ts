@@ -147,14 +147,52 @@ export const twinfangs: BossDef = {
   // slots out, so at an unchanged interval the whole rotation shortened from
   // 132 seconds to 84 and every OTHER mechanic in the fight arrived 57% more
   // often. Measured, that alone moved a competent healer's death from 85
-  // seconds to 53: not because anything got harder, but because Venomous
-  // Emergence and Caustic Deluge were both being cast half again as fast.
-  // 14 slots at 9.5s is 133 seconds, which is the rotation the rest of this
-  // file was tuned against. Step 12 replaces the flat loop entirely; until it
-  // does, removing a mechanic should not silently speed up the fight.
-  loopIntervalSec: 9.5,
-  energyPerSec: 2.2,            // ~45s to the Vile Flood window, so three per pull
-  atFullEnergy: 'flood',
+  // THE BEAT BETWEEN STEPS, not the period of a rotation — see PhaseDef.sequential.
+  //
+  // Nothing on this fight fires on a clock any more. Both stages are scripted:
+  // each step waits for the one before it to finish and then this many seconds
+  // pass before the next is cast. So this is the one dial that changes the pace
+  // of the whole pull without changing what any mechanic does — and, unlike the
+  // 9.5 it replaces, it can be read straight off the floor. A beat is the pause
+  // between one thing ending and the next one starting.
+  //
+  // 1.5. Long enough that the raid sees a mechanic finish before the next cast
+  // bar appears, short enough that the fight never feels like it is waiting for
+  // permission. Every mechanic here already carries its own 1-4 second cast, so
+  // the readable pause is mostly that rather than this.
+  //
+  // WHAT IT COSTS, MEASURED, because the number matters and nothing else in this
+  // file records it. One rotation — six steps and a Submerge — takes 79.8
+  // seconds at this beat, of which 69 is the mechanics' own cast, channel and
+  // fuse time and 10.5 is the seven beats. So the three Vile Floods resolve at
+  // about 69 / 149 / 229 seconds.
+  //
+  // Which puts the third one — the raid leader's "if the boss isnt dead by the
+  // 3rd submerge, the raid wipes" — OUTSIDE the 200-second pull, and no value of
+  // this dial fixes that: at a zero beat the rotation is still 69 seconds and
+  // the third Submerge still lands at about 207. The engine wipes the raid
+  // correctly when a pull reaches it and there is a test that drives one there,
+  // but a pull that runs on the trainer's clock times out first. It is a genuine
+  // tension between two settled decisions — `pullLengthSec: 200` and a Submerge
+  // after every full rotation — and it is recorded here rather than resolved by
+  // quietly shortening a mechanic, because either of those two is the raid
+  // leader's to move and neither is this file's to guess at.
+  loopIntervalSec: 1.5,
+  // NOTHING FEEDS THE BAR PER SECOND. It is a Submerge counter.
+  //
+  // Every other fight in this raid runs on an energy bar that fills on a clock,
+  // and reading it means "how long until the next set piece". Here it means "how
+  // many times have the serpents gone under": Vile Flood puts 34 on it, so the
+  // pull reads 34 / 68 / 102 and the third one overflows a bar nothing spends.
+  // That is the raid leader's rule — "if the boss isnt dead by the 3rd submerge,
+  // the raid wipes" — implemented with no new machinery at all, because a full
+  // bar with no `atFullEnergy` behind it already ends the pull.
+  //
+  // `atFullEnergy: 'flood'` is deliberately gone with it. It was what made the
+  // bar spend itself and reset, i.e. what made three Submerges cost nothing.
+  energyPerSec: 0,
+  // ...and the death it ends in says which mechanic did it. See BossDef.enrageText.
+  enrageText: 'The third Submerge, with both serpents still alive — the platform went under',
   ambient: ['venom'],
   // 200, and this number is not only an enrage timer — it is the divisor in the
   // damage model. `perShot = base / (pullLengthSec * SHOTS_PER_SEC * 0.46)`, so
@@ -166,15 +204,45 @@ export const twinfangs: BossDef = {
   // what five seconds of fire is WORTH is decided here: 14.5% of a serpent at
   // 150, 10.9% at 200, 7.8% at 280. At 280 the window is narrower than a good
   // raid can close by shooting and the mechanic becomes "did you save a
-  // cooldown"; at 150 the pull is too short to see three Submerges. 200 fits
-  // three intermissions and still leaves five seconds of unbroken fire worth
-  // about a tenth of a health bar, which is a switch a raid can make on purpose.
+  // cooldown"; at 150 the pull is too short to see the fight. 200 leaves five
+  // seconds of unbroken fire worth about a tenth of a health bar, which is a
+  // switch a raid can make on purpose.
+  //
+  // It does NOT fit three Submerges, and that claim used to be written here.
+  // Now that the rotation is a script rather than a metronome its length is a
+  // measured fact rather than a tuning knob — 79.8 seconds, so the third
+  // Submerge resolves at about 229 — see the note on `loopIntervalSec` above,
+  // which is where the arithmetic and the open question both live.
   pullLengthSec: 200,
 
-  // Two symmetric halves. Stone Breaker lands once a half, matching the file's
-  // "roughly once a minute". Each half forces movement inward (globule, feast,
-  // the pre-knock huddle) and outward (Coiling Ichor) rather than only outward.
-  // Venomous Emergence sits FIFTH, not twelfth.
+  // THE SCRIPT. Six steps and an intermission, in that order, forever, and each
+  // one waits for the one before it to finish.
+  //
+  // This fight is not a rotation and never was. Read the raid leader's account
+  // of it and every joint in it is the word "once": "the Stone Breaker and soaks
+  // do not happen at the same time as the Caustic Deluge and the Globules";
+  // "once both of these abilities have been performed, Vexhul casts Venomous
+  // Emergence"; "whilst the adds are being killed Ithraz casts Coiling Ichor";
+  // "once these are dropped Vexhul will channel Stir the Waves"; "when the Stir
+  // the Waves finishes, Ithraz then casts Ravenous Feasts"; "once this completes
+  // start the intermission phase". That is a sequence of dependencies, and the
+  // fourteen-slot metronome this file ran on could only approximate it with
+  // hand-tuned gaps that were wrong the moment any telegraph changed length.
+  //
+  // `sequential: true` makes the dependency the mechanism. The consequences are
+  // worth spelling out because they are all things somebody would otherwise try
+  // to author by hand:
+  //
+  //   • Caustic Deluge and Stone Breaker CANNOT overlap. The Deluge step holds
+  //     until its last globule is gone — swept or ruptured — because a globule
+  //     is a splash's child and a splash is a beat of the channel. No gap was
+  //     tuned; the rule falls out of what the mechanic is.
+  //   • Venomous Emergence releases straight into Coiling Ichor with all three
+  //     Spawn of Vexhul still alive and still spitting, which is exactly what
+  //     the spec asks for, because `summons` never holds the beat.
+  //   • the raid sets the pace. Clear the globules fast and the whole rotation —
+  //     including the Submerge that ends it — arrives sooner. Let them fuse out
+  //     and the fight slows down and costs you ten stacks for the privilege.
   //
   // ENVENOMED IS GONE, and with it the fight's only `tankSwap`. It was a
   // metronome — a stack every third slot, taunt at four — and the swap it drove
@@ -186,45 +254,86 @@ export const twinfangs: BossDef = {
   // per soaked impact) is the same three pools counted a different way. Two
   // mechanics for one job, and only one of them had anything to practise.
   //
-  // It was in the last slot of each half, which put the first one 75 seconds
-  // into a pull that a clean kill ends at 80 and an enrage ends at 150. The
-  // mechanic was correct and almost nobody ever saw it: one Emergence, five
-  // seconds before the boss died, and none at all for anyone who died early.
-  // A mechanic you meet once at the end of a good pull is not being taught.
+  // WHAT IS NOT IN EITHER LIST, and must not be put back:
   //
-  // Fifth puts the first spawns down at about 30 seconds and gives a full pull
-  // three or four Emergences, which is the cadence the rest of this loop was
-  // already built on.
-  //
-  // `globule` is NOT in this list and must not be put back. It used to sit
-  // behind each `deluge` as its own slot, which meant the pickups were fired by
-  // the rotation rather than left by the splashes — a ring of globules round the
-  // arena centre, arriving on their own timer, with nothing on the floor to
-  // explain where they came from. Caustic Deluge now channels five pairs of
-  // splashes and each splash drops its own globule, so the ten arrive as
-  // consequences instead of as a scheduled event.
-  //
-  // `splash` is not in it either, for the same reason and more strongly: it is a
-  // beat of a channel, and a single pair of circles with no channel behind them
-  // is not a mechanic anyone can read.
-  //
-  // `slam` and `pushoff` are not in it either, and for the two halves of the
-  // same reason `splash` is not. A slam is a beat of Stone Breaker's channel and
-  // arrives with its place on the arc already decided; fired from the rotation
-  // it is one pool with no run behind it and no swap in front of it. A pushoff
-  // is what happens when a slam goes unsoaked — a punishment, not a cast — and
-  // the rotation dealing one out would throw the raid into the acid for nothing
-  // anybody did.
-  loop: [
-    'deluge',
-    'emergence', 'ichor',
-    'stonebreaker', 'depths',
-    'feast', 'storm',
-    'deluge',
-    'emergence', 'storm',
-    'stonebreaker', 'depths',
-    'feast', 'ichor',
+  //   • `globule` and `splash` — a globule is what a splash leaves and a splash
+  //     is a beat of the Deluge's channel. Fired from a rotation they arrive out
+  //     of nothing, on their own timer, and the ten-circle read the whole
+  //     mechanic is built on never happens.
+  //   • `slam` and `pushoff` — a slam arrives with its place on Stone Breaker's
+  //     arc already chosen, and a pushoff is the punishment for missing one. The
+  //     script dealing out a pushoff would throw the raid into the acid for
+  //     nothing anybody did.
+  //   • `wave` — a beat of Stir the Depths, for the same reason as `splash`.
+  //   • `storm` — Sanguine Storm is what Ithraz does FROM THE ACID for the
+  //     length of the intermission, so it is Vile Flood's channel now rather
+  //     than a slot of its own. It used to sit in the rotation twice, which put
+  //     red swirlies on the platform at moments when Ithraz was standing on the
+  //     ledge being tanked, with nothing to explain where they had come from.
+  phases: [
+    {
+      id: 'cadence',
+      name: 'The Twin Fangs',
+      banner: 'THE TWIN FANGS — one thing at a time, and the raid sets the pace',
+      sequential: true,
+      loop: ['deluge', 'stonebreaker', 'emergence', 'ichor', 'depths', 'feast'],
+      loopIntervalSec: 1.5,
+    },
+    {
+      // THE INTERMISSION. Both serpents dive and the raid is on its own.
+      //
+      // "When submerge happens Vexhul will disappear and reappear in the pocket
+      // and start channeling Vile Flood ... Ithraz also disappears and spawns
+      // out in the acid and casts Sanguine Storm ... the Sanguine Storm lasts
+      // until Vile Flood is finished."
+      //
+      // So it is one step long. Vile Flood is the whole stage: four seconds of
+      // cast, ten of beam, and Sanguine Storm riding along as its channel — and
+      // the stage ends when the beam does, because a `sequential` stage ends
+      // when its script runs out.
+      //
+      // WHERE THE TWO OF THEM GO, and both positions are the raid leader's.
+      // Vexhul takes the venom pocket at (0,19) — the same water the Spawn of
+      // Vexhul surface in, four yards clear of the floor on every side — which
+      // is why the beam sweeps across the whole wedge from the mouth end rather
+      // than down it. Ithraz goes out to the side at (22,0), six yards off the
+      // right leg: clear of the floor, nowhere near the pocket, and 29 yards
+      // from Vexhul, so the beam and the swirlies visibly come from two
+      // different places. Neither can be stood on, and `entitiesReduction: 1`
+      // means neither can be shot either — the intermission is a stretch of the
+      // fight where damage is not the answer, and it should look like one.
+      //
+      // They come back to their coiled positions when it ends; see
+      // PhaseDef.relocate for why that is phase-scoped rather than a change to
+      // `entities[]`.
+      id: 'submerge',
+      name: 'Submerge',
+      banner: 'SUBMERGE — the beam arcs one way. Read which, and get to the other end.',
+      sequential: true,
+      loop: ['flood'],
+      // The same beat as the cadence, so the Submerge does not open with a pause
+      // that reads as the fight having stopped.
+      loopIntervalSec: 1.5,
+      // Nothing crawls out of the pocket while the pocket is a boss. The wave
+      // timer would otherwise deliver a Bloodcurdled Mass into the middle of an
+      // intermission whose whole job is footwork.
+      suppressAddWaves: true,
+      // Submerged. Both are unreachable and immune for the duration, which is
+      // also what makes suspending the melee leash honest rather than a mercy.
+      entitiesReduction: 1,
+      relocate: [
+        { id: 'vexhul', to: { x: 0, y: 19 } },
+        { id: 'ithraz', to: { x: 22, y: 0 } },
+      ],
+    },
   ],
+
+  // The fallback rotation, for anything that reads `loop` without knowing about
+  // stages — a drill builds its own loop from this shape, and `BossDef` requires
+  // one. It is the cadence stage's six steps in the cadence stage's order, so
+  // the two can never disagree about what this fight does; the stages are what
+  // actually drive a pull.
+  loop: ['deluge', 'stonebreaker', 'emergence', 'ichor', 'depths', 'feast'],
 
   mechanics: [
     {
@@ -828,15 +937,38 @@ export const twinfangs: BossDef = {
       id: 'storm',
       name: 'Sanguine Storm',
       spellId: 1306876,
-      what: "18s channel raining gore globs , each leaving a 6s slowing pool .",
+      // THE OTHER HALF OF THE INTERMISSION, and it is Vile Flood's channel now
+      // rather than a slot in a rotation.
+      //
+      // "Ithraz also disappears and spawns out in the acid and casts Sanguine
+      // Storm. This showers the platform with red swirlies that players need to
+      // avoid whilst moving from Vexhuls Vile Flood ... the Sanguine Storm lasts
+      // until Vile Flood is finished." Every clause of that is now structural:
+      // it is thrown by `flood`'s `channel`, so it can only ever exist during a
+      // Submerge, it starts when the beam does and it stops with it.
+      //
+      // In the rotation it was two slots of red circles landing on a platform
+      // where Ithraz was standing on the ledge being tanked — dodgeable, fine,
+      // and with nothing on the floor to say where they came from. The mechanic
+      // is not "circles"; it is the second thing to read while you are already
+      // reading the beam, and it only means that when the two are together.
+      what: "Ithraz rains gore onto the platform from out in the acid for as long as Vexhul's beam is turning. Four-yard impacts, plenty of warning on each — the difficulty is reading them while you are already walking away from something else.",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
+      // 2.2s, against the beam's ten. Long enough that a glob is never the thing
+      // that catches you — if one lands on you during a Submerge it is because
+      // the beam was deciding where your feet went, which is the mechanic.
       telegraphMs: 2200,
       shape: { kind: 'circle', radius: 4 },    // "Glob impacts within 4 yards, dodgeable"
       origin: 'random',
       rule: { type: 'avoid' },
       damage: 0.3,
-      good: "Globs dodged while reading Vile Flood's rotation.",
+      // No `applies`, deliberately. This is Ithraz's blood rather than Vexhul's
+      // venom, the raid leader's account of the intermission names a stack for
+      // the beam and not for the swirlies, and the counter is tight enough that
+      // a second unavoidable-ish source inside the same ten seconds would make
+      // the intermission the place pulls end.
+      good: "Globs dodged while reading Vile Flood's arc — you should be moving anyway.",
       failText: 'Hit by a Sanguine Storm glob',
     },
     {
@@ -991,19 +1123,89 @@ export const twinfangs: BossDef = {
       id: 'flood',
       name: 'Vile Flood',
       spellId: 1294605,
-      what: "4s cast into a 14s rotating torrent applying a venom stack per 0.5s tick; the orbs around Vexhul telegraph the direction.",
+      // THE INTERMISSION, entire. Nothing else happens during a Submerge that
+      // this cast is not responsible for.
+      //
+      // It used to be a cone that appeared, sat still pointing at whoever Vexhul
+      // was looking at, and went off — the same shape as every other frontal in
+      // the raid, with the word "rotating" in its `what:` line and nothing in
+      // the engine behind it. "A continuous torrent of venom in a frontal beam
+      // from Vexhul out the way that arcs around the platform that players need
+      // to move from ... it should take 10 seconds to complete the arc" is a
+      // different mechanic: it is not a thing you dodge once, it is a thing that
+      // walks across the room and takes ten seconds to do it, and where it
+      // starts and how fast it turns are the whole of what a raider reads.
+      //
+      // So the telegraph is the cast bar and the LINGER is the cast. See
+      // MechanicDef.sweep for the three numbers and Instance.spin for how they
+      // are carried; see `stepClear` for why a beam that is still turning holds
+      // the intermission open when a gore pool on the floor does not.
+      what: "Vexhul channels a torrent of venom out of the pocket and swings it round the platform over ten seconds. There is no dodging it in place — the beam has a direction and a speed, and the answer is to be at the end of the platform it has already passed, or the end it will not reach.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
-      telegraphMs: 4000,             // "4s cast into a 14s rotating torrent"
-      // A cone anchored on the boss: the engine keeps a boss-origin cone locked
-      // to the boss's facing until it goes off, which is exactly the rotation
-      // the orbs telegraph. 46 hits and 12 deaths — "the deadliest avoidable".
-      shape: { kind: 'cone', radius: 50, arcDeg: 34 },
+      // "4s cast". Four seconds of the cone drawn, still, out over open water,
+      // which is the one window in which its direction can be read for free.
+      telegraphMs: 4000,
+      // MEASURED AGAINST THE FLOOR, not chosen. Every number here was picked by
+      // rasterising the real polygon at quarter-yard cells and stepping the beam
+      // through its whole arc in tenths of a second, and every one of them is
+      // pinned by that probe in engine.test.js.
+      //
+      //   • radius 38 covers the furthest floor point from the pocket (36.40
+      //     yards, the far corner of the tanks' ledge). Shorter and there is a
+      //     patch of floor the beam sweeps THROUGH without touching, which reads
+      //     as the mechanic being broken.
+      //   • arcDeg 24 is what keeps peak coverage at 22.5% of the platform. At
+      //     the 34 this shipped with it is 31%, and a third of a small wedge
+      //     under one shape stops being a beam and starts being a wall.
+      //
+      // 46 hits and 12 deaths in the logs — "the deadliest avoidable" — and it
+      // should stay that, which is why the damage below is charged per tick for
+      // as long as you are in it rather than once when it lands on you.
+      shape: { kind: 'cone', radius: 38, arcDeg: 24 },
       origin: 'boss',
+      // 145° is out over the water past the left-hand corner of the pocket, and
+      // that is load-bearing: measured, ZERO cells of floor are inside the cone
+      // at the instant it switches on. The beam always arrives already moving,
+      // so nobody is ever caught by the moment it comes on.
+      //
+      // 15°/s for 10 seconds is 150° of travel across a floor that subtends 214°
+      // from the pocket, which is what leaves the lane. The trailing edge at the
+      // furthest floor point moves at 9.53 yd/s against a player's 14 — quick
+      // enough that walking away from it is a real commitment, slow enough that
+      // it is a walk and not a coin flip. Measured over the 1158 square yards of
+      // this wedge: 253 of them are never touched at all, and 898 are safe at
+      // any given instant.
+      //
+      // `mirror` alternates the handedness cast by cast. Three Submerges in a
+      // pull and a beam that always went the same way would have one memorised
+      // answer; this way the end of the platform that stays clear is the other
+      // end every time, and because this wedge is exactly symmetric about x = 0
+      // the mirrored sweep is measurably the same sweep.
+      sweep: { startDeg: 145, degPerSec: 15, mirror: true },
+      // "it should take 10 seconds to complete the arc".
+      lingerMs: 10000,
       rule: { type: 'avoid' },
+      // Per tick while you are standing in it, not a lump when it lands — see the
+      // sweep branch in sim.ts's linger tick. About five seconds of the torrent
+      // kills, which is the right price for the deadliest avoidable in the fight
+      // and is survivable for as long as it takes to walk out of a 24° cone.
       damage: 0.46,
-      good: 'Raid reads the spin and stays out of the beam.',
-      failText: 'Clipped by the Vile Flood beam',
+      // "Touching this gives a stack of Eternal Venom." Every two seconds you
+      // remain in it, rather than once: a single charge would make the beam free
+      // floor after the first tick, which teaches standing in it. The BLAME is
+      // still once per cast — being caught is one mistake however long the walk
+      // out takes.
+      applies: { hit: 1, everyMs: 2000 },
+      // The Submerge counter. 34 / 68 / 102 — see `energyPerSec` above.
+      energy: 34,
+      // "The Sanguine Storm lasts until Vile Flood is finished." Eight globs at
+      // 1.2s covers 8.4 seconds of the beam's ten, and the last one lands just
+      // after the beam dies rather than just before, so the intermission does not
+      // end on a tick where there is suddenly nothing to read.
+      channel: { defId: 'storm', count: 8, everyMs: 1200 },
+      good: 'Everyone reads which way it is turning inside the first second and commits to one end of the platform, dodging Sanguine Storm where the beam is never going to reach.',
+      failText: 'Caught by the Vile Flood beam',
     },
   ],
 }

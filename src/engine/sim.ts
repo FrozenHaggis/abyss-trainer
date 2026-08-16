@@ -423,6 +423,24 @@ export interface World {
    */
   queue: { id: string; atMs: number; at?: Vec }[]
   /**
+   * The step a `sequential` stage has cast and is waiting on, or null when it is
+   * counting down the beat to the next one.
+   *
+   * One id, not a set: a script has exactly one thing happening at a time, and
+   * that is the whole claim the structure makes. Cleared the tick `stepClear`
+   * says the step is over, which is also what lets the stage know it has run out
+   * of script and can hand the fight on.
+   */
+  seqPending: string | null
+  /**
+   * How many casts of each `sweep` mechanic this pull has seen, so a mirrored
+   * beam can alternate its handedness.
+   *
+   * Per def id rather than a single counter, because two beams on one fight
+   * would otherwise take turns with each other rather than with themselves.
+   */
+  sweepCasts: Record<string, number>
+  /**
    * Has every soak in the run currently on the floor been covered?
    *
    * Stone Breaker's reward. The three slams are answered one at a time and the
@@ -997,12 +1015,30 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string, side:
    * the caster is the drill.
    */
   const caster = boss.adds?.find(a => a.casts?.defId === mechanicId)
+  /**
+   * How often a rep arrives. Long enough that one FINISHES before the next
+   * starts, which "a bit quicker than the rotation" is not.
+   *
+   * The old formula was `loopIntervalSec * 0.7` and it read the rotation period
+   * as a proxy for "how long does one of these take". On a scripted fight that
+   * number is not a period at all, it is the beat between steps — 1.5 on the
+   * Twin Fangs — so every drill on that boss collapsed onto the 3.5-second floor
+   * and a Vile Flood drill put four fourteen-second beams in the air at once.
+   *
+   * So the mechanic's own length is the third term. Telegraph plus linger plus a
+   * beat, which is the whole of a rep for everything that does not channel; a
+   * channel's beats can still run past it, exactly as they did before, because
+   * pinning that down properly is what the scripted stages are for and a drill
+   * has no script.
+   */
+  const own = boss.mechanics.find(m => m.id === mechanicId)
+  const repSec = ((own?.telegraphMs ?? 0) + (own?.lingerMs ?? 0)) / 1000 + 1.5
   // Only the drilled mechanic fires, every few seconds, forever.
   w.boss = {
     ...boss,
     loop: caster ? [] : [mechanicId],
     introEverySec: 1,
-    loopIntervalSec: Math.max(3.5, boss.loopIntervalSec * 0.7),
+    loopIntervalSec: Math.max(3.5, boss.loopIntervalSec * 0.7, repSec),
     atFullEnergy: undefined,
     // Ambient attrition and adds are the fight, not the mechanic — they would
     // just kill you slowly while you practise something else.
@@ -1028,6 +1064,32 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string, side:
     // No enrage. You leave a drill when you are done with it, not when a timer
     // decides you are.
     pullLengthSec: 3600,
+  }
+  /**
+   * ...but a mechanic that only exists inside a stage keeps that stage's floor.
+   *
+   * `phases: undefined` above is right for everything else and wrong here. Vile
+   * Flood is cast from the venom pocket at the mouth, and the whole shape of the
+   * mechanic — where the beam switches on, which way it arcs, which end of the
+   * platform stays clear — is a fact about it being cast from there. Drilled
+   * without the stage's `relocate`, it comes out of Vexhul's coiled position at
+   * the top of the wedge instead: a different sweep over a different room,
+   * practised by a player who will never see it in a pull.
+   *
+   * The move is applied to the units directly rather than by keeping the stage,
+   * because keeping the stage would bring its exit condition, its rotation and
+   * its energy with it — a drill that phased out from under you is the thing the
+   * line above exists to prevent.
+   */
+  for (const ph of boss.phases ?? []) {
+    if (!ph.relocate?.length) continue
+    if (ph.opensWith !== mechanicId && !ph.loop.includes(mechanicId)) continue
+    for (const r of ph.relocate) {
+      const unit = w.bosses.find(b => b.def.id === r.id)
+      if (!unit) continue
+      unit.pos = { ...r.to }
+      unit.station = { ...r.to }
+    }
   }
   return w
 }
@@ -1110,6 +1172,8 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     proxTimers: {},
     markPct: {},
     queue: [],
+    seqPending: null,
+    sweepCasts: {},
     soakRunClean: true,
     altCount: {},
     pairTarget: 0,
@@ -1411,6 +1475,98 @@ function activeInterval(w: World): number {
 
 function activeAmbient(w: World): string[] {
   return activePhase(w)?.ambient ?? w.boss.ambient ?? []
+}
+
+/** Entity ids the current stage has moved off their station, if any. */
+function relocatedIds(w: World): Set<string> {
+  const list = activePhase(w)?.relocate
+  if (!list?.length) return EMPTY_IDS
+  return new Set(list.map(r => r.id))
+}
+const EMPTY_IDS: Set<string> = new Set()
+
+/**
+ * EVERY mechanic id a scripted step owns, and how long each of them holds the
+ * beat. This is the load-bearing idea in the whole script and it is fragile.
+ *
+ * A step is not one cast. Caustic Deluge is a channel that throws five pairs of
+ * splashes and each splash leaves a globule with a ten-second fuse; Stone
+ * Breaker is a knock and three sequenced pools; Venomous Emergence is a cast and
+ * three adds. "Wait for the previous step to finish" is meaningless until you
+ * say which of those descendants count, and the answer is different for each
+ * KIND of link — which is exactly why it is a rule about links and not a list of
+ * exceptions per mechanic:
+ *
+ *   • `channel` → 'always'. The beats ARE the cast. A channel with two beats
+ *     still queued has not finished, and neither have its children while they
+ *     are still in the air. This is what makes Stone Breaker and Caustic Deluge
+ *     never overlap, without a single hand-tuned gap: the Deluge step holds
+ *     through the last globule's fuse because the globule is a splash's child
+ *     and the splash is a beat of the channel.
+ *   • `spawns` → 'telegraph'. What a cast leaves behind is a consequence, not
+ *     part of the cast. A Caustic Globule still counting down is a thing the
+ *     raid has to answer NOW, so it holds; a Congealed Gore pool sitting on the
+ *     rim for thirty seconds has already happened, so it does not. Same link,
+ *     same rule, opposite answers, decided by whether the child has resolved.
+ *   • `summons` → not in the closure at all. "Whilst the adds are being killed
+ *     Ithraz casts Coiling Ichor" — the Spawn of Vexhul are supposed to still be
+ *     alive two steps later, and a rule that waited for them would stop the
+ *     script dead until the raid finished a kill it is meant to be doing in the
+ *     background.
+ *
+ * Collapse those three into one set and the fight stops after Coiling Ichor for
+ * the length of a gore pool. Widen 'telegraph' to 'always' and it stops after
+ * Venomous Emergence. Both failures look like the script hanging, and neither
+ * points at this function, which is why the two tests that pin it pull in
+ * opposite directions: one asserts no overlap, the other asserts a live spawn at
+ * the tick Coiling Ichor is cast.
+ */
+function stepClosure(w: World, id: string): Map<string, 'always' | 'telegraph'> {
+  const out = new Map<string, 'always' | 'telegraph'>()
+  const walk = (defId: string, mode: 'always' | 'telegraph') => {
+    // 'always' wins over 'telegraph' if a def is reached both ways, and a def
+    // already recorded at the strictest mode is not walked twice — which is also
+    // what stops a cycle in the boss file from hanging the engine.
+    const seen = out.get(defId)
+    if (seen === 'always' || seen === mode) return
+    out.set(defId, mode)
+    const def = w.boss.mechanics.find(m => m.id === defId)
+    if (!def) return
+    if (def.channel) walk(def.channel.defId, mode)
+    // Once a branch only holds while telegraphing, everything below it does too:
+    // a pool dropped by a pool is no more part of the cast than its parent was.
+    if (def.spawns) walk(def.spawns.defId, 'telegraph')
+  }
+  walk(id, 'always')
+  return out
+}
+
+/**
+ * Is a scripted step over?
+ *
+ * Three things can still be outstanding, and all three have to be gone: a beat
+ * the channel has queued but not yet fired, an instance that has not resolved,
+ * and a beam that resolved but is still turning.
+ *
+ * That last clause is the one that is not obvious. Everything else in this
+ * engine finishes when it resolves and whatever it leaves on the floor is
+ * residue — which is why a lingering gore pool does not hold the beat. Vile
+ * Flood is the exception and it is a real one: its resolve is the moment the
+ * torrent switches ON, and the ten seconds afterwards are the cast, not its
+ * leavings. A step that closed at its resolve would end the intermission four
+ * seconds in, with the beam mid-arc and both serpents teleporting back to a
+ * ledge the raid has walked away from.
+ */
+function stepClear(w: World, id: string): boolean {
+  const own = stepClosure(w, id)
+  if (w.queue.some(q => own.has(q.id))) return false
+  for (const inst of w.instances) {
+    const mode = own.get(inst.def.id)
+    if (mode === undefined) continue
+    if (!inst.resolved) return false
+    if (mode === 'always' && inst.def.sweep) return false
+  }
+  return true
 }
 
 // ── the split raid ───────────────────────────────────────────────────────────
@@ -1942,6 +2098,31 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
     carriedByPlayer:
       def.origin === 'player' ||
       (def.origin === 'targeted' && Math.hypot(pos.x - w.player.pos.x, pos.y - w.player.pos.y) < 0.01),
+  }
+  /**
+   * A beam that arcs starts where the boss file says, not at the player.
+   *
+   * Overriding the bearing rather than adding another arm to the chain above,
+   * because every arm up there answers "who is this aimed at" and a sweep is
+   * aimed at nobody — it comes on over open water and walks across the room. A
+   * boss-origin cone would otherwise switch on pointing straight at whoever it
+   * is tanking, which on this floor is a torrent appearing on top of the raid
+   * with no telegraph anywhere.
+   *
+   * `mirror` flips the handedness every other cast. The reflection is about the
+   * room's x = 0 axis — bearing θ becomes π - θ and the turn reverses — so the
+   * mirrored sweep is the same sweep seen in a mirror, and on a floor that is
+   * itself symmetric about that axis the lane it leaves is exactly as big. The
+   * counter is per def so two beams on one fight would alternate independently.
+   */
+  if (def.sweep) {
+    const casts = (w.sweepCasts[def.id] ?? 0) + 1
+    w.sweepCasts[def.id] = casts
+    const flip = !!def.sweep.mirror && casts % 2 === 0
+    const start = (def.sweep.startDeg * Math.PI) / 180
+    const rate = (def.sweep.degPerSec * Math.PI) / 180
+    inst.angle = flip ? Math.PI - start : start
+    inst.spin = flip ? -rate : rate
   }
   if (def.driftSpeed) {
     // A radial hazard leaves on the bearing it was fanned onto. The Tempest
@@ -2667,7 +2848,13 @@ function resolveInstance(w: World, inst: Instance) {
       // rim and hand every other body in the room a free run. What it costs is
       // charged on contact instead, in the linger tick below — which is where a
       // hazard that is dangerous for its whole life belongs.
-      if (inside && !def.popsOnContact && !def.edgeArc) {
+      //
+      // A sweeping beam is exempt for the same reason and it is the stronger
+      // case of the two. Its resolve is the instant the torrent switches ON,
+      // pointing over open water by construction — so the one thing this branch
+      // could measure there is guaranteed to be nobody, and the ten seconds
+      // during which it actually crosses the platform would cost nothing at all.
+      if (inside && !def.popsOnContact && !def.edgeArc && !def.sweep) {
         if (scored) recordFailure(w, def)
         // Deadly means deadly. Everything else is damage you get healed through
         // — scaled by the Infusion behind it, so an Expulsion off a fountain
@@ -3367,7 +3554,14 @@ function resolveInstance(w: World, inst: Instance) {
   }
 
   // Energy is fed by events, never by the clock — see the bar in step().
-  if (def.energy) w.bossEnergy = Math.min(100, w.bossEnergy + def.energy)
+  //
+  // Not in a drill, though, and the reason is `createDrill`'s own: it zeroes
+  // `energyPerSec` and drops `atFullEnergy` so that "a drill that ended in an
+  // enrage because the bar filled while you practised" cannot happen. A
+  // mechanic's own `energy` walked straight through both of those — thirty
+  // reps of Soulcoil Ignition at ten a time, or three of Vile Flood at
+  // thirty-four, and the drill kills you for practising.
+  if (def.energy && !w.drillId) w.bossEnergy = Math.min(100, w.bossEnergy + def.energy)
 
   // A permanent stack of something. Ritual Burn is the running score of what
   // this pull has already cost you, and it never falls off.
@@ -3681,6 +3875,9 @@ function reservePickups(w: World) {
  */
 function allyThink(w: World) {
   const arena = w.boss.arenaRadius
+  // Entities the current stage has taken off the floor. Empty on every fight but
+  // one, and empty on that one for all but the intermission.
+  const submergedUnits = relocatedIds(w)
   // Is a stack-group cone in the air, or about to be? While one is, holding the
   // mark outranks clean feet — the acid costs a healer's cooldown and missing
   // the soak costs half the raid bar.
@@ -3851,7 +4048,16 @@ function allyThink(w: World) {
     //    are held apart that puts a tank at each — which is the mechanic. A tank
     //    holding nothing waits behind the primary, clear of the frontal, ready
     //    to take the swap.
-    const held = w.bosses.find(b => b.targetId === a.id)
+    //
+    //    ...and a tank whose entity has SUBMERGED is holding nothing, for as
+    //    long as the stage lasts. The other half of hazard 4.6: the leash below
+    //    stops judging them, and this stops sending them to a station that is
+    //    now three yards out in the acid — or, worse, to the middle of the venom
+    //    pocket that Vexhul is channelling Vile Flood out of. With no station to
+    //    hold they keep the formation spot step 1 gave them and dodge the beam
+    //    with everybody else, which is what the intermission is.
+    const heldUnit = w.bosses.find(b => b.targetId === a.id)
+    const held = heldUnit && submergedUnits.has(heldUnit.def.id) ? undefined : heldUnit
     if (held?.def.tankedApart) {
       // Hold it at its assigned corner. Standing relative to the boss made the
       // tank and the boss chase each other now that a tanked entity follows its
@@ -3887,7 +4093,7 @@ function allyThink(w: World) {
         a.want.x = mark.x
         a.want.y = mark.y
       }
-    } else if (a.role === 'tank') {
+    } else if (a.role === 'tank' && !submergedUnits.has(w.bosses[0].def.id)) {
       const p = w.bosses[0]
       a.want.x = p.pos.x - Math.cos(p.angle) * 7
       a.want.y = p.pos.y - Math.sin(p.angle) * 7
@@ -4367,8 +4573,15 @@ function allyThink(w: World) {
     //     and it is the reason the pair stopped walking to the wall: the aim
     //     mark is a place in the room, and wandering off it is what turned every
     //     later Mutilate into a cone pointed at empty floor.
-    const rawStation = w.bosses.find(b => b.targetId === a.id && b.def.tankedApart)?.def.start
-      ?? (w.bosses[0].targetId === a.id
+    //     And a tank whose entity has submerged has no station to be held near
+    //     at all — the third place hazard 4.6 has to be answered. Leaving the
+    //     bound live would pin them within six yards of a ledge the Vile Flood
+    //     beam sweeps across, holding them in the one part of the room the
+    //     intermission is about leaving.
+    const myStation = w.bosses.find(b =>
+      b.targetId === a.id && b.def.tankedApart && !submergedUnits.has(b.def.id))
+    const rawStation = myStation?.def.start
+      ?? (w.bosses[0].targetId === a.id && !submergedUnits.has(w.bosses[0].def.id)
         ? (hasGroups(w) ? tankStation(w, w.bosses[0]) : altarStation(w))
         : null)
     // Onto the floor, always. A station is where a tank is told to stand, and an
@@ -4839,6 +5052,18 @@ function computePrompt(w: World): Prompt | null {
     }
   }
 
+  // A beam that has switched on and is arcing across you. Handled outside the
+  // instance loop below for the same reason furniture is: that loop skips
+  // anything resolved, and a sweep's resolve is the START of the ten seconds it
+  // is dangerous for. Every other hazard on this fight is finished with you by
+  // then; this one is charging a stack every couple of seconds for as long as
+  // you stand in it, so saying nothing would be the one place in the fight where
+  // the prompt goes quiet exactly while the cost is running.
+  for (const inst of w.instances) {
+    if (!inst.def.sweep || !inst.resolved || !isInside(inst, w.player.pos)) continue
+    consider({ verb: 'GET OUT OF THE BEAM', mechanic: inst.def.name, urgency: 1 }, 1)
+  }
+
   // The gales. There is no telegraph to read and no shape to leave — the whole
   // instruction is a direction, and the thing at the end of it is the only way
   // out of the stage. Ranked above the floor because being blown past the glob
@@ -5079,6 +5304,13 @@ function computePrompt(w: World): Prompt | null {
  * was the one that killed you.
  */
 export function unlockedCount(w: World): number {
+  // ...except on a scripted stage, where drip-feeding does not slow the fight
+  // down, it REORDERS it. `loopIndex % unlockedCount` with two of six unlocked
+  // runs the first two steps over and over until the rest arrive, so the strict
+  // order the script exists to state would be false for its first half-minute —
+  // and the raid leader's "once this completes, then that" would describe a
+  // rotation the player never sees. A script is introduced by running it.
+  if (activePhase(w)?.sequential) return activeLoop(w).length
   // A clean pull kills in roughly 0.46 x pullLengthSec — about 69 seconds on
   // most of these bosses. At the old 14-second cadence that unlocked only five
   // of a twelve-mechanic loop before the boss died, so you could burst it to
@@ -5471,7 +5703,15 @@ function recordAddFailure(w: World, d: AddDef) {
 export function upcoming(w: World, count = 3): { name: string; inSec: number }[] {
   const out: { name: string; inSec: number }[] = []
   const period = activeInterval(w) * 1000
-  const untilNext = period - w.loopTimerMs
+  // On a scripted stage these are FLOORS rather than times, and they cannot be
+  // anything else: the next step arrives one beat after the current one closes,
+  // and when that is depends on how fast the raid answers it. The strip's job is
+  // the ORDER — "Stone Breaker is next, then Venomous Emergence" — which on a
+  // script is knowable exactly and is the thing worth showing; the clock beside
+  // it is the soonest each could arrive. A stage still waiting on a step shows
+  // no gap at all, because the beat has not started counting yet.
+  const seq = !!activePhase(w)?.sequential
+  const untilNext = seq && w.seqPending ? 0 : period - w.loopTimerMs
   const live = unlockedCount(w)
   const loop = activeLoop(w)
   // Walk further than `count` so the strip still fills up when most of the loop
@@ -5540,6 +5780,22 @@ function enterPhase(w: World, index: number) {
   // previous one. It is a different fight, not a bookmark.
   w.loopIndex = 0
   w.loopTimerMs = 0
+  // And it is waiting on nothing. A step left pending from the stage that just
+  // ended would be a script blocked on a mechanic belonging to a rotation that
+  // is no longer running — the new stage would never cast anything at all.
+  w.seqPending = null
+  // Off the floor for the duration. Both serpents dive: Vexhul into the venom
+  // pocket the Spawn surface in, Ithraz out into the sea beside the right leg.
+  // Their `station` goes with them so nothing walks a tank to where they used to
+  // be, and `def.start` is untouched — that is the address `exitPhase` brings
+  // them back to, and the whole reason this is a phase-scoped move rather than
+  // an edit to the boss file's `entities[]`.
+  for (const r of ph.relocate ?? []) {
+    const unit = w.bosses.find(b => b.def.id === r.id)
+    if (!unit) continue
+    unit.pos = { ...r.to }
+    unit.station = { ...r.to }
+  }
   w.entityReduction = ph.entitiesReduction ?? 0
   w.phaseAddsSpawned = false
   w.pairFired = false
@@ -5605,6 +5861,11 @@ function enterPhase(w: World, index: number) {
 
 /** Has this stage done what it was waiting for? */
 function phaseComplete(w: World, ph: PhaseDef): boolean {
+  // A script is over when it runs out of script. No field says so for the same
+  // reason none says so for the pairing or the Maelstrom below: the mechanic
+  // already does. Every step has been cast and the last one has closed, so
+  // "once this completes" has been answered for the last entry in the list.
+  if (ph.sequential) return w.loopIndex >= ph.loop.length && !w.seqPending
   if (ph.endsAtBossHp !== undefined && w.bossHp <= ph.endsAtBossHp) return true
   if (ph.endsAtFullEnergy && w.bossEnergy >= 100) return true
   if (ph.endsWhenAddsDead && w.phaseAddsSpawned
@@ -5701,6 +5962,26 @@ function tradeTanks(w: World) {
 /** Wind a stage up and hand the fight to the next one. */
 function exitPhase(w: World, ph: PhaseDef) {
   if (ph.endsAtFullEnergy) w.bossEnergy = 0
+  // Back where they were coiled, exactly. `def.start` rather than a remembered
+  // position on purpose: these two are `stationary` and nothing in the fight
+  // ever moves them except this, so their start IS their address, and reading it
+  // back out of the boss file means a stage cannot leave them a yard adrift
+  // every time it runs.
+  //
+  // The tanks are then somewhere else entirely — they spent the intermission
+  // dodging with the raid, because the thing they were welded to was not there —
+  // so the leash opens graced for the walk back. Without it every Submerge would
+  // end in a couple of seconds of Concentrated Spittle for a separation the
+  // stage itself created.
+  if (ph.relocate?.length) {
+    for (const r of ph.relocate) {
+      const unit = w.bosses.find(b => b.def.id === r.id)
+      if (!unit) continue
+      unit.pos = { ...unit.def.start }
+      unit.station = { ...unit.def.start }
+    }
+    armLeashGrace(w, TANK_LEASH_GRACE_MS)
+  }
   // The gale is over. Left set, a stale uid told the raid AI and the balance
   // harness that some instance was still the thing to run at for the rest of the
   // pull — and once that uid was reused by a later hazard, they ran at that.
@@ -6275,8 +6556,16 @@ export function step(w: World, input: Input, dtMs: number) {
   // this engine: the raid pays whoever walked out, and only a PLAYER holding the
   // entity is ever named for it.
   w.leashBroken = false
+  const submerged = relocatedIds(w)
   for (const { def, maxYards, unit } of meleeLeashes(w)) {
     const id = unit.def.id
+    // It has left. A stage that takes an entity off the floor takes its range
+    // check with it: both serpents dive for the Submerge, become unreachable and
+    // immune, and the raid spends the intermission dodging a beam at the far end
+    // of the room. Judged through that, a twelve-yard leash on a serpent sitting
+    // in the acid thirty yards away is an instant wipe for doing exactly what
+    // the stage asks — both tanks out, the bar gone in two seconds, every pull.
+    if (submerged.has(id)) { w.leashOutMs[id] = 0; continue }
     // A drill is one mechanic, on loop, with the rest of the fight switched off.
     // Leaving the leash live through a Caustic Deluge drill would wipe the raid
     // every few seconds for standing where the globules are, which is the whole
@@ -6452,13 +6741,46 @@ export function step(w: World, input: Input, dtMs: number) {
   // committed to. The timer is held rather than reset, so the beat after the
   // flurry lands where it would have.
   if (w.elapsedMs >= w.comboUntilMs) {
-    w.loopTimerMs += dtMs
-    if (w.loopTimerMs >= activeInterval(w) * 1000) {
-      w.loopTimerMs = 0
-      // Only what has been introduced so far — see unlockedCount().
-      const id = activeLoop(w)[w.loopIndex % unlockedCount(w)]
-      w.loopIndex++
-      fire(w, id)
+    if (phase?.sequential) {
+      // A SCRIPT, not a clock. The gap is only counted while nothing is pending,
+      // so a step that takes twenty seconds pushes everything after it twenty
+      // seconds later rather than being run over by the next beat. That is the
+      // whole difference between "these two never overlap" as a property of the
+      // fight and as a number somebody tuned once and hoped about.
+      //
+      // It also makes the pace of the pull the RAID's: a raid that sweeps its
+      // globules the moment they land closes Caustic Deluge eight seconds sooner
+      // than one that lets them all fuse out, and every step after it — and the
+      // Submerge that ends the rotation — arrives sooner in exact proportion.
+      // Nothing hard-codes that; it falls straight out of waiting.
+      if (w.seqPending && stepClear(w, w.seqPending)) {
+        w.seqPending = null
+        w.loopTimerMs = 0
+      }
+      if (!w.seqPending) {
+        w.loopTimerMs += dtMs
+        if (w.loopTimerMs >= activeInterval(w) * 1000) {
+          w.loopTimerMs = 0
+          const loop = activeLoop(w)
+          // The whole script, from the first tick — see PhaseDef.sequential.
+          const id = loop[w.loopIndex % loop.length]
+          w.loopIndex++
+          // Marked pending BEFORE the cast, so a mechanic that somehow resolves
+          // inside its own `fire` cannot be waited on for a step that has not
+          // been recorded yet.
+          w.seqPending = id
+          fire(w, id)
+        }
+      }
+    } else {
+      w.loopTimerMs += dtMs
+      if (w.loopTimerMs >= activeInterval(w) * 1000) {
+        w.loopTimerMs = 0
+        // Only what has been introduced so far — see unlockedCount().
+        const id = activeLoop(w)[w.loopIndex % unlockedCount(w)]
+        w.loopIndex++
+        fire(w, id)
+      }
     }
   }
 
@@ -6484,7 +6806,10 @@ export function step(w: World, input: Input, dtMs: number) {
     } else if (!w.enraged) {
       w.enraged = true
       w.shake = 1
-      killPlayer(w, 'The bar filled — enraged')
+      // The generic line is the truth on a bar that fills on a clock. On a bar
+      // that only moves when a Submerge happens it is a lie about the cause, so
+      // the boss file gets to say what filling it actually means.
+      killPlayer(w, w.boss.enrageText || 'The bar filled — enraged')
       return
     }
   }
@@ -6545,6 +6870,17 @@ export function step(w: World, input: Input, dtMs: number) {
   }
   let pooledThisTick = false
   for (const inst of w.instances) {
+    /**
+     * A beam that arcs, once it has switched on.
+     *
+     * Only while RESOLVED, and that is the mechanic rather than an
+     * implementation detail. The telegraph is the cast bar and the cone sits
+     * still through all of it, pointing at the stretch of water it will come on
+     * over — so the raid gets four seconds to read which way round this Submerge
+     * is going before a yard of floor is in danger. Start it turning during the
+     * telegraph and the only readable thing about it is gone.
+     */
+    if (inst.resolved && inst.spin) inst.angle += inst.spin * dt
     // Hazards that drift, resolved or not. A pool that has landed still moves
     // if the fight set the floor moving: Invoke does exactly that to the Essence
     // Rend puddles, and a permanent pool that also travels is the reason the
@@ -6764,6 +7100,25 @@ export function step(w: World, input: Input, dtMs: number) {
           inst.answered = true
           if (def_scored(w, inst.def)) recordFailure(w, inst.def)
           hurt(w, inst.def.damage ?? 0.15, inst.def.name)
+        }
+      } else if (inst.def.sweep) {
+        // The torrent rolled over you, and this is where the whole cost of it
+        // lands — `case 'avoid'` above declines to judge a sweep at its resolve.
+        //
+        // Blame once, damage every tick, and the split is deliberate. Being
+        // caught by the beam is ONE mistake however long it takes you to walk
+        // out, so a debrief reading "Vile Flood ×600" would be counting frames —
+        // the same distinction the melee leash and the waves both draw. But
+        // standing in it is not one mistake repeated, it is a decision to keep
+        // standing there, and the damage and the stack (charged by `payHit`
+        // above, on `applies.everyMs`) both keep arriving until you stop.
+        if (!inst.answered) {
+          inst.answered = true
+          if (def_scored(w, inst.def)) recordFailure(w, inst.def)
+        }
+        if (!pooledThisTick) {
+          pooledThisTick = true
+          hurt(w, (inst.def.damage ?? 0.15) * 0.5 * dt, inst.def.name)
         }
       } else if (inst.def.popsOnContact) {
         // "pops on contact for damage and a 30% slow" — one hit, then it is

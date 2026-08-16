@@ -1013,6 +1013,40 @@ export interface MechanicDef {
    * that goes from pale to lit, they look at the floor. Pinned by a test.
    */
   armsAfterMs?: number
+  /**
+   * A beam that TURNS while it is live. Vile Flood, and nothing else in the raid.
+   *
+   * Every other shape in this engine is aimed once and then either sits there or
+   * drifts in a straight line. This one is a cast that is still happening: the
+   * cone switches on pointing somewhere and arcs round the platform for the
+   * whole of its `lingerMs`, so what a raider has to read is not where it is but
+   * which way it is going and how much floor it has left to cover.
+   *
+   *   • `startDeg` — the bearing it switches on at, degrees, +x is 0 and +y is
+   *     90, measured from the CASTER. It is deliberately a bearing with no floor
+   *     under it: the beam has to come on over water and arrive at the platform
+   *     already moving, or the raiders standing where it starts are hit by
+   *     something that was never telegraphed anywhere.
+   *   • `degPerSec` — how fast it turns. The binding constraint is the TRAILING
+   *     edge at the furthest floor point: turn faster than a player can run
+   *     sideways and the beam is not dodgeable, it is a die roll. Measured on
+   *     the Twin Fangs wedge, 15°/s is 9.49 yd/s at the furthest floor point,
+   *     against `PLAYER_SPEED` of 14.
+   *   • `mirror` — alternate the handedness cast by cast, reflecting the whole
+   *     sweep about the room's x = 0 axis (bearing θ becomes 180 - θ and the
+   *     turn reverses). Three Submerges in a pull, and a beam that always went
+   *     the same way would have one memorised answer; mirrored, the half of the
+   *     room that stays clear is the other half every time. Only sound in a room
+   *     that is symmetric about that axis — this wedge is, exactly — because the
+   *     guarantee that the sweep leaves a lane is proved against the polygon and
+   *     a reflection only preserves it if the polygon is preserved.
+   *
+   * The cost is charged on CONTACT rather than at the resolve, for the same
+   * reason a Stir the Depths wave is: there is no instant at which a ten-second
+   * torrent "goes off". See the exemption in `case 'avoid'` and the branch that
+   * replaces it in the linger tick.
+   */
+  sweep?: { startDeg: number; degPerSec: number; mirror?: boolean }
 }
 
 /**
@@ -1123,6 +1157,63 @@ export interface PhaseDef {
    * and the wind either runs a beat nobody expected or never reverses.
    */
   windToCysts?: boolean
+  /**
+   * A SCRIPT rather than a metronome: each entry waits for the one before it.
+   *
+   * Every other rotation in this raid is a clock. `loopIntervalSec` elapses, the
+   * next id in `loop` fires, and whether the previous mechanic has finished is
+   * nobody's business — which is right for a fight whose mechanics are supposed
+   * to pile on top of one another, and wrong for the Twin Fangs, where the raid
+   * leader's description is a list of "once this completes". "The Stone Breaker
+   * and soaks do not happen at the same time as the Caustic Deluge and the
+   * Globules" is not a gap you can hand-tune into an interval; it is a
+   * dependency, and the only honest way to express it is to make the next step
+   * wait.
+   *
+   * So on a sequential stage `loopIntervalSec` stops being the period and
+   * becomes the BEAT BETWEEN steps: the gap from the previous step closing to
+   * the next one being cast. A stage with nothing pending counts that gap down
+   * and fires; a stage waiting on a step does not count at all.
+   *
+   * Two consequences worth stating, because both look like bugs from outside:
+   *
+   *   • the whole loop is unlocked from the first tick. `unlockedCount`
+   *     introduces mechanics a few at a time, which on a scripted stage would
+   *     not slow the fight down, it would REORDER it — the first pass would run
+   *     the first two steps twice over and the strict order the script exists to
+   *     express would be a fiction.
+   *   • the stage ends when the last step closes. That is its exit condition and
+   *     it needs no field of its own, exactly as the pairing and the Maelstrom
+   *     exits need none: the script running out IS the stage being over.
+   *
+   * What counts as "closed" is `stepClosure` in sim.ts, and it is the load-
+   * bearing piece — see the comment there before changing anything about it.
+   */
+  sequential?: boolean
+  /**
+   * Entities that leave their station for the duration of the stage.
+   *
+   * "When submerge happens Vexhul will disappear and reappear in the pocket and
+   * start channeling Vile Flood ... Ithraz also disappears and spawns out in the
+   * acid." Both go somewhere OFF the walkable floor and come back to exactly
+   * where they were when the stage ends, which is why this is a phase-scoped
+   * position and emphatically not an edit to `entities[]`: their start positions
+   * are the fight's furniture for the other ninety percent of the pull, and a
+   * stage that permanently moved them would silently rewrite every measurement
+   * taken against them.
+   *
+   * It is not only a visual. Three things read it and have to:
+   *
+   *   • a `holdMelee` leash is SUSPENDED for a relocated entity. The serpents
+   *     are unreachable and immune for the intermission, so a range check
+   *     judged during one is an instant wipe for doing what the stage asks.
+   *   • the ally tanks stop being tanks for the duration and rejoin the raid,
+   *     rather than walking to a station that is now in the acid.
+   *   • anything anchored on the caster — a boss-origin cone, a channel's arc —
+   *     is laid from wherever the entity has gone, which is the point: Vile
+   *     Flood has to sweep out of the pocket and not off the ledge.
+   */
+  relocate?: { id: string; to: Vec }[]
 }
 
 /**
@@ -1226,6 +1317,20 @@ export interface BossDef {
   atFullEnergy?: string
   /** Always-on mechanics, e.g. Ula'tek's Presence attrition. */
   ambient?: string[]
+  /**
+   * What the debrief says when the energy bar fills and nothing spends it.
+   *
+   * The hard end of a pull is normally "the bar filled — enraged", and on the
+   * six fights whose bar really is an enrage meter that is the truth. On the
+   * Twin Fangs it is a lie: nothing feeds the bar per second, Vile Flood puts 34
+   * on it, and 34/68/102 means the bar is a Submerge counter — the pull ends
+   * because "if the boss isnt dead by the 3rd submerge, the raid wipes", which
+   * is a mechanic with a name and a cause the player can do something about.
+   * A death screen that blamed a timer would send them away practising nothing.
+   *
+   * Omit and the generic line stands.
+   */
+  enrageText?: string
   /** Enrage timer. Survive past it and the boss wins. */
   pullLengthSec: number
   /** Boss health pool. You win by emptying it, Pineapplia-style. */
@@ -1323,6 +1428,17 @@ export interface Instance {
    * Feast and quietly make the second one lethal from its first bite.
    */
   fed?: number[]
+  /**
+   * `sweep` only: how fast and which way this beam is turning, radians a second.
+   *
+   * Signed, and the sign is the whole of what `sweep.mirror` decides — so the
+   * handedness is settled once, at the cast, and every tick afterwards is
+   * `angle += spin * dt` with nothing left to look up. Storing the rate rather
+   * than the angle turned means the instance never has to remember where it
+   * started, and `angle` stays the single source of truth for where the beam is
+   * pointing, which is what the renderer and `isInside` both read.
+   */
+  spin?: number
 }
 
 /** A simulated raid member. Nineteen of them, so group mechanics are real. */

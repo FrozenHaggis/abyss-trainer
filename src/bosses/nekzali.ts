@@ -430,10 +430,18 @@ export const nekzali: BossDef = {
       rule: { type: 'beInside' },
       // Half the raid. The other half is not idle: they are carrying the flame.
       soakers: 10,
-      // Which is what this does. On alternate casts you are handed Slithering
-      // Flame instead of being scored on the soak, so one intermission trains
-      // both halves of the split rather than whichever you were assigned.
-      alternatesWith: { defId: 'flame' },
+      // Which is what this does — and it is the same ability, not two. The
+      // tactic file puts both halves in one sentence: "a 10yd Fire soak circle
+      // that splits among everyone inside; anyone who misses it gets Slithering
+      // Flame". So the flame is not a separate cast that happens to you, it is
+      // what standing outside the circle GETS you, and it is the only torch on
+      // the fight.
+      //
+      // That makes the circle a decision rather than an instruction. Stack and
+      // the hit is split between you; stay out and you are handed the job of
+      // burning a body with the thing that lands on you. It used to alternate on
+      // a counter, which showed a player both halves and asked them nothing.
+      onMiss: { defId: 'flame' },
       good: 'Full assigned head count in every circle; a landed flame is walked onto the corpse pile to deny repossession.',
       failText: 'Missed the Hungering Pyre soak',
     },
@@ -459,6 +467,11 @@ export const nekzali: BossDef = {
       // the Amani standing back up. The briefing used to say 'walk it clear of the
       // group', which is a different instruction from the one the fight wants.
       carryTarget: 'the Amani corpses',
+      // The torch, stated rather than inferred. The engine used to treat any
+      // carried debuff during the intermission as one, and this fight carries
+      // two — a player holding an Essence Rend was told to BURN A CORPSE with
+      // something that cannot burn anything.
+      burnsCorpses: true,
       rule: { type: 'carryOut', minDistance: 24 },
       spawns: { defId: 'cremation' },
       good: 'Full assigned head count in every circle; a landed flame is walked onto the corpse pile to deny repossession.',

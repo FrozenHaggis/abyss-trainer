@@ -117,15 +117,42 @@ export function say(text: string, opts: SayOpts = {}): void {
  * pace with the fight paused. Reading a whole paragraph aloud meant the useful
  * half of the sentence arrived after the mechanic had already landed.
  */
+/**
+ * A verb as it should be SPOKEN rather than as it is displayed.
+ *
+ * The prompts are written in capitals because that is how an instruction reads
+ * on a busy arena, and speech synthesis takes a run of capitals for an
+ * initialism. "KILL IT" came out as "kill eye tee". So does "RUN IT OUT",
+ * "POINT IT AWAY" and "BURN IT" — every verb in the raid with the word "it" in
+ * it, which is most of the urgent ones.
+ *
+ * Words of two letters or more are lowered; a lone letter is left alone, because
+ * every single-character one in the raid is interpolated at runtime and is
+ * meaningful — the compass bearings and the stack-group names. "BLOWN N" has to
+ * stay "N" so it is read as a direction rather than swallowed.
+ *
+ * Which means a bare "A" in a written verb is an article, and would come out as
+ * a letter. There were four ("BURN A CORPSE", "ONE AT A TIME"...); they are
+ * reworded rather than special-cased, because a verb that has to dodge the
+ * speech engine is a verb that reads badly on screen too.
+ */
+function spoken(verb: string): string {
+  const said = verb
+    .split(' ')
+    .map(word => (/^[A-Z]{2,}$/.test(word) ? word.toLowerCase() : word))
+    .join(' ')
+  return said.charAt(0).toUpperCase() + said.slice(1)
+}
+
 export function sayMechanic(name: string, verb: string): void {
-  const line = `${name}. ${verb}.`
+  const line = `${name}. ${spoken(verb)}.`
   teachingUntil = performance.now() + Math.min(2600, 500 + line.length * 55)
   say(line, { rate: 1.05, cooldownMs: 30000 })
 }
 
 /** An instruction, barked. Interrupts anything else. */
 export function sayVerb(verb: string): void {
-  say(verb, { urgent: true, cooldownMs: 2600, rate: 1.18, pitch: 1.1 })
+  say(spoken(verb), { urgent: true, cooldownMs: 2600, rate: 1.18, pitch: 1.1 })
 }
 
 export function stopVoice(): void {

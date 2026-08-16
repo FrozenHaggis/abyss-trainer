@@ -205,6 +205,66 @@ test('a fountain add only ever arrives out of its own fountain', async () => {
     'calls this fight, and an add that ignores it is a call nobody can make')
 })
 
+// Hungering Pyre and Slithering Flame are ONE ability, and the tactic file puts
+// both halves in a single sentence: "a 10yd Fire soak circle that splits among
+// everyone inside; anyone who misses it gets Slithering Flame". So the flame is
+// not something that happens to you on a rota — it is what standing outside the
+// circle gets you, and it is the fight's only torch.
+//
+// Two things have to hold, and only playing it can show either. Stack and you
+// are clean. And whatever you are carrying, you are never told to BURN THE
+// CORPSE unless it can actually burn one — this fight carries two things and
+// Essence Rend is not a torch, which used to produce ten unbroken seconds of an
+// instruction the player had no way to follow.
+test('the flame comes from missing the stack, and only a torch says burn', async () => {
+  const { createWorld, step, seedRng, TICK_MS, isInside, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'nekzali')
+  const pyreDef = boss.mechanics.find(m => m.onMiss)
+  assert.ok(pyreDef, 'nothing on Nek\'zali hands you anything for missing it — check is vacuous')
+  const torch = pyreDef.onMiss.defId
+
+  let stacked = 0
+  let missed = 0
+  let flameWhileStacked = 0
+  let falseBurn = 0
+
+  for (const role of ['tank', 'healer', 'dps']) {
+    seedRng(1337)
+    const w = createWorld(boss, role, 'green')
+    const input = {
+      up: false, down: false, left: false, right: false, pressed: [], aim: null, firing: true,
+    }
+    for (let i = 0; i < 60 * 220; i++) {
+      // Testing the mechanic, not survival — the intermission is well past the
+      // point a stationary player lives to on this fight.
+      w.player.alive = true
+      w.player.health = 1
+      w.raidHealth = 1
+      const pyre = w.instances.find(x => !x.resolved && x.def.id === pyreDef.id)
+      const insideBefore = pyre ? isInside(pyre, w.player.pos) : null
+      const hadTorch = !!w.player.carrying[torch]
+      step(w, input, TICK_MS)
+      if (pyre && pyre.resolved) {
+        if (insideBefore) {
+          stacked++
+          if (!hadTorch && w.player.carrying[torch]) flameWhileStacked++
+        } else missed++
+      }
+      if (w.prompt?.verb === 'BURN THE CORPSE' && !w.player.carrying[torch]) falseBurn++
+    }
+  }
+
+  assert.ok(stacked > 0 && missed > 0,
+    `the soak resolved ${stacked} stacked and ${missed} missed across three roles — both ` +
+    'outcomes have to occur or this measures only one of them')
+  assert.equal(flameWhileStacked, 0,
+    `${flameWhileStacked} flames were handed to a player who WAS in the circle. Standing in ` +
+    'it is the whole answer; being punished for it teaches the opposite')
+  assert.equal(falseBurn, 0,
+    `${falseBurn} ticks told the player to burn a corpse while they carried no torch. ` +
+    'Nek\'zali carries two things and only one of them is fire')
+})
+
 // The wind partner used to hold a spot measured from the PLAYER — thirty yards
 // along their bearing from wherever they happened to be standing. So it moved
 // every time the player did: they walked at it, it walked away by exactly as

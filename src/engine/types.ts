@@ -718,6 +718,34 @@ export interface MechanicDef {
    * trains both halves rather than whichever one they happened to be assigned.
    */
   alternatesWith?: { defId: string }
+  /**
+   * What you are handed for NOT being in the soak, applied the instant it
+   * resolves.
+   *
+   * Hungering Pyre and Slithering Flame are one ability, and the tactic file
+   * says so in a single sentence: "a 10yd Fire soak circle that splits among
+   * everyone inside; ANYONE WHO MISSES IT gets Slithering Flame". The flame is
+   * not a separate cast that happens to you — it is the consequence of standing
+   * outside the circle, and it is also the only torch on the fight, because its
+   * Cremation is what stops the Amani corpses getting back up.
+   *
+   * So the choice is the mechanic. Stack and the hit is split; stay out and you
+   * are handed the job of burning a body with the thing that lands on you. This
+   * used to alternate on a counter, which trained both halves but made the
+   * player a passenger — the fight never asked them anything.
+   */
+  onMiss?: { defId: string }
+  /**
+   * Its blast incinerates add corpses, so an intermission that raises them wants
+   * this walked ONTO the pile rather than away from the raid.
+   *
+   * Stated rather than inferred. It was inferred — "any carried debuff during a
+   * resurrect phase" — and Nek'zali has two of those: Slithering Flame, which is
+   * a torch, and Essence Rend, which is not. So a player holding a Rend was told
+   * to BURN A CORPSE with something that cannot burn anything, which is the
+   * clearest possible way to teach the wrong lesson about both.
+   */
+  burnsCorpses?: boolean
 }
 
 /**

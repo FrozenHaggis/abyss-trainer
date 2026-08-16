@@ -52,14 +52,14 @@ export function briefForAdd(def: AddDef, role: Role): RoleBrief {
       // One that becomes several. Where it dies matters more than how fast.
       if (def.splits) {
         return {
-          verb: 'KILL IT EARLY',
+          verb: 'KILL ADDS EARLY',
           line: `It splits into ${def.splits.count} on death and both halves carry on walking, so kill it early and far out. Finishing it near the middle just puts the pieces there instead.`,
           yours: true,
         }
       }
 
       return {
-        verb: def.shieldHp ? 'BREAK THE SHIELD' : 'KILL IT',
+        verb: def.shieldHp ? 'BREAK THE SHIELD' : 'KILL ADDS',
         line: def.shieldHp
           ? `It carries an absorb and your damage does nothing at all until that shield breaks. Keep firing through it, then kill the add ${deadline}.`
           : `Shoot it down ${deadline}. Leaving it alive is what hurts the raid here, not standing in the wrong place.`,
@@ -296,7 +296,7 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
     case 'groupSoak':
       if (role === 'tank') {
         return {
-          verb: 'AIM IT AT A GROUP',
+          verb: 'AIM IT AT ONE GROUP',
           line: `The cone comes out of his face and his face follows you, so where you stand is which group eats it. Put it on the group that is NOT carrying a Gash — the same crowd twice takes a second one and dies where they stand.`,
           yours: true,
         }
@@ -309,7 +309,7 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
 
     case 'stackingDot':
       return {
-        verb: 'ONE AT A TIME',
+        verb: 'ONE STACK ONLY',
         line: `It lasts long enough that a second application lands on top of the first, and ${def.rule.maxStacks} kills. This is why the two groups alternate — not politeness, arithmetic.`,
         yours: mine,
       }

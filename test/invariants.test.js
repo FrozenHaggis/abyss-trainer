@@ -710,3 +710,116 @@ test('sweep: every melee leash has floor a tank can hold it from', () => {
   }
   assert.ok(checked > 0, 'no holdMelee rule was found anywhere — this sweep would pass vacuously')
 })
+
+// ── 21. A carry-out must have somewhere to be carried to ─────────────────────
+//
+// Plan test 11, the first of its two static sweeps, and it exists because a
+// shipped rule was unsatisfiable by the room it was written for. Coiling Ichor
+// asked its carriers for 26 yards from the arena centre. On the Twin Fangs'
+// wedge that is 3.3% of 1158 square yards of floor, only TWO points of it are 12
+// yards apart, and the whole northern ledge — where both tanks are welded to
+// their serpents — tops out at 18.87, so a raider standing there failed the
+// mechanic no matter how they played it and a third carrier had nowhere legal to
+// stand at all. Nothing anywhere said so: every field was individually sensible
+// and the room was the thing that made them wrong together.
+//
+// So the demand is existence, checked against the real polygon: at least
+// `carriers` cells of floor satisfy every clause of the rule at once while being
+// pairwise `apart` apart. Rasterised at half-yard cells, which is finer than any
+// body in this engine can stand on.
+//
+// And none of them may be inside a tank's melee leash. That is the general form
+// of "not on the tanks' ledge": a `holdMelee` is a tank welded within so many
+// yards of an entity, so any drop spot inside that radius is a pool dropped on
+// top of somebody who is not allowed to walk away from it. It is vacuous on the
+// seven fights with no leash and exact on the one that has them.
+test('sweep: every carry-out has enough legal drop spots for its carriers', () => {
+  const CELL = 0.5
+
+  let checked = 0
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const pts = arenaPointsOf(code)
+    const radius = arenaOf(key)
+    const starts = new Map([...code.matchAll(
+      /\{ id: '(\w+)'[^\n]*?start: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}/g,
+    )].map(m => [m[1], { x: Number(m[2]), y: Number(m[3]) }]))
+
+    const inside = (p) => {
+      if (!pts) return Math.hypot(p.x, p.y) <= radius
+      let hit = false
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j]
+        if ((a.y > p.y) !== (b.y > p.y)
+            && p.x < ((b.x - a.x) * (p.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) hit = !hit
+      }
+      return hit
+    }
+    // Distance to the rim. On a polygon that is the nearest point of any edge;
+    // on a circle it is what is left of the radius.
+    const toRim = (p) => {
+      if (!pts) return Math.abs(radius - Math.hypot(p.x, p.y))
+      let best = Infinity
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[j], b = pts[i]
+        const vx = b.x - a.x, vy = b.y - a.y
+        const len2 = vx * vx + vy * vy
+        const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0
+        best = Math.min(best, Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t)))
+      }
+      return best
+    }
+
+    // Every welded tank on this fight, as a circle nothing may be dropped in.
+    const leashes = []
+    for (const blk of code.split(/\r?\n {4}\{\r?\n/).slice(1)) {
+      const rule = blk.match(/rule: \{ type: 'holdMelee', maxYards: ([\d.]+) \}/)
+      if (!rule) continue
+      const at = starts.get(blk.match(/from: '(\w+)'/)?.[1] ?? '')
+      if (at) leashes.push({ at, max: Number(rule[1]) })
+    }
+
+    for (const blk of code.split(/\r?\n {4}\{\r?\n/).slice(1)) {
+      const rule = blk.match(/rule: \{ type: 'carryOut',([^}]*)\}/)
+      if (!rule) continue
+      const id = blk.match(/id: '(\w+)'/)?.[1] ?? '?'
+      const num = (name) => {
+        const m = new RegExp(`${name}: ([\\d.]+)`).exec(rule[1])
+        return m ? Number(m[1]) : undefined
+      }
+      const minDistance = num('minDistance')
+      const edgeWithin = num('edgeWithin')
+      const apart = num('apart') ?? 0
+      const carriers = Number(/\n\s*carriers: (\d+)/.exec(blk)?.[1] ?? 1)
+      assert.ok(minDistance !== undefined, `${key}/${id}: a carryOut with no minDistance`)
+
+      // Greedy in scan order, capped at what the mechanic actually needs. Scan
+      // order is the weakest possible witness — it takes whatever it meets
+      // first rather than searching for a good set — so finding enough this way
+      // is a stronger statement than finding enough at all.
+      const spots = []
+      let legal = 0
+      for (let x = -radius; x <= radius && spots.length < carriers; x += CELL) {
+        for (let y = -radius; y <= radius && spots.length < carriers; y += CELL) {
+          const p = { x, y }
+          if (!inside(p)) continue
+          if (Math.hypot(x, y) < minDistance) continue
+          if (edgeWithin !== undefined && toRim(p) > edgeWithin) continue
+          if (leashes.some(l => Math.hypot(x - l.at.x, y - l.at.y) <= l.max)) continue
+          legal++
+          if (spots.every(q => Math.hypot(x - q.x, y - q.y) >= apart)) spots.push(p)
+        }
+      }
+
+      checked++
+      assert.equal(spots.length, carriers,
+        `${key}/${id}: ${carriers} carriers are told to get ${minDistance}yd out`
+        + (edgeWithin !== undefined ? `, inside ${edgeWithin}yd of the rim` : '')
+        + (apart ? `, and ${apart}yd from each other` : '')
+        + ` — and only ${spots.length} such spot(s) exist on a ${radius}yd floor `
+        + `(${legal} legal cells found before the search gave up). A rule the room cannot satisfy `
+        + 'fails whoever is handed it, however they play')
+    }
+  }
+  assert.ok(checked > 0, 'no carryOut rule was found anywhere — this sweep would pass vacuously')
+})

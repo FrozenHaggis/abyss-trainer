@@ -1,5 +1,11 @@
 import type { AddDef, MechanicDef, Role } from './types'
-import { abilitiesFor } from './sim'
+import { abilitiesFor, carryOutClauses } from './sim'
+
+/** "a", "a and b", "a, b and c" — one clause list read as a sentence. */
+function listOf(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
 
 // What a given role is actually supposed to DO about a given mechanic.
 //
@@ -217,9 +223,17 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       // lethal pool in the middle "away from the group" and "away from the
       // centre" can point in opposite directions — so the old wording could
       // send a carrier straight at the thing that kills on contact.
+      //
+      // The clauses are read out of the engine rather than written here, and
+      // that is the whole point of `carryOutClauses`. This panel is read before
+      // the pull, the prompt is shouted during it, and the resolve decides
+      // whether you failed — three accounts of one rule, which on Coiling Ichor
+      // had already drifted apart: the mechanic demands a rim drop and a spread
+      // as well as a distance, and a briefing naming only the distance was
+      // describing a different mechanic from the one being scored.
       return {
         verb: 'RUN IT OUT',
-        line: `You are carrying it. Get at least ${def.rule.minDistance} yards out from the middle of the room before it expires, drop it there, and come back.`,
+        line: `You are carrying it. Before it expires be ${listOf(carryOutClauses(def.rule).map(c => c.says))}, drop it there, and come back.`,
         yours: mine,
       }
 

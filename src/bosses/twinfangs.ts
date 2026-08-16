@@ -737,10 +737,12 @@ export const twinfangs: BossDef = {
       id: 'ichor',
       name: 'Coiling Ichor',
       spellId: 1290814,
-      what: "3s cast infuses carriers for 12s; the radius shrinks as the damage rises, then drops a two-minute slowing pool .",
+      what: "3s cast infusing three raiders for 12s; the radius shrinks as the damage rises, and each one drops a lasting slowing pool where it expires. Take yours to the rim, well clear of the other two.",
       from: 'ithraz',
-      // "Carriers are chosen, never at fault" — but a tank running 26 yards out
-      // drops their serpent, so carriers come from the rest of the raid.
+      // "Carriers are chosen, never at fault" — but a tank running twenty yards
+      // out to the rim has dropped their serpent, and the melee leash on both of
+      // them turns that into heavy raid damage inside a second. So the carriers
+      // come from the rest of the raid, and the engine deals a tank none.
       roles: ['dps', 'healer'],
       telegraphMs: 12000,            // "infuses carriers for 12s"
       shape: { kind: 'circle', radius: 8 },
@@ -748,7 +750,35 @@ export const twinfangs: BossDef = {
       // 377 hits across 21 raiders and 8 deaths — "by far the most-failed
       // mechanic on the fight". The damage ID non-carriers eat is 1290878; the
       // thing the player DOES is carry 1290814 clear, which is what carryOut is.
-      rule: { type: 'carryOut', minDistance: 26 },
+      //
+      // TWENTY, NOT TWENTY-SIX, AND AT THE RIM — because 26 was a rule this room
+      // cannot satisfy. Measured over the real polygon at quarter-yard cells:
+      // only 3.3% of the 1158 square yards of floor is 26 yards from the arena
+      // centre, only TWO points in that 3.3% are 12 yards apart, and the whole
+      // northern ledge tops out at 18.87 — so a third carrier had nowhere legal
+      // to stand, and anybody caught on the ledge failed automatically no matter
+      // how they played it. It is the wedge's fault rather than the number's:
+      // `minDistance` is measured from the middle of the room, and a room that
+      // is 30 yards deep at the mouth and 19 at the ledge has no single radius
+      // that means "away from the raid" everywhere.
+      //
+      // 20 with `edgeWithin: 4` selects 15.2% of the floor, holds six mutually
+      // 12-apart spots against the three carriers it needs, and contains ZERO
+      // cells on the tanks' ledge — which is the right answer twice over,
+      // because the two tanks are welded to their serpents up there and a drop
+      // spot they cannot leave is a pool in the middle of the tank stack.
+      //
+      // And the rim clause is the spec's own wording, not a workaround: "the
+      // player and any ai bots that get this needs to drop at the edge of the
+      // platform, without stacking on each other." Those are the two extra
+      // clauses, in that order.
+      rule: { type: 'carryOut', minDistance: 20, edgeWithin: 4, apart: 12 },
+      // "the player AND ANY AI BOTS that get this". Three, so the raid is
+      // visibly doing the same job you are and the spread is something the room
+      // has to accommodate rather than a rule about one body. Three is also what
+      // the geometry comfortably holds — six legal spots for three carriers is
+      // room to be wrong once, which two spots for two carriers was not.
+      carriers: 3,
       spawns: { defId: 'gore' },
       good: 'Carriers spread, close together as it tightens, and dump pools at the room edges.',
       failText: 'Kept Coiling Ichor on the raid',
@@ -757,21 +787,40 @@ export const twinfangs: BossDef = {
       id: 'gore',
       name: 'Congealed Gore',
       spellId: 1292552,
-      what: "3s cast infuses carriers for 12s; the radius shrinks as the damage rises, then drops a two-minute slowing pool .",
+      // The `what:` was a verbatim copy of Coiling Ichor's, describing the cast
+      // rather than the pool it leaves — two mechanics, one sentence, and the
+      // sentence belonged to the other one. It also promised a two-minute pool
+      // beside a `lingerMs` that is now 30 seconds.
+      what: "The pool a Coiling Ichor leaves where it expires. Slowing, and it sits on the floor for half a minute — which is why the carriers are sent to the rim rather than dropping them wherever they were standing.",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                // spawned already active
-      shape: { kind: 'circle', radius: 6 },
+      // FIVE, not six, and it is the carrier count that decides it. One pool at
+      // a time on a 32-yard floor could be six yards wide and read as one thing
+      // to walk round; three of them dropped 12 yards apart on the rim is a
+      // third of the platform's usable edge, and the mouth end is where the raid
+      // has to be standing for Stone Breaker's knock. Five keeps the drops
+      // legible as three separate pools with floor between them, which is what
+      // makes the twelve-yard spread worth asking for.
+      shape: { kind: 'circle', radius: 5 },
       origin: 'random',
       rule: { type: 'avoid' },
       damage: 0.14,                  // per second while stood in it
       // The source says two minutes, and "permanently shrinks the arena". Held
       // to 30s here: at 44 yards of platform and a 150s pull, honest two-minute
       // pools stack until there is nowhere left to stand and the fight stops
-      // teaching anything. The Sanguine Storm variant (1306925) is the same
-      // hazard on a 6s timer and is folded into the glob dodge rather than
-      // duplicated as its own def.
-      lingerMs: 120000,
+      // teaching anything.
+      //
+      // The comment above said 30 and the field said 120000, which is 120
+      // seconds — the argument had been written and never applied, so a pull
+      // long enough to see four Coiling Ichors ended with twelve permanent pools
+      // on a floor the raid also has to walk waves and a knock across. It is now
+      // the 30 seconds the comment always meant, which is long enough that a
+      // pool is still there when the raid comes back past it and short enough
+      // that the room is the same room every rotation. The Sanguine Storm
+      // variant (1306925) is the same hazard on a 6s timer and is folded into
+      // the glob dodge rather than duplicated as its own def.
+      lingerMs: 30000,
       good: 'Carriers spread, close together as it tightens, and dump pools at the room edges.',
       failText: 'Stood in Congealed Gore',
     },

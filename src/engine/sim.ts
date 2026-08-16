@@ -1,6 +1,6 @@
 import type {
   Ability, AddDef, Ally, AltarDef, BossDef, BossEntityDef, Compass, Corpse, FailureRow, Instance,
-  MechanicDef, PhaseDef, PlayerState, Prompt, Role, RunResult, Side, Vec,
+  MechanicDef, PhaseDef, PlayerState, Prompt, Role, Rule, RunResult, Side, Vec,
 } from './types'
 import { CLOCK, COMPASS, OPPOSITE } from './types'
 
@@ -2032,6 +2032,65 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
   }
 
   /**
+   * A carry dealt to several bodies at once — you and some of the raid.
+   *
+   * Deliberately NOT the `count` fan below. That one puts several copies of a
+   * shape around a single rolled point, which is a room to walk through; this
+   * puts one debuff on each of several different raiders, who then walk in
+   * different directions. Running Coiling Ichor through the fan would have laid
+   * three eight-yard circles in a ring around one body — three of the same
+   * mechanic on one person, and nothing at all on the two raiders the spec says
+   * are carrying it.
+   *
+   * You are always the first one, WHEN it is a mechanic that lands on your role
+   * at all. This is a trainer: a thing that picks three of twenty bodies and
+   * rolls for which three would leave a player watching the raid do it seven
+   * pulls out of ten, and "watch somebody else carry it" is not a rep. But
+   * Coiling Ichor is `['dps','healer']` for a reason the file states — a tank
+   * running twenty yards out has dropped their serpent — so a tank gets all
+   * three dealt to the raid and their job is to stay out of the way of it.
+   *
+   * The allies are taken from the far side of the raid rather than by id, so the
+   * other two start their walks from somewhere other than on top of you. The
+   * fight's demand is that the drops end up spread; starting every carrier in
+   * the same melee clump makes that the AI's accident rather than its plan.
+   */
+  if (def.carriers && def.carriers > 1 && def.rule.type === 'carryOut') {
+    // In a drill the mechanic IS the lesson, so the player is handed one
+    // whatever their role. A tank who opened the Coiling Ichor drill came to
+    // practise carrying one, not to watch the raid do it — and without this they
+    // get a screen full of raiders walking to the rim and no reps at all. The
+    // same `w.drillId` exemption the melee leash already uses.
+    const yours = def_scored(w, def) || w.drillId === def.id
+    if (yours) spawn(w, def, { ...w.player.pos })
+    const pool = sideAllies(w, def.side)
+      .filter(a => a.alive && def.roles.includes(a.role))
+      .sort((x, y) => dist(y.pos, w.player.pos) - dist(x.pos, w.player.pos))
+    for (let i = 0; i < def.carriers - (yours ? 1 : 0) && i < pool.length; i++) {
+      const a = pool[i]
+      spawn(w, def, { ...a.pos })
+      const dealt = w.instances[w.instances.length - 1]
+      if (!dealt) continue
+      // Two corrections to what `spawn` just decided, both of which only bite
+      // once a cast produces more than one instance.
+      //
+      // `carriedByPlayer` is derived from `origin`, and the origin here is
+      // 'player' — which is the truth about the mechanic (it lands on bodies,
+      // not on floor) and a lie about these two copies. Left alone, all three
+      // would ride the player, all three would drop their pool under the
+      // player's feet, and the raid would appear to be carrying nothing.
+      //
+      // And the holder is named rather than left to the nearest-body search
+      // inside `spawn`, which settles ties by array order: two raiders on the
+      // same yard of floor could both be handed the same debuff, and one of the
+      // three carries would silently cease to exist.
+      dealt.carriedByPlayer = false
+      w.carriers[dealt.uid] = a.id
+    }
+    return
+  }
+
+  /**
    * Several at once, fanned around wherever this comes from.
    *
    * Tempest is nine vortices sent out of the boss and Caustic Claws is six globs
@@ -2425,6 +2484,149 @@ function altarStation(w: World): Vec | null {
   return best ? clampToArena(w.boss, best, w.boss.arenaRadius * 0.12) : null
 }
 
+/** One of the three demands a `carryOut` can make of where you drop it. */
+export type CarryOutMiss = 'distance' | 'edge' | 'apart'
+
+/**
+ * A carry-out's demands, in the order a raider reads them, as data.
+ *
+ * ONE list, three consumers, and that is the entire reason it exists. The
+ * resolve decides whether you failed, the live prompt decides what to shout at
+ * you, and the briefing panel decides what to promise you before the pull — and
+ * before this they were three hand-written accounts of the same rule. The
+ * briefing said "get 26 yards out from the middle" on a floor where that is
+ * 3.3% of the platform; the prompt said RUN IT OUT and stopped saying it the
+ * instant the distance was met, on a fight where the distance is the easy half;
+ * and the resolve knew about a spread rule neither of the other two had ever
+ * heard of. A player told one thing, shouted at about a second and scored on a
+ * third is being taught by three different fights.
+ *
+ * `says` is a fragment, not a sentence: the briefing joins them and the prompt
+ * ignores them. Anything added here appears in the panel for free, and the
+ * exhaustive switch in `carryOutMisses` refuses to compile until the engine has
+ * been taught how to check it.
+ */
+export function carryOutClauses(
+  rule: Extract<Rule, { type: 'carryOut' }>,
+): { kind: CarryOutMiss; says: string }[] {
+  const out: { kind: CarryOutMiss; says: string }[] = [
+    // Always. A carry-out with no distance is not a carry-out.
+    { kind: 'distance', says: `at least ${rule.minDistance} yards out from the middle of the room` },
+  ]
+  if (rule.edgeWithin !== undefined) {
+    out.push({ kind: 'edge', says: `right out at the rim, inside ${rule.edgeWithin} yards of the edge` })
+  }
+  if (rule.apart !== undefined) {
+    out.push({ kind: 'apart', says: `at least ${rule.apart} yards clear of every other carrier` })
+  }
+  return out
+}
+
+/**
+ * Which of those demands the position of `inst` currently fails.
+ *
+ * Judged off `inst.pos` rather than off the player, because a carried debuff
+ * rides whoever is holding it — the tick loop moves it onto the carrier's feet
+ * every frame — so this answers the same question for an ally's one as for
+ * yours, and the ally AI can be steered by exactly the thing that scores you.
+ *
+ * The `apart` scan deliberately does NOT skip resolved siblings. All the
+ * carriers of one cast are dealt out together and expire together, so on the
+ * tick they land they resolve inside the same loop and half of them are already
+ * flagged by the time the other half is judged. Skipping them would mean the
+ * first carrier in array order was measured against three bodies and the last
+ * against none — the same stack, scored differently depending on a uid.
+ */
+export function carryOutMisses(w: World, inst: Instance): CarryOutMiss[] {
+  const rule = inst.def.rule
+  if (rule.type !== 'carryOut') return []
+  const missed: CarryOutMiss[] = []
+  for (const c of carryOutClauses(rule)) {
+    switch (c.kind) {
+      case 'distance':
+        if (lenOf(inst.pos) < rule.minDistance) missed.push('distance')
+        break
+      case 'edge':
+        if (edgeDistance(w.boss, inst.pos) > rule.edgeWithin!) missed.push('edge')
+        break
+      case 'apart': {
+        const clash = w.instances.some(o =>
+          o !== inst && o.def.id === inst.def.id && dist(o.pos, inst.pos) < rule.apart!)
+        if (clash) missed.push('apart')
+        break
+      }
+      default: {
+        // Exhaustiveness. A clause added to `carryOutClauses` with no arm here
+        // would silently be advertised in the briefing and never checked, which
+        // is the failure mode this whole pair of functions was written to end —
+        // so the build stops until somebody writes the check.
+        //
+        // Reported as a miss rather than thrown or ignored, in the vanishingly
+        // unlikely event it is ever reached at runtime: a demand the engine
+        // cannot evaluate should read as unmet, not as satisfied. A trainer that
+        // silently passes a rule it does not understand teaches the wrong thing;
+        // one that shouts about a rule it cannot check is merely annoying.
+        const unchecked: never = c.kind
+        missed.push(unchecked)
+        break
+      }
+    }
+  }
+  return missed
+}
+
+/** Shorthand for the common question. */
+export function carryOutSatisfied(w: World, inst: Instance): boolean {
+  return carryOutMisses(w, inst).length === 0
+}
+
+/**
+ * Where the nth carrier of this cast is sent to drop it.
+ *
+ * "Without stacking on each other" is a demand on the RAID, not just on you, and
+ * an AI that walks every carrier straight out along whatever bearing it happened
+ * to be standing on satisfies it by luck. The old behaviour did exactly that —
+ * `(a.pos / |a.pos|) * out` — so three carriers who started in the same melee
+ * clump ran to the same yard of rim, dropped three pools on one spot, and left
+ * the player nowhere legal to stand that was not next to all of them.
+ *
+ * Stations are bearings around the room rather than points on a list, because
+ * the room decides which bearings are usable: on this wedge every northerly one
+ * runs into the tanks' ledge, which tops out 18.87 yards from the centre and can
+ * never satisfy a 20-yard carry. So each carrier starts from an evenly-spread
+ * bearing and walks it forward in small steps until the rim point there is both
+ * legal and `apart` from the stations already handed out. Pure and deterministic
+ * — index in, point out — so the ally AI can recompute it every tick without the
+ * raid twitching between two answers.
+ */
+export function carryOutStation(w: World, def: MechanicDef, index: number): Vec {
+  const rule = def.rule
+  if (rule.type !== 'carryOut') return { x: 0, y: 0 }
+  const n = Math.max(1, def.carriers ?? 1)
+  // Just inside the rim: `edgeWithin` is the demand, half of it is the aim, so
+  // the sway at the end of the walk cannot push a carrier back out of tolerance.
+  const inset = Math.max(1, Math.min(rule.edgeWithin ?? 2, 4) / 2)
+  const taken: Vec[] = []
+  for (let i = 0; i <= index; i++) {
+    const from = (i / n) * Math.PI * 2
+    let best: Vec | null = null
+    let fallback: Vec | null = null
+    // Sixty steps of six degrees is a full turn: a bearing always exists, and if
+    // none of them is legal the least-bad one is still better than standing in
+    // the raid with a bomb.
+    for (let s = 0; s < 60; s++) {
+      const p = arenaEdge(w.boss, from + (s * Math.PI) / 30, inset)
+      if (!fallback) fallback = p
+      if (lenOf(p) < rule.minDistance) continue
+      if (rule.apart !== undefined && taken.some(q => dist(q, p) < rule.apart!)) continue
+      best = p
+      break
+    }
+    taken.push(best ?? fallback ?? { x: 0, y: 0 })
+  }
+  return taken[index]
+}
+
 function resolveInstance(w: World, inst: Instance) {
   const { def } = inst
   inst.resolved = true
@@ -2632,13 +2834,21 @@ function resolveInstance(w: World, inst: Instance) {
       break
 
     case 'carryOut': {
-      const d = lenOf(w.player.pos)
+      // Somebody else's. Six of the nine carry-outs in the raid are `targeted`
+      // and land on an ally 28% of the time, and the Twin Fangs deals three at
+      // once by design — so an instance resolving here is as likely to be a
+      // raider's as it is to be yours. Judging every one of them against YOUR
+      // feet blamed you for where an ally stood, and the `delete` two lines
+      // below wiped your own carry state off the HUD while you were still
+      // holding a different one. Neither could happen while a cast only ever
+      // produced one instance; both are certain the moment `carriers` is set.
+      if (!inst.carriedByPlayer) break
       // Putting a flame on the corpse pile IS the delivery, whatever the
       // distance says. The intermission asks you to walk it onto a body that
       // may be lying near the middle of the room, and failing you for obeying
       // the fight is the defect this project keeps having to re-fix.
       if (burned > 0) { delete w.player.carrying[def.id]; break }
-      if (w.player.carrying[def.id] !== undefined && d < def.rule.minDistance) {
+      if (w.player.carrying[def.id] !== undefined && !carryOutSatisfied(w, inst)) {
         if (scored) recordFailure(w, def)
         // You detonated it on top of the raid. A Deadly one kills you where you
         // stand and takes a chunk of the group with it — which is why running
@@ -3703,6 +3913,12 @@ function allyThink(w: World) {
       !i.resolved && i.def.rule.type === 'tankSoak'
       && w.bosses.some(b => b.def.id === i.fromId && b.targetId === a.id)) ?? null
 
+    // Where a carry-out station sent this raider, if one did. Remembered for
+    // step 7, which otherwise insets a tenth of the arena and would haul a drop
+    // spot 3.2 yards back off the rim it was chosen to be on — see the sweeper
+    // exemption there, which this is the second case of.
+    let carryDrop: Vec | null = null
+
     // 3a. Stand on a corpse, if one is going unburned.
     let onCorpseDuty = false
     if (a.role !== 'tank' && corpseNext < claimableCorpses.length) {
@@ -3740,12 +3956,37 @@ function allyThink(w: World) {
         // If there are bodies on the floor to burn, that is where a flame is
         // supposed to go and the raid takes it there instead.
         const holding = w.carriers[inst.uid] === a.id
-        if ((holding || a.id % 3 === 0) && a.role !== 'tank') {
+        // A cast that deals real debuffs to real raiders does not need the
+        // demonstration crowd, and is actively hurt by it: the whole point of
+        // Coiling Ichor's three is that three pools land twelve yards apart, and
+        // six extra bodies jogging to the same rim is where the player was
+        // supposed to be standing.
+        const dealtOut = inst.def.carriers !== undefined && inst.def.carriers > 1
+        if ((holding || (!dealtOut && a.id % 3 === 0)) && a.role !== 'tank') {
           const pile = burnsCorpses(w, inst.def) ? unburned[a.id % Math.max(1, unburned.length)] : null
           if (pile) {
             a.want.x = pile.pos.x
             a.want.y = pile.pos.y
             onCorpseDuty = true
+          } else if (dealtOut && holding) {
+            // A station of their own, on a bearing nobody else was given.
+            //
+            // The old line below is "walk straight out along the bearing you are
+            // already on", which is fine for one carrier and useless for three:
+            // they are dealt to bodies standing in the same melee ring, so all
+            // three ran to the same yard of rim and dropped three pools on one
+            // another. The index is the carrier's rank among the live ones of
+            // this cast, taken off array order because that is the order they
+            // were dealt in and it does not change while they are held.
+            let idx = 0
+            for (const o of w.instances) {
+              if (o === inst) break
+              if (o.def.id === inst.def.id && !o.carriedByPlayer) idx++
+            }
+            const st = carryOutStation(w, inst.def, idx)
+            a.want.x = st.x
+            a.want.y = st.y
+            carryDrop = st
           } else {
             const r = Math.hypot(a.pos.x, a.pos.y) || 1
             const out = Math.min(arena * 0.82, inst.def.rule.minDistance + 6)
@@ -4304,10 +4545,19 @@ function allyThink(w: World) {
     //    — so without this the AI tank stops short of a pool whose miss pushes
     //    the entire raid into the venom. A missed globule costs the raid a stack
     //    each; a missed slam costs the pull.
+    //
+    //    And a carry-out drop is the same exemption a third time, for the
+    //    reason the rule itself states. `edgeWithin` means "put it AT the rim":
+    //    a bound that pushes every destination a tenth of the arena inside the
+    //    rim is the one thing that demand cannot survive, and the raid would
+    //    stand in a ring three yards short of every legal drop spot while the
+    //    fight told them they were in the wrong place.
     const destination = sweep ?? soakTarget
-    const reach = destination
-      ? Math.min(arena * 0.1, edgeDistance(w.boss, destination.pos))
-      : arena * 0.1
+    const reach = carryDrop
+      ? Math.min(arena * 0.1, edgeDistance(w.boss, carryDrop))
+      : destination
+        ? Math.min(arena * 0.1, edgeDistance(w.boss, destination.pos))
+        : arena * 0.1
     const bounded = clampToArena(w.boss, a.want, reach)
     a.want.x = bounded.x
     a.want.y = bounded.y
@@ -4701,9 +4951,19 @@ function computePrompt(w: World): Prompt | null {
             consider({ verb: 'BURN A CORPSE', mechanic: def.name, urgency: t }, 1)
             break
           }
-          const d = Math.hypot(w.player.pos.x, w.player.pos.y)
-          if (d < def.rule.minDistance) {
+          // The same three demands the resolve scores you on, in the same
+          // order, so the shout always names the one that would fail you if the
+          // debuff expired this instant. It used to go quiet the moment the
+          // distance was met, which on a fight whose distance is the easy half
+          // meant the prompt fell silent and then the debrief blamed you for
+          // standing on top of another carrier.
+          const [worst] = carryOutMisses(w, inst)
+          if (worst === 'distance') {
             consider({ verb: 'RUN IT OUT', mechanic: def.name, urgency: t }, 2)
+          } else if (worst === 'edge') {
+            consider({ verb: 'TAKE IT TO THE EDGE', mechanic: def.name, urgency: t }, 2)
+          } else if (worst === 'apart') {
+            consider({ verb: 'SPREAD — NOT ON ANOTHER CARRIER', mechanic: def.name, urgency: t }, 2)
           }
         }
         break
@@ -6441,7 +6701,13 @@ export function step(w: World, input: Input, dtMs: number) {
     if (!inst.resolved && inst.timer <= 0) {
       const before = w.failures.get(inst.def.id)?.count ?? 0
       resolveInstance(w, inst)
-      if (w.drillId === inst.def.id) {
+      // A rep is something the PLAYER did. A carry dealt to several bodies
+      // resolves once per body, and counting the raid's copies made the drill
+      // lie in the flattering direction: four Coiling Ichors the player dropped
+      // on the group read as "12 reps, 8 clean", because the two raid carries
+      // can never record a failure and were therefore always scored perfect.
+      const theirs = inst.def.carriers !== undefined && !inst.carriedByPlayer
+      if (w.drillId === inst.def.id && !theirs) {
         w.drillReps++
         if ((w.failures.get(inst.def.id)?.count ?? 0) === before) w.drillClean++
       }

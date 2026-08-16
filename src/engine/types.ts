@@ -256,8 +256,35 @@ export type Rule =
    * project already had to fix once in the analyser.
    */
   | { type: 'raidDamage'; dps: number }
-  /** Carry a debuff at least this far from the arena centre before it expires. */
-  | { type: 'carryOut'; minDistance: number }
+  /**
+   * Carry a debuff clear of the raid before it expires.
+   *
+   * `minDistance` is measured from the ARENA CENTRE, not from the raid, and that
+   * is the whole reason the other two fields exist. On a round room the centre
+   * is where the raid stands, so "far from the middle" and "far from people" are
+   * the same sentence. On a room that is not round they come apart, and the Twin
+   * Fangs is the proof: the wedge is 32 yards of bounding radius but only 3.3% of
+   * its floor is 26 yards from the centre, only two points in that 3.3% are 12
+   * yards apart, and the whole northern ledge — where both tanks live — tops out
+   * at 18.87. A three-carrier `carryOut` at 26 was therefore unsatisfiable for
+   * the third carrier and automatically failed anybody standing on the ledge, on
+   * a fight where two of the raid's bodies are welded there.
+   *
+   * `edgeWithin` says the drop has to be AT the rim rather than merely far out —
+   * "the player and any ai bots that get this needs to drop at the edge of the
+   * platform" — which is a demand the geometry can always meet, because every
+   * room has a rim however oddly it is shaped.
+   *
+   * `apart` says two carriers may not drop on the same spot: "without stacking
+   * on each other". Measured between the live carriers of the SAME mechanic, so
+   * it is a spread rule rather than a distance-from-the-group one.
+   *
+   * Both are optional and both default to off, which is exactly what the other
+   * nine `carryOut`s in the raid want: a round floor plus a single carrier needs
+   * neither clause, and adding them there would be inventing a demand the fight
+   * never made.
+   */
+  | { type: 'carryOut'; minDistance: number; edgeWithin?: number; apart?: number }
   /**
    * Get knocked. Failure is leaving the arena.
    *
@@ -704,6 +731,20 @@ export interface MechanicDef {
    * room filling up with things that are all still moving.
    */
   count?: number
+  /**
+   * How many bodies a `carryOut` lands on at once. One of them is always you.
+   *
+   * Not `count`, and the two must not be merged. `count` fans copies of a shape
+   * around a rolled point on the floor; this deals a carried debuff out to
+   * several DIFFERENT raiders, each of whom then walks their own one somewhere
+   * else. The spec asks for the second thing — "the player and any ai bots that
+   * get this needs to drop at the edge of the platform, without stacking on each
+   * other" — and a fan of three circles on top of one body is not it.
+   *
+   * Left unset the mechanic lands on one body, which is what the other nine
+   * `carryOut`s in the raid already do and must keep doing.
+   */
+  carriers?: number
   /**
    * The copies travel OUTWARD from where they spawned rather than on random
    * bearings.

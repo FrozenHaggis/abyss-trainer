@@ -1902,3 +1902,269 @@ test('the Coiled Altar axes still come off any wall, and still ricochet', async 
     'not one axe bounced in twenty casts. The bounce suppression was supposed to be gated on ' +
     'edgeArc — without that gate this fight loses its ricochet')
 })
+
+// ── Coiling Ichor ────────────────────────────────────────────────────────────
+//
+// The most clearly demonstrated defect in the whole plan, and its numbers are
+// reproduced in the static sweep in invariants.test.js rather than asserted
+// here: `minDistance: 26` selected 3.3% of this wedge, only TWO points of which
+// were 12 yards apart, and the tanks' ledge — where two of the raid's bodies are
+// welded — topped out at 18.87 and therefore failed automatically. What the
+// runtime tests below add is the half a static sweep cannot see: that the
+// mechanic really is dealt to three bodies, that the raid walks its two to
+// different parts of the rim, and that an ally's carry can never be your row in
+// the debrief.
+async function ichorBench(role, seed) {
+  const eng = await engine()
+  const { createWorld, seedRng, BOSSES } = eng
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const ichor = boss.mechanics.find(m => m.id === 'ichor')
+  const gore = boss.mechanics.find(m => m.id === 'gore')
+
+  assert.ok(ichor, 'Coiling Ichor is gone')
+  assert.equal(ichor.rule.type, 'carryOut', `Coiling Ichor is a ${ichor.rule.type} now`)
+  assert.ok(ichor.carriers > 1,
+    'Coiling Ichor no longer declares `carriers`, so it lands on one body and every '
+    + 'assertion below about the raid doing it alongside you would be vacuous')
+  assert.ok(ichor.rule.edgeWithin !== undefined && ichor.rule.apart !== undefined,
+    'the rim and spread clauses are gone from the rule — this bench checks nothing')
+  assert.ok(gore, 'Congealed Gore is gone')
+
+  seedRng(seed)
+  const w = createWorld(boss, role, 'green')
+  // A quiet room, the way the Stir the Depths bench makes one. This is about
+  // where three bodies walk; a rotation throwing knocks and waves at them
+  // measures the rest of the fight instead.
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  return { ...eng, w, boss, ichor, gore }
+}
+
+/** Run one cast to its expiry and hand back the pools it left. */
+function runIchor(bench) {
+  const { w, step, fire, TICK_MS, ichor } = bench
+  fire(w, 'ichor')
+  const dealt = w.instances.filter(i => i.def.id === 'ichor')
+  for (let ms = 0; ms <= ichor.telegraphMs + 500; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  return { dealt, pools: w.instances.filter(i => i.def.id === 'gore') }
+}
+
+// Three bodies, three pools, and the raid's two land where the rule says they
+// must. The AI half is the half that used to be invisible: before `carriers` the
+// debuff only ever landed on the player, so "the player and any ai bots that get
+// this" was a line in the spec with nothing behind it — and the spread clause
+// could never be exercised, because there was never a second carrier to spread
+// away from.
+test('Coiling Ichor is dealt to three bodies and the raid takes its two to the rim', async () => {
+  const bench = await ichorBench('dps', 5)
+  const { w, boss, ichor, edgeDistance } = bench
+  const { dealt, pools } = runIchor(bench)
+
+  assert.equal(dealt.length, ichor.carriers,
+    `one cast produced ${dealt.length} debuffs for ${ichor.carriers} carriers`)
+  assert.equal(dealt.filter(i => i.carriedByPlayer).length, 1,
+    'exactly one of them is yours — a dps is in the rota, and watching the raid do it is not a rep')
+  const holders = dealt.filter(i => !i.carriedByPlayer).map(i => w.carriers[i.uid])
+  assert.equal(new Set(holders).size, holders.length,
+    `the raid's carries went to ${holders.join(', ')} — two debuffs on one raider is one carry `
+    + 'that silently never happened')
+  assert.equal(pools.length, ichor.carriers,
+    `${dealt.length} carries left ${pools.length} pools`)
+
+  // The two the RAID took, identified by being somewhere other than the middle
+  // of the room. The player's own is deliberately not asserted: this bench gives
+  // them no input, and a player who stands still is supposed to fail.
+  const theirs = pools.filter(p => Math.hypot(p.pos.x, p.pos.y) > ichor.rule.minDistance - 4)
+  assert.ok(theirs.length >= 2, `only ${theirs.length} pools were carried anywhere`)
+  for (const p of theirs) {
+    const out = Math.hypot(p.pos.x, p.pos.y)
+    assert.ok(out >= ichor.rule.minDistance - 1,
+      `an AI carrier dropped ${out.toFixed(1)}yd from the middle against a ${ichor.rule.minDistance}yd `
+      + 'rule. The station search is choosing somewhere the rule does not accept')
+    assert.ok(edgeDistance(boss, p.pos) <= ichor.rule.edgeWithin,
+      `an AI carrier dropped ${edgeDistance(boss, p.pos).toFixed(1)}yd off the rim against an `
+      + `edgeWithin of ${ichor.rule.edgeWithin} — the arena inset in allyThink step 7 is hauling `
+      + 'them back off the edge they were sent to')
+  }
+  let closest = Infinity
+  for (let i = 0; i < theirs.length; i++) {
+    for (let j = i + 1; j < theirs.length; j++) {
+      closest = Math.min(closest,
+        Math.hypot(theirs[i].pos.x - theirs[j].pos.x, theirs[i].pos.y - theirs[j].pos.y))
+    }
+  }
+  assert.ok(closest >= ichor.rule.apart,
+    `the raid's pools landed ${closest.toFixed(1)}yd apart against a ${ichor.rule.apart}yd spread. `
+    + 'Both carriers walked to the same station, which is the pile-up the stations exist to stop')
+})
+
+// The spread is a real rule rather than decoration — and it is the one the old
+// briefing never mentioned and the old prompt never shouted. A carrier who has
+// walked the full distance out to the rim and then stands on another carrier has
+// failed, and has to be told so while there is still time to move.
+test('a carrier who parks on another carrier fails Coiling Ichor at full distance', async () => {
+  const bench = await ichorBench('dps', 5)
+  const { w, step, fire, TICK_MS, ichor, boss, edgeDistance, carryOutMisses } = bench
+
+  fire(w, 'ichor')
+  const mine = w.instances.find(i => i.def.id === 'ichor' && i.carriedByPlayer)
+  const theirs = w.instances.find(i => i.def.id === 'ichor' && !i.carriedByPlayer)
+  assert.ok(mine && theirs, 'the cast did not produce both a player carry and a raid carry')
+
+  // Standing on their shoulder wherever the raid takes it. Distance: met. Rim:
+  // met. The only thing wrong is that there are two of them there.
+  const holder = w.allies.find(a => a.id === w.carriers[theirs.uid])
+  assert.ok(holder, 'the raid carry has no holder')
+  let sawTheShout = false
+  for (let ms = 0; ms <= ichor.telegraphMs + 500; ms += TICK_MS) {
+    w.player.pos.x = holder.pos.x
+    w.player.pos.y = holder.pos.y
+    step(w, NO_INPUT(), TICK_MS)
+    if (mine.resolved) continue
+    if (Math.hypot(mine.pos.x, mine.pos.y) < ichor.rule.minDistance) continue
+    if (edgeDistance(boss, mine.pos) > ichor.rule.edgeWithin) continue
+    assert.deepEqual(carryOutMisses(w, mine), ['apart'],
+      `on another carrier at a legal rim spot the engine reads `
+      + `${JSON.stringify(carryOutMisses(w, mine))}. The spread is the only thing wrong here, `
+      + 'so it has to be the thing named')
+    if (w.prompt?.mechanic === ichor.name) {
+      assert.equal(w.prompt.verb, 'SPREAD — NOT ON ANOTHER CARRIER',
+        `the prompt says "${w.prompt.verb}" while the resolve is about to fail you for the spread`)
+      sawTheShout = true
+    }
+  }
+  assert.ok(sawTheShout,
+    'the prompt never once named the spread while the player stood on another carrier at the rim. '
+    + 'A rule that is scored and never shouted is a rule the player finds out about in the debrief')
+  assert.equal(w.failures.get('ichor')?.count, 1,
+    'dropping a Coiling Ichor on top of another carrier at the rim was not scored. The distance is '
+    + 'the easy half of this rule on a floor where 87% of the far band is already at the edge')
+})
+
+// The gate. Six of the raid's nine carry-outs are `targeted` and land on an ally
+// better than a quarter of the time, and this one deals two to the raid on every
+// cast — so an instance arriving at the resolve is as likely to be somebody
+// else's as it is to be yours. Judged against the player's feet it blamed them
+// for where a raider stood, and the `delete w.player.carrying` two lines further
+// on wiped their own carry off the HUD while they were still holding it.
+//
+// A TANK, because on this fight that is the clean case: Coiling Ichor is
+// `['dps','healer']` — the file's reason is that a tank running it out has left
+// their serpent — so all three go to the raid and the player has nothing at all
+// to answer for. Pinned at the Vexhul station, because the melee leash is judged
+// continuously and would end the probe before the debuff expired.
+test('an ally carrying a Coiling Ichor is never the player’s failure', async () => {
+  const bench = await ichorBench('tank', 5)
+  const { w, step, fire, TICK_MS, ichor, clampToArena, boss } = bench
+  const vexhul = boss.entities.find(e => e.id === 'vexhul')
+  const station = clampToArena(boss, vexhul.start, 2)
+
+  fire(w, 'ichor')
+  const dealt = w.instances.filter(i => i.def.id === 'ichor')
+  assert.equal(dealt.length, ichor.carriers,
+    `a tank's cast produced ${dealt.length} debuffs — the raid still has to carry them`)
+  assert.equal(dealt.filter(i => i.carriedByPlayer).length, 0,
+    'a tank was handed a Coiling Ichor. The def is dps/healer because a tank who runs one out has '
+    + 'left their serpent, which is a wipe')
+
+  let sawCarrying = false
+  for (let ms = 0; ms <= ichor.telegraphMs + 1000; ms += TICK_MS) {
+    w.player.pos.x = station.x
+    w.player.pos.y = station.y
+    step(w, NO_INPUT(), TICK_MS)
+    if (w.player.carrying.ichor !== undefined) sawCarrying = true
+  }
+
+  assert.ok(w.player.alive, `the pinned tank died of ${w.deathCause} before the debuff expired`)
+  assert.equal(sawCarrying, false,
+    'the HUD showed the player carrying a Coiling Ichor that was dealt to the raid')
+  assert.equal(w.failures.get('ichor'), undefined,
+    'the player was named for a Coiling Ichor three raiders were carrying, from a station they are '
+    + 'not allowed to leave')
+})
+
+// One rule, three surfaces. The briefing is read before the pull, the prompt is
+// shouted during it and the resolve decides whether you failed — and until
+// `carryOutClauses` they were three separate accounts of the same demand. On
+// this mechanic they had already come apart: the panel promised a distance, the
+// engine scored a distance AND a rim AND a spread, and a raider who did exactly
+// what they were told still got a row in the debrief.
+test('the Coiling Ichor briefing names every demand the resolve scores', async () => {
+  buildSync({
+    entryPoints: ['src/engine/brief.ts'], bundle: true, format: 'esm',
+    outfile: `${OUT}/brief.mjs`, logLevel: 'error',
+  })
+  const { briefFor } = await import(`../${OUT}/brief.mjs`)
+  const { BOSSES } = await engine()
+  const ichor = BOSSES.find(b => b.key === 'twinfangs').mechanics.find(m => m.id === 'ichor')
+
+  const line = briefFor(ichor, 'dps').line
+  for (const n of [ichor.rule.minDistance, ichor.rule.edgeWithin, ichor.rule.apart]) {
+    assert.match(line, new RegExp(`\\b${n}\\b`),
+      `the briefing never mentions ${n}: "${line}". Every clause the resolve checks has to be in `
+      + 'the sentence the player reads, or they are being taught a different mechanic from the one '
+      + 'they are scored on')
+  }
+
+  // And the nine that declare neither clause must not have grown one. A carry on
+  // a round floor asks for a distance and nothing else, and inventing a rim rule
+  // for them would be this step leaking onto six other fights.
+  for (const boss of BOSSES) {
+    for (const m of boss.mechanics) {
+      if (m.rule.type !== 'carryOut' || m.id === 'ichor') continue
+      assert.equal(m.rule.edgeWithin, undefined, `${boss.key}/${m.id} grew an edgeWithin`)
+      assert.equal(m.rule.apart, undefined, `${boss.key}/${m.id} grew an apart`)
+      assert.equal(m.carriers, undefined, `${boss.key}/${m.id} grew a carriers count`)
+      assert.doesNotMatch(briefFor(m, 'dps').line, /rim|carrier/,
+        `${boss.key}/${m.id}'s briefing now talks about the rim or about other carriers, and its `
+        + 'rule asks for neither')
+    }
+  }
+})
+
+// The gate, from the side that can actually observe it. A raid carry judged
+// against the PLAYER's feet is a failure row with somebody else's name on it,
+// and the `delete w.player.carrying` two lines further on takes the player's own
+// debuff off the HUD while they are still holding it.
+//
+// The array is deliberately reordered so the raid's two resolve first. Nothing
+// in the engine promises an order — instances resolve in whatever order they
+// happen to sit in `w.instances`, and with three dealt at once and every one of
+// them expiring on the same tick, WHICH of them is judged first decided whether
+// the player was blamed. That is the defect stated exactly: the same three
+// bodies, the same three drops, a different verdict depending on a uid.
+test('an ally who drops a Coiling Ichor on the raid is not the player’s failure', async () => {
+  const bench = await ichorBench('dps', 5)
+  const { w, step, fire, TICK_MS, ichor, carryOutStation, carryOutSatisfied } = bench
+
+  fire(w, 'ichor')
+  const mine = w.instances.find(i => i.def.id === 'ichor' && i.carriedByPlayer)
+  const theirs = w.instances.filter(i => i.def.id === 'ichor' && !i.carriedByPlayer)
+  assert.ok(mine && theirs.length >= 1, 'the cast did not deal both a player carry and a raid carry')
+  w.instances = [...theirs, ...w.instances.filter(i => !theirs.includes(i))]
+
+  // One raider does it as badly as it can be done: stood in the middle of the
+  // room with it when it expires, which is the whole failure this rule names.
+  const stray = w.allies.find(a => a.id === w.carriers[theirs[0].uid])
+  assert.ok(stray, 'the raid carry has no holder')
+  // The player does it right, at a station nobody else was handed.
+  const spot = carryOutStation(w, ichor, ichor.carriers - 1)
+
+  for (let ms = 0; ms <= ichor.telegraphMs + 500; ms += TICK_MS) {
+    w.player.pos.x = spot.x
+    w.player.pos.y = spot.y
+    stray.pos.x = 0
+    stray.pos.y = 0
+    step(w, NO_INPUT(), TICK_MS)
+  }
+
+  assert.ok(carryOutSatisfied(w, mine),
+    'the probe parked the player somewhere the rule rejects, so it is measuring the player rather '
+    + 'than the ally — pick a different station')
+  assert.equal(w.failures.get('ichor'), undefined,
+    'the player was named for a Coiling Ichor an ally dropped in the middle of the room, from a '
+    + `rim spot ${Math.hypot(spot.x, spot.y).toFixed(1)}yd out that satisfies every clause of the rule`)
+})

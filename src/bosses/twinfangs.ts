@@ -169,8 +169,13 @@ export const twinfangs: BossDef = {
   // deliberately not an edit to this array; see the `relocate` block on the
   // submerge phase for where they go and why.
   entities: [
-    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -8, y: -19 }, tankedApart: true, stationary: true },
-    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 8, y: -19 }, tankedApart: true, stationary: true },
+    // GREEN IS VEXHUL AND VEXHUL IS VENOM. The raid reads this fight by caster
+    // rather than by verb: a green telegraph is one that will put an Eternal
+    // Venom stack on you, a red one is Ithraz and will not. It costs the verb
+    // palette on two of Ithraz's mechanics you are meant to stand in — see
+    // ruleColour in render.ts, where the trade is written down.
+    { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -8, y: -19 }, tankedApart: true, stationary: true, hue: 'green' },
+    { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 8, y: -19 }, tankedApart: true, stationary: true, hue: 'red' },
   ],
   maxHp: 1,
   // THE BEAT BETWEEN STEPS, not the period of a rotation — see PhaseDef.sequential.

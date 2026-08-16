@@ -125,7 +125,11 @@ test('sweep: no marker or dummy ID can be failed on any boss', () => {
   // it is a container that fires other mechanics and is never scored, which is
   // the only reason Apex Predator — "a server-side dummy with no events, so it
   // never produces a failure" — is allowed to be in the file at all.
-  const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive', 'groupSoak', 'windPair', 'stackingDot']
+  // `shedStack` is on the list because it can kill you and name you for it — a
+  // second bite of one Ravenous Feast is a failure row and a corpse. It joined
+  // when Ravenous Feast stopped being a `beInside`, and without it a mechanic
+  // that had been swept here for its whole life would have quietly dropped out.
+  const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive', 'groupSoak', 'windPair', 'stackingDot', 'shedStack']
   for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
     for (const m of mechanics) {
@@ -160,7 +164,11 @@ test('sweep: mechanics the tactic files call collective never name a player', ()
     const tactic = readFileSync(BASE + MD[key], 'utf8')
     const spells = spellsOf(key)
     for (const m of mechanicsOf(key)) {   // guarded by readAllMechanics elsewhere
-      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair'].includes(m.rule)
+      // `shedStack` for the same reason it is on FAILABLE above: it names
+      // people, so its tactic file's Bad line has to agree that naming them is
+      // right. Ravenous Feast's does — "Deaths on 1290662 ... or 1290662 on a
+      // player already holding 1310096" — which is precisely the second bite.
+      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair', 'shedStack'].includes(m.rule)
           || m.collective) continue
       const name = spells.get(m.spellId)?.name
       if (!name) continue
@@ -241,7 +249,13 @@ test('sweep: every soak and pickup is reachable inside its telegraph', () => {
       // standing in it, so if the telegraph is shorter than the walk there is
       // literally nobody who can answer it — and a Stone Breaker slam nobody
       // answers does not cost a stack, it throws the whole raid into the acid.
-      if (!['beInside', 'collect', 'groupSoak', 'tankSoak'].includes(m.rule)) continue
+      // `shedStack` is a soak you run INTO, so it belongs here too — and it
+      // arrived on this list by being taken off it. Ravenous Feast was swept
+      // here for its whole life as a `beInside`, and changing its rule would
+      // have dropped it out with nothing to notice: the one mechanic in the
+      // raid whose telegraph you have to cross the room for three separate
+      // times would have stopped being checked that it can be reached once.
+      if (!['beInside', 'collect', 'groupSoak', 'tankSoak', 'shedStack'].includes(m.rule)) continue
       if (m.collective && m.rule !== 'groupSoak') continue
       const reach = PLAYER_SPEED * Math.max(0, m.telegraphMs / 1000 - REACTION)
       assert.ok(reach >= arena * 0.55,
@@ -404,6 +418,63 @@ test('twinfangs: Venomous Emergence summons spawns that fixate and spit', () => 
   assert.equal(spit.rule, 'aimAway', `Corrosive Spit is rule '${spit.rule}', not aimAway`)
   assert.equal(spit.shape, 'line', 'Corrosive Spit is not a line any more')
   assert.equal(spit.telegraphMs, 5000, 'Corrosive Spit lost its 5s marker window')
+})
+
+// ── 15. The venom economy closes for the one body that can never shed ────────
+//
+// Ravenous Feast exempts the tank holding the entity that casts it — the melee
+// leash welds them inside a 14-yard circle drawn from a serpent they may not
+// leave, so without the exemption the mechanic would feed them on bite one and
+// kill them on bite two, every rotation, for standing exactly where the fight
+// requires. The price of that exemption is that the same tank can never SHED
+// either. Their count only ever climbs.
+//
+// Which turns the whole economy into arithmetic for one body, and arithmetic is
+// something a test can check. If the unavoidable, whole-raid income of one
+// rotation ever grows to the point where three rotations reach the cap, that
+// tank dies of the fight working correctly and there is nothing they or the
+// player can do about it. Pure text over the boss file on purpose: it stays true
+// through any amount of engine churn, and it re-derives the income rather than
+// hard-coding it, so adding a second Venomous Emergence to the loop is caught
+// here rather than in a playtest three steps later.
+test('twinfangs: a clean tank stays under the venom cap for three rotations', () => {
+  const src = readFileSync('src/bosses/twinfangs.ts', 'utf8')
+  const mechs = mechanicsOf('twinfangs')
+
+  const cap = Number(src.match(/counter: \{ lethalAt: (\d+) \}/)?.[1] ?? 0)
+  assert.ok(cap > 0, 'the Twin Fangs no longer declares a lethal stack count — nothing to check')
+
+  const loopSrc = src.slice(src.indexOf('loop: ['), src.indexOf(']', src.indexOf('loop: [')))
+  const slots = [...loopSrc.matchAll(/'([^']+)'/g)].map(m => m[1])
+  assert.ok(slots.length > 0, 'the rotation is empty — this sum would be vacuous')
+
+  // What the raid takes whatever it does. `applies.raid` is the unavoidable
+  // half of the counter: Venomous Emergence hands one to every body in the room
+  // and there is nothing to dodge, soak or aim. Everything else on the fight is
+  // avoidable and a clean tank takes none of it.
+  const raidOf = id => {
+    const m = mechs.find(x => x.id === id)
+    return Number(m?.blk.match(/applies: \{[^}]*\braid: (\d+)/)?.[1] ?? 0)
+  }
+  const perRotation = slots.reduce((s, id) => s + raidOf(id), 0)
+  assert.ok(perRotation > 0,
+    'nothing in the rotation charges the whole raid a stack. Either the counter has no ' +
+    'unavoidable source left, in which case the economy is not one, or the parse broke')
+
+  // And the exemption is real, so the sum genuinely has nothing on the other
+  // side of it. If Ravenous Feast ever stops being the fight's shedder this
+  // whole calculation is measuring the wrong thing.
+  const feast = mechs.find(m => m.id === 'feast')
+  assert.ok(feast, 'Ravenous Feast is gone — nothing on this fight removes a stack at all')
+  assert.equal(feast.rule, 'shedStack',
+    `Ravenous Feast is rule '${feast.rule}', not shedStack — the one removal has moved`)
+
+  const afterThree = perRotation * 3
+  assert.ok(afterThree < cap,
+    `a tank who dodges everything still collects ${perRotation} unavoidable stacks a rotation, ` +
+    `so ${afterThree} after three against a cap of ${cap}. They cannot shed — the exemption ` +
+    'that stops Ravenous Feast killing them also stops it feeding them — so this is a death ' +
+    'with no play available. Cut an unavoidable source or raise the cap')
 })
 
 /**

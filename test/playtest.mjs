@@ -152,6 +152,45 @@ function play(boss, role, smart, seed, side = 'green') {
         const d = Math.hypot(dx, dy) || 1
         tx += (dx / d) * weight; ty += (dy / d) * weight
       }
+
+      // ── Ravenous Feast ──
+      // The only mechanic in the raid whose right answer depends on a number the
+      // player is carrying, and the bot has to model all three states or the
+      // Twin Fangs rows stop measuring the fight.
+      //
+      // Without this the harness had NO model of it at all — the mechanic left
+      // `beInside` when it became the venom shedder, and with it went the only
+      // reason the bot ever walked into the circle. A competent healer then took
+      // ten stacks in eighty seconds with the one thing that removes them going
+      // off three times a rotation in front of them, and the row read as a fight
+      // that cannot be played rather than a bot that does not know how.
+      //
+      //   carrying stacks, not yet fed → get in, it is the only way out
+      //   already fed by this cast     → get out, the second bite kills
+      //   carrying nothing             → stay out, a bite spent at zero buys
+      //                                  nothing and costs you the cast
+      //
+      // Tanks skip it entirely, which is right on both serpents: the one holding
+      // the caster is exempt from the mechanic and welded inside it anyway, and
+      // the other is welded to a serpent of their own and cannot come.
+      for (const i of w.instances) {
+        if (i.resolved || i.def.rule.type !== 'shedStack') continue
+        if (anchoredTank || Object.keys(w.player.carrying).length) continue
+        const fed = !!i.fed?.includes(-1)
+        const dx = i.pos.x - w.player.pos.x, dy = i.pos.y - w.player.pos.y
+        const d = Math.hypot(dx, dy) || 1
+        const reach = (i.def.shape?.radius ?? 10) + 6
+        if (!fed && (w.player.venom ?? 0) > 0) {
+          tx += (dx / d) * 12; ty += (dy / d) * 12
+        } else if (d < reach) {
+          // Fed already outranks a puddle — a second bite is not damage, it is
+          // death. Wasting the cast is worth walking for, but not worth dying
+          // for, so the empty-handed weight sits below the avoid forces.
+          const weight = fed ? 12 : 4
+          tx -= (dx / d) * weight; ty -= (dy / d) * weight
+        }
+      }
+
       const carrying = Object.keys(w.player.carrying).length > 0
       const r = Math.hypot(w.player.pos.x, w.player.pos.y) || 1
 

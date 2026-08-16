@@ -53,6 +53,43 @@ export type Rule =
   /** Outside the shape at resolve = failure. Soaks, and "stay in melee". */
   | { type: 'beInside' }
   /**
+   * One cast that bites several times in the same place, and each bite takes a
+   * stack of the fight's `counter` off every body standing in it — but only the
+   * first bite a body takes. A second bite of the same cast kills them.
+   *
+   * Ravenous Feast, and the only thing on the Twin Fangs that moves the counter
+   * downward. The raid leader states the whole rule in two sentences: "the
+   * player needs to stand in it to remove 1 stack ... the player can only be in
+   * the circle when it expires once and remove 1 stack, standing in the circle
+   * more than one time kills them." The real ability is the same shape — the
+   * tactic file's `1310096` Feasted "blocks further removal for 8s and
+   * multiplies Feast damage by nine", which is a second bite being fatal
+   * expressed as a number rather than as a rule.
+   *
+   * Emphatically NOT `beInside`. That judges the player's feet at one resolve
+   * moment and scores them for being outside, and being outside is CORRECT PLAY
+   * for two of the three bites. The only failure here is greed: taking a second
+   * one. A raider at zero stacks who never goes near it has played it perfectly
+   * and must never be named for it.
+   *
+   * `bites` fire `biteGapMs` apart out of one instance, re-armed at the end of
+   * `resolveInstance` rather than spawned as `channel` children. Children go
+   * back through `fire()`/`spawn()` and re-roll their origin, and the mechanic's
+   * defining property is that the circle "will expire 3 times but spawn in the
+   * same place each time" — a place the raid can commit to walking to and out of
+   * three times. Re-arming one instance gives that for free, and `Instance.fed`
+   * can then be the memory of who has already had theirs.
+   *
+   * The tank holding the entity that CAST it is exempt from all of it — no shed,
+   * no feeding, no death — for the same reason `groupSoak` exempts the same body
+   * from the Mutilated Gash: the melee leash welds them inside the circle and
+   * walking out of it is a raid wipe, so the mechanic would kill them on bite
+   * two for doing their job perfectly. They still count as a body. The
+   * consequence is deliberate and worth knowing: a tank welded to the caster can
+   * never shed either, so their count only ever climbs.
+   */
+  | { type: 'shedStack'; amount: number; bites: number; biteGapMs: number }
+  /**
    * Several small pickups that vanish the instant someone runs over them.
    * Anything still on the floor when the timer expires ruptures onto the raid.
    *
@@ -1194,6 +1231,25 @@ export interface Instance {
    * pay for standing in another's.
    */
   touchMs?: Record<number, number>
+  /**
+   * `shedStack` only: how many bites of this cast are still to come, counting
+   * the one currently in the air.
+   *
+   * Set on the first resolve and counted down by the re-arm at the bottom of
+   * `resolveInstance`. `undefined` means "not started yet", which is why every
+   * read of it falls back to the rule's own `bites` rather than to zero.
+   */
+  bitesLeft?: number
+  /**
+   * `shedStack` only: the bodies this cast has already fed.
+   *
+   * -1 is the player and anything else is an `Ally.id`, the same convention as
+   * `aimedAt` and `touchMs`. On the INSTANCE rather than on the bodies because
+   * the memory is "has THIS cast fed you", and it has to be forgotten when the
+   * cast ends — a flag on the body would carry across to the next Ravenous
+   * Feast and quietly make the second one lethal from its first bite.
+   */
+  fed?: number[]
 }
 
 /** A simulated raid member. Nineteen of them, so group mechanics are real. */
@@ -1377,4 +1433,15 @@ export interface RunResult {
    */
   venomPeak?: number
   venomRaidPeak?: number
+  /**
+   * How many stacks the PLAYER got back off, across the whole pull.
+   *
+   * The third number, and the one that says whether they played the economy or
+   * merely survived it. A peak of six with nothing shed is a raider who never
+   * found a Ravenous Feast bite; a peak of six with four shed is a raider who
+   * took ten and worked. Yours only, not the raid's: the AI's bite rota is not
+   * something the player can influence, and reporting it here would read as a
+   * score for something they did.
+   */
+  venomShed?: number
 }

@@ -153,6 +153,30 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       })
     }
 
+    case 'shedStack':
+      // Three sentences, and the order of them is the mechanic: it gives a
+      // stack back, you may only take one, and a second one kills.
+      //
+      // The last clause is the one that has to be unambiguous. Every other soak
+      // in the raid rewards more bodies for longer, and a raider who has learned
+      // that habit will stand in this until it stops — which is the most common
+      // first blood on the real fight. So the sentence says outright that the
+      // right answer is to walk out and let the next group have theirs.
+      //
+      // And it says what to do at zero. The engine's prompt is silent there on
+      // purpose, so the panel is the only place a raider can find out WHY they
+      // are being told nothing: a bite spent carrying no stacks buys nothing and
+      // costs them the cast, and the stack they pick up two mechanics later is
+      // then theirs until the next one.
+      return {
+        verb: 'IN ONCE, THEN OUT',
+        line: `The only thing in the fight that takes a stack back, and it takes exactly ${def.rule.amount === 1 ? 'one' : def.rule.amount}. It bites ${def.rule.bites} times without moving, so the raid splits into ${def.rule.bites} groups and each takes one bite — get in for yours, get straight out, and stay out for the other two. Being in it a second time on the same cast kills you outright. If you are carrying nothing, do not go in at all: you would burn your one bite for a stack you do not have and have no way to shed the next one.`,
+        // Nobody is ever blamed for staying out of it — that is correct play for
+        // two bites in three — so `roles` here is about who the fight expects to
+        // be in the rota at all, and every body in the raid carries the counter.
+        yours: def.roles.includes(role),
+      }
+
     case 'collect':
       return {
         verb: 'RUN OVER IT',

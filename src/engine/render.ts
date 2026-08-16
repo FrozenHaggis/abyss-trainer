@@ -199,6 +199,25 @@ function ruleColour(inst: Instance, w?: World): string {
      */
     case 'tankSoak':
       return w && bossUnitFor(w, inst.fromId).targetId === 0 ? GREEN : RED
+    /**
+     * The third, and the same argument again — but the flip is in TIME rather
+     * than between two readers.
+     *
+     * Ravenous Feast is a place to run into for one bite and a place that kills
+     * you for the next two, and it is the same circle in the same spot the whole
+     * way through. Painting it green throughout would be the palette telling a
+     * raider who has already had their stack back to go and get another one,
+     * which is precisely how this mechanic kills people on the real fight. So it
+     * turns red the moment the cast has fed you, and stays red for the rest of
+     * the cast.
+     *
+     * Green while you have taken nothing, whatever your count is. A raider at
+     * zero loses nothing by being in it once and the colour has no business
+     * second-guessing that call — the panel explains the trade and the prompt
+     * stays quiet, which is the RL's ruling.
+     */
+    case 'shedStack':
+      return inst.fed?.includes(-1) ? RED : GREEN
     default: return RED
   }
 }
@@ -235,7 +254,19 @@ function drawArrow(
 /** 0 at spawn, 1 at resolve — telegraphs fill as they approach. */
 function progress(inst: Instance): number {
   if (inst.resolved) return 1
-  const total = Math.max(1, inst.def.telegraphMs)
+  // A cast that bites more than once winds up against the CAST time for the
+  // first bite and against the gap between bites for the rest. Measured against
+  // the cast time throughout, a two-second gap on a four-second cast would draw
+  // its timing ring already half full, so the second and third bites of a
+  // Ravenous Feast would look most of the way landed from the instant they
+  // re-armed — which is the one number a raider has to read off the floor here,
+  // because the whole mechanic is being in it at the right moment and out of it
+  // at the wrong one.
+  const rule = inst.def.rule
+  const total = Math.max(1,
+    rule.type === 'shedStack' && inst.bitesLeft !== undefined && inst.bitesLeft < rule.bites
+      ? rule.biteGapMs
+      : inst.def.telegraphMs)
   return Math.min(1, 1 - inst.timer / total)
 }
 

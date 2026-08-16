@@ -579,6 +579,18 @@ export interface World {
   venomPeak: number
   venomRaidPeak: number
   /**
+   * How many stacks the player has taken back off, all pull.
+   *
+   * A running total rather than a watermark, and the player's alone. The peak
+   * says how close they came to the cap; this says whether anything at all was
+   * pulling the other way, which on a fight with exactly one shedder is the
+   * difference between a raider who is playing the economy and one who is only
+   * losing it slowly. Deliberately NOT reset by the drill revive: a drill on
+   * Ravenous Feast is twenty reps of shedding, and the count of them is the
+   * whole point of the drill.
+   */
+  venomShed: number
+  /**
    * The floating "+1" over the player's head: how many stacks just landed and
    * how long the float has left.
    *
@@ -1129,6 +1141,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     comboUntilMs: 0,
     venomPeak: 0,
     venomRaidPeak: 0,
+    venomShed: 0,
     venomFlash: null,
   }
   // A split fight seats the player on their own side’s entity before the first
@@ -1713,16 +1726,28 @@ function payHit(w: World, inst: Instance, who: Ally | null) {
 /**
  * Take stacks back off a body. The only direction of travel that is not upward.
  *
- * Exported and, for now, uncalled. Ravenous Feast is the fight's one shedder —
- * "shed only one per player per Ravenous Feast" — and it lands as its own step;
- * this is here so that the removal has exactly one home from the moment the
- * economy exists, and so the test that asserts nothing ELSE ever decrements a
- * counter has something to point at. One removal is the fight's central claim
- * and the easiest thing in it to erode by accident.
+ * Called from exactly one place — `case 'shedStack'`, which is Ravenous Feast —
+ * and a test in trace.test.js fails the build if a second caller ever appears.
+ * "Shed only one per player per Ravenous Feast" is the fight's central claim,
+ * and a second shedder is the easiest way in the world to erode it by accident:
+ * a phase transition tidying up, a revive, a helpful clamp. So the removal has
+ * exactly one home and the build enforces it.
+ *
+ * Only the PLAYER's removals are counted into `venomShed`. The raid's bite rota
+ * is not something the player has a lever on, and a debrief number that moved
+ * because nineteen bots did their job would read as a score for something they
+ * did not do. The clamp at zero means a body already at zero sheds nothing and
+ * the total does not move — which is exactly the fact the prompt is built on,
+ * because a bite spent at zero buys nothing and costs you the cast.
  */
 export function shedVenom(w: World, who: Ally | null, n = 1) {
-  if (who) who.venom = Math.max(0, who.venom - n)
-  else w.player.venom = Math.max(0, w.player.venom - n)
+  if (who) {
+    who.venom = Math.max(0, who.venom - n)
+    return
+  }
+  const before = w.player.venom
+  w.player.venom = Math.max(0, before - n)
+  w.venomShed += before - w.player.venom
 }
 
 /**
@@ -2412,6 +2437,65 @@ function resolveInstance(w: World, inst: Instance) {
       }
       break
 
+    /**
+     * One bite of Ravenous Feast. The only thing in the raid that gives a stack
+     * back, and the only soak whose second helping is fatal.
+     *
+     * Being OUTSIDE is never scored here. Two of the three bites are somebody
+     * else's, a raider carrying no stacks gains nothing from any of them, and
+     * the fight explicitly wants the raid rotating through the three rather
+     * than piling into all of them — so the one failure this case can record is
+     * greed, and it records it by killing you.
+     *
+     * THE TANK WELDED TO THE CASTER IS EXEMPT FROM ALL OF IT. `holdMelee` keeps
+     * the Ithraz tank within twelve yards of a serpent coiled at (8,-19) and
+     * this circle has a fourteen-yard radius drawn from the same point, so that
+     * tank is inside it on every cast and cannot leave without wiping the raid.
+     * Fed on the first bite and killed on the second, they would die every
+     * rotation for standing exactly where the fight requires them to stand.
+     * `groupSoak` already draws this line for the same body against the
+     * Mutilated Gash and for the same reason. They still count as a body — they
+     * are genuinely in it — they simply cannot be fed, cannot be blamed and
+     * cannot be killed by their own entity's soak. The price is that they can
+     * never shed either, which makes a welded tank's count monotonic: that is a
+     * consequence of the exemption rather than an oversight, and it is pinned
+     * by an arithmetic test rather than hoped about.
+     */
+    case 'shedStack': {
+      const fed = inst.fed ?? (inst.fed = [])
+      // 0 is the player, -1 nobody, anything else an `Ally.id`. Read at BITE
+      // time, never cached at cast time: Stone Breaker trades the serpents
+      // roughly twice a rotation, so the body this protects can change between
+      // one bite and the next.
+      const holderId = bossUnitFor(w, inst.fromId).targetId
+      if (inside && w.player.alive && holderId !== 0) {
+        if (fed.includes(-1)) {
+          if (scored) recordFailure(w, def)
+          killPlayer(w, `${def.name} — a second bite`)
+        } else {
+          fed.push(-1)
+          shedVenom(w, null, def.rule.amount)
+        }
+      }
+      for (const a of w.allies) {
+        if (!a.alive || a.id === holderId || !isInside(inst, a.pos)) continue
+        if (fed.includes(a.id)) {
+          // The raid genuinely loses a body that took two. Without it the rota
+          // is an instruction with no consequence attached and the AI could
+          // pile the whole raid into every bite — which is also the shape of
+          // the mistake the player is being taught not to make, so it has to
+          // be visibly survivable exactly once.
+          a.alive = false
+          a.health = 0
+          w.alliesLost++
+          continue
+        }
+        fed.push(a.id)
+        shedVenom(w, a, def.rule.amount)
+      }
+      break
+    }
+
     case 'faceAway': {
       // Fails if the cone sweeps the raid.
       const raid = raidAnchor(w)
@@ -3037,6 +3121,36 @@ function resolveInstance(w: World, inst: Instance) {
       other.drift = { x: Math.cos(a) * def.driftSpeed, y: Math.sin(a) * def.driftSpeed }
     }
   }
+
+  /**
+   * A cast that bites more than once puts itself back in the air, in the same
+   * place, and this is the last thing that happens in a resolve.
+   *
+   * The alternative was `channel` children, and it does not work for this
+   * mechanic. Every child goes through `fire()` → `spawn()` and re-rolls its
+   * origin, and Ravenous Feast's defining property is the one the raid leader
+   * stated first: it "will expire 3 times but spawn in the same place each
+   * time". A raid can only commit to walking into a circle and back out of it
+   * three times if it is the same circle. Re-arming one instance gives that for
+   * nothing, keeps `fed` where it belongs — on the cast, not on the bodies —
+   * and, because `resolved` goes back to false, the beat holds against anything
+   * that waits for the previous mechanic to finish.
+   *
+   * Last on purpose. Everything above — the summon, the spawn, the channel, the
+   * orb sweep — is what a cast does when it lands, and a re-armed instance runs
+   * all of it again on every bite. Nothing that bites twice may therefore carry
+   * `spawns`, `summons` or `channel`, and Ravenous Feast carries none of them.
+   * Putting the re-arm above them instead would not fix that; it would only
+   * hide it behind an ordering nobody could see.
+   */
+  if (def.rule.type === 'shedStack') {
+    const left = (inst.bitesLeft ?? def.rule.bites) - 1
+    inst.bitesLeft = left
+    if (left > 0) {
+      inst.resolved = false
+      inst.timer = def.rule.biteGapMs
+    }
+  }
 }
 
 const ALLY_SPEED = 12
@@ -3387,6 +3501,47 @@ function allyThink(w: World) {
   // Anything that kills on contact, so the raid can be told to keep off it.
   const lethalFloor = w.instances.filter(i => i.def.rule.type === 'lethalGround' && i.def.shape)
 
+  /**
+   * Ravenous Feast's bite rota: who walks in for the bite that is in the air
+   * right now, and by construction who walks out for it.
+   *
+   * A third of the raid per bite, rotating, so nobody is fed twice by one cast
+   * — the raid leader's ruling, and the real fight's split-damage behaviour.
+   * It is also the only thing standing between the AI raid and a mass suicide:
+   * the melee ring sits about ten yards from Ithraz and the circle has a
+   * fourteen-yard radius, so the raid's DEFAULT formation is inside it. Left
+   * alone, most of the raid would be fed on bite one and killed on bite two.
+   * The "everyone else clears it" half of this is therefore not politeness, it
+   * is the mechanic.
+   *
+   * HIGHEST VENOM INTO THE EARLIEST BITE, because a raider near the cap needs
+   * the shed soonest and a raider at zero gains nothing from any of them. Ties
+   * by id so a pull is reproducible.
+   *
+   * The thirds are recomputed every tick rather than stored, out of `fed` and
+   * `bitesLeft`, which are the two things the instance already has to remember:
+   * whoever has not been fed yet is divided by the bites still to come. That is
+   * self-correcting — a body fed on bite one drops out of the pool for bites
+   * two and three without anybody bookkeeping it — and stable within a bite,
+   * because neither `fed` nor anyone's count moves while one is in the air.
+   *
+   * Tanks are not in the pool. They are welded to a serpent by `holdMelee` and
+   * every other soak in this engine passes them over for the same reason. The
+   * Ithraz tank is additionally exempt from the mechanic itself, so sending
+   * them would be sending a body that cannot be fed.
+   */
+  const biteFor = new Map<number, Instance>()
+  for (const inst of w.instances) {
+    if (inst.resolved || inst.def.rule.type !== 'shedStack') continue
+    const left = Math.max(1, inst.bitesLeft ?? inst.def.rule.bites)
+    const fed = inst.fed ?? []
+    const holderId = bossUnitFor(w, inst.fromId).targetId
+    const hungry = w.allies.filter(a =>
+      a.alive && a.role !== 'tank' && a.id !== holderId && !fed.includes(a.id))
+    hungry.sort((x, y) => (y.venom - x.venom) || (x.id - y.id))
+    for (const a of hungry.slice(0, Math.ceil(hungry.length / left))) biteFor.set(a.id, inst)
+  }
+
   for (const a of w.allies) {
     if (!a.alive) continue
 
@@ -3569,6 +3724,82 @@ function allyThink(w: World) {
         if (w.bosses.some(b => b.def.id === inst.fromId && b.targetId === a.id)) {
           a.want.x = inst.pos.x
           a.want.y = inst.pos.y
+        }
+      } else if (rt === 'shedStack') {
+        // Ravenous Feast. A third of the raid walks in, everybody else walks
+        // out, and which third is decided above.
+        //
+        // BOTH HALVES ARE MOVEMENT, and that is what makes this readable from
+        // the floor: a player watching the raid see-saw in and out of the same
+        // circle three times learns the rota without being told it. A version
+        // that only sent the bite group in would look identical to a version
+        // with no rota at all, because the raid's melee ring is INSIDE the
+        // circle to begin with — measured, six or seven bodies are standing in
+        // it before anybody moves — so "get out" is the half that does the work.
+        //
+        // Tanks are left alone entirely. The one holding the caster is exempt
+        // from the mechanic and welded inside it, and the other is welded to a
+        // serpent of their own; shoving either of them would be the AI walking
+        // a tank off their leash to dodge something. On this floor the far
+        // serpent's station is sixteen yards from the bite and already clear.
+        if (a.role === 'tank') continue
+        const r = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 10
+        if (biteFor.get(a.id) === inst) {
+          const pt = soakPoint(inst, a.id % 7, 7)
+          a.want.x = pt.x
+          a.want.y = pt.y
+        } else {
+          /**
+           * Out, and out ONTO THE FLOOR — which is why this is a small search
+           * rather than one vector, and why it is measured against the CLAMPED
+           * destination rather than against `a.want` itself.
+           *
+           * Both of those were bugs, and the second is the subtle one. Step 7
+           * clamps every raider's destination onto the polygon at the end of
+           * this function, and on this room the formation ring routinely aims a
+           * raider twenty yards north of the top edge — the melee anchor is the
+           * midpoint of two serpents that are both in the acid. So `a.want`
+           * reads as comfortably outside the circle while the place the raider
+           * will actually stand, once clamped back onto the floor, is inside
+           * it. Measured on seed 1: three raiders were fed by bite one, told to
+           * leave, judged already clear because their raw want was at y = -39,
+           * clamped back to y = -13, and killed by bite two without ever having
+           * moved a yard.
+           *
+           * And the push has to be able to fail and try again. Pushing straight
+           * along the raider's own bearing sends anybody east of the bite over
+           * the leg of the wedge, where the same clamp hauls them back inside.
+           * So each one spirals out from their own heading and takes the first
+           * whose clamped landing is genuinely clear — nearest-first rather
+           * than best, the same call step 6e makes for the knock: a raid
+           * looking for somewhere it is allowed to stand, not for the safest
+           * square on the floor.
+           */
+          const here = clampToArena(w.boss, a.want, arena * 0.1)
+          const dx = here.x - inst.pos.x
+          const dy = here.y - inst.pos.y
+          const d = Math.hypot(dx, dy)
+          if (d < r + 3) {
+            const base = d > 0.01
+              ? Math.atan2(dy, dx)
+              // Standing on the exact centre has no "away". Fan those bodies
+              // off their own id rather than leaving them where they are.
+              : a.id * 2.39996
+            for (let i = 0; i < 16; i++) {
+              const ang = base + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 8)
+              const p = clampToArena(w.boss, {
+                x: inst.pos.x + Math.cos(ang) * (r + 3),
+                y: inst.pos.y + Math.sin(ang) * (r + 3),
+              }, arena * 0.1)
+              // Clear of the edge, not merely off it: a body standing exactly
+              // on the rim is one idle sway from being back in, and on a bite
+              // they have already taken that sway is fatal.
+              if (dist(p, inst.pos) < r + 1) continue
+              a.want.x = p.x
+              a.want.y = p.y
+              break
+            }
+          }
         }
       } else if (rt === 'groupSoak') {
         // Mutilate. The called group walks into the cone; everybody else gets
@@ -4079,6 +4310,12 @@ function allyMove(w: World, dt: number) {
   // clear so you can actually read your own telegraphs. Tanks never leave.
   const groupWork = w.instances.some(i => !i.resolved && (
     i.def.rule.type === 'beInside' ||
+    // The most collective thing on the Twin Fangs, and the raid has to be VISIBLE
+    // for it. Ravenous Feast is one circle answered by three separate groups in
+    // sequence, and the whole of what a player learns from it is watching a third
+    // of the raid walk in while the third that has already been fed walks out. A
+    // faded raid turns that into a circle nothing happens around.
+    i.def.rule.type === 'shedStack' ||
     i.def.rule.type === 'carryOut' ||
     i.def.rule.type === 'pairUp' ||
     // Both of Sszorak's group mechanics, and they are the clearest case of why
@@ -4362,6 +4599,32 @@ function computePrompt(w: World): Prompt | null {
       case 'beInside':
         if (!inside && mine) consider({ verb: 'GET IN', mechanic: def.name, urgency: t }, 2)
         break
+      case 'shedStack': {
+        // The one prompt in the raid that is deliberately SILENT most of the
+        // time, and the silence is the teaching.
+        //
+        // A raider at zero stacks gains nothing from a bite and loses the cast
+        // by taking it: fed once, they cannot answer the wave stack they pick
+        // up two mechanics later. So there is no "GET IN" until they are
+        // actually carrying something, and the panel says why rather than the
+        // prompt nagging about it.
+        //
+        // Once fed, the instruction inverts and becomes the most urgent thing
+        // on the screen — a second bite of the same cast is not damage, it is
+        // death — which is the same two-verbs-off-one-telegraph shape Mutilate
+        // has, for the same reason.
+        const holderId = bossUnitFor(w, inst.fromId).targetId
+        // Welded to the caster: they are standing in it, they cannot be fed and
+        // they cannot use it. Telling them anything at all would be telling
+        // them to leave a serpent they are not allowed to leave.
+        if (holderId === 0) break
+        if (inst.fed?.includes(-1)) {
+          if (inside) consider({ verb: 'GET OUT — YOU HAVE FED', mechanic: def.name, urgency: t }, 0)
+        } else if (w.player.venom > 0 && !inside) {
+          consider({ verb: 'GET IN — SHED A STACK', mechanic: def.name, urgency: t }, 2)
+        }
+        break
+      }
       case 'collect':
         // Only prompt for the nearest one — a instruction per globule is noise.
         if (!inst.answered && mine && dist(inst.pos, w.player.pos) < 22) {
@@ -6391,5 +6654,10 @@ export function buildResult(w: World): RunResult {
     // side and the furthest stage above already follow.
     venomPeak: counterDef(w) ? w.venomPeak : undefined,
     venomRaidPeak: counterDef(w) ? w.venomRaidPeak : undefined,
+    // The other direction, and the only one the player has a lever on. Reported
+    // on the same condition as the two peaks rather than "only when it is
+    // nonzero": a pull that shed nothing is exactly the pull that needs to be
+    // told so, and hiding the row would hide the finding.
+    venomShed: counterDef(w) ? w.venomShed : undefined,
   }
 }

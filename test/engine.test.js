@@ -1341,3 +1341,208 @@ test('killing both serpents inside the window is a clean kill', async () => {
   assert.equal(w.failures.has(sync.id), false,
     'a raid that killed them a second and a half apart was named for the sync')
 })
+
+// ── Ravenous Feast ────────────────────────────────────────────────────────────
+//
+// Hazard 4.1, which no single reading of this fight found because it needs three
+// slices at once: the tank swap seats a player on Ithraz, the melee leash welds
+// them within twelve yards of a serpent coiled at (8,-19), and Ravenous Feast is
+// a fourteen-yard circle drawn from the same point. That tank is inside it on
+// every cast and leaving is a raid wipe — so the naive rule feeds them on bite
+// one and kills them on bite two, forever, for playing perfectly.
+//
+// The tests below are the halves of the answer, and they have to be a set: the
+// exemption must not kill the tank, it must not become a general amnesty that
+// stops the mechanic killing anybody, and the AI raid has to be able to walk the
+// rota the mechanic is built around.
+
+/**
+ * A Twin Fangs pull with Ravenous Feast and nothing else.
+ *
+ * The loop, the ambient venom, the adds and the energy bar are all off, so every
+ * stack that moves below was moved by this cast. `seat` decides who holds
+ * Ithraz: 'player' swaps the tanks so the player is the welded body, 'ai' leaves
+ * the AI tank on him so the player is judged like any other raider.
+ */
+async function feastBench(role, seat, seed = 7) {
+  const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const feast = boss.mechanics.find(m => m.id === 'feast')
+  assert.ok(feast, 'Ravenous Feast is gone')
+  assert.equal(feast.rule.type, 'shedStack',
+    `Ravenous Feast is rule '${feast.rule.type}' — this bench measures a shedStack`)
+  assert.equal(feast.origin, 'boss',
+    'Ravenous Feast no longer comes out of Ithraz, so "the same place each time" is not a ' +
+    'claim this bench can make')
+
+  seedRng(seed)
+  const w = createWorld(boss, role, 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const ithraz = w.bosses.find(b => b.def.id === 'ithraz')
+  const vexhul = w.bosses.find(b => b.def.id === 'vexhul')
+  if (seat === 'player') {
+    const displaced = ithraz.targetId
+    ithraz.targetId = 0
+    vexhul.targetId = displaced
+  }
+  return { w, boss, feast, ithraz, vexhul, fire, step, TICK_MS }
+}
+
+// Hazard 4.1 itself. Three bites, a tank standing in every one of them because
+// the leash gives them nowhere else to be, and at the end of it they are alive,
+// unnamed — and carrying exactly what they walked in with, because the exemption
+// that stops the Feast killing them also stops it feeding them.
+test('Ravenous Feast does not kill the tank who cannot leave it', async () => {
+  const { w, feast, ithraz, fire, step, TICK_MS } = await feastBench('tank', 'player')
+  assert.equal(ithraz.targetId, 0, 'the player is not holding Ithraz — nothing here is welded')
+
+  // On the station the ally AI parks its own tanks on: the nearest floor to
+  // Ithraz, which is the only place this tank is allowed to stand.
+  w.player.pos.x = 7.417
+  w.player.pos.y = -14.087
+  w.player.venom = 3
+  const start = { ...w.player.pos }
+
+  fire(w, 'feast')
+  const inst = w.instances.find(i => i.def.id === 'feast')
+  assert.ok(inst, 'firing Ravenous Feast produced no instance')
+  const reach = Math.hypot(start.x - inst.pos.x, start.y - inst.pos.y)
+  assert.ok(reach <= feast.shape.radius,
+    `the Ithraz tank's own station is ${reach.toFixed(1)}yd from the bite against a ` +
+    `${feast.shape.radius}yd radius — they are not inside it, so this test measures nothing. ` +
+    'The hazard it exists for is that they ARE')
+
+  // The whole cast: 4.25s of telegraph and two 2s gaps, with slack.
+  //
+  // Counted off `bitesLeft`, not off `resolved`. The re-arm runs at the bottom
+  // of the same `resolveInstance` call that set `resolved`, so from outside
+  // `step` that flag is only ever seen true after the LAST bite — watching it
+  // reports one bite out of three and calls a working mechanic broken.
+  const places = []
+  let bites = 0
+  let left = inst.bitesLeft
+  for (let ms = 0; ms < 12000; ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+    if (inst.bitesLeft !== left) {
+      bites++
+      places.push({ ...inst.pos })
+      left = inst.bitesLeft
+    }
+    if (!w.instances.includes(inst)) break
+  }
+
+  assert.equal(bites, feast.rule.bites,
+    `${bites} bites out of a cast that declares ${feast.rule.bites}`)
+  // "It will expire 3 times but spawn in the same place each time." The re-arm
+  // exists to make that literally true rather than approximately so.
+  for (const p of places) {
+    assert.ok(Math.hypot(p.x - places[0].x, p.y - places[0].y) < 0.001,
+      'the three bites did not land in the same place — a raid cannot rotate three groups ' +
+      'through a circle that moves')
+  }
+
+  assert.equal(w.player.alive, true,
+    `the welded tank died: ${w.deathCause}. They cannot walk out of this circle without ` +
+    'breaking a leash that wipes the raid, so the fight would be killing them for doing the ' +
+    'one thing it requires')
+  assert.deepEqual([...w.failures.keys()], [],
+    `the welded tank was named for: ${[...w.failures.keys()].join(', ')}`)
+  assert.equal(w.player.venom, 3,
+    `the welded tank's count moved to ${w.player.venom}. The exemption is symmetric on ` +
+    'purpose — a tank who cannot be killed by their own entity\'s soak cannot be fed by it ' +
+    'either, and one who shed three times a cast without moving would make the economy free')
+  assert.equal(w.venomShed, 0, 'the welded tank shed a stack they are exempt from shedding')
+})
+
+// The other half, and the reason the exemption has to be narrow. A dps who takes
+// two bites of one cast dies for it, having got exactly one stack back — which is
+// the whole rule the raid leader stated, in one measurement.
+test('a dps who takes two bites of one Ravenous Feast dies with venom down exactly 1', async () => {
+  const { w, ithraz, fire, step, TICK_MS } = await feastBench('dps', 'ai')
+  assert.notEqual(ithraz.targetId, 0,
+    'the player is holding Ithraz — this case needs an ordinary body')
+
+  w.player.venom = 4
+  fire(w, 'feast')
+  const inst = w.instances.find(i => i.def.id === 'feast')
+  assert.ok(inst, 'firing Ravenous Feast produced no instance')
+  // Well inside it, and staying there. A player who does not move is the exact
+  // mistake the mechanic punishes: every other soak in the raid rewards standing
+  // in it for longer, and this one kills for it.
+  w.player.pos.x = inst.pos.x
+  w.player.pos.y = inst.pos.y + 5
+
+  let afterFirst = null
+  let died = -1
+  for (let ms = 0; ms < 12000 && died < 0; ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+    if (afterFirst === null && inst.fed?.includes(-1)) afterFirst = w.player.venom
+    if (!w.player.alive) died = ms
+  }
+
+  assert.equal(afterFirst, 3,
+    `the first bite took the player from 4 to ${afterFirst}. One stack per cast is the ` +
+    'fight\'s central claim and the only thing pulling the other way')
+  assert.ok(died >= 0,
+    'a player stood in all three bites of a Ravenous Feast and lived. "Standing in the circle ' +
+    'more than one time kills them" is the rule, and without it the correct play is to park ' +
+    'in it and shed three')
+  assert.match(w.deathCause ?? '', /Ravenous Feast/,
+    `died of "${w.deathCause}" rather than of the bite that killed them`)
+  assert.equal(w.player.venom, 3,
+    `the player ended on ${w.player.venom} against the 4 they started with. The second bite ` +
+    'is a death, not a second removal')
+  assert.equal(w.venomShed, 1, `the debrief will report ${w.venomShed} stacks shed for one bite`)
+  assert.equal(w.failures.get('feast')?.count, 1,
+    `Ravenous Feast was recorded ${w.failures.get('feast')?.count ?? 0} times for one greedy cast`)
+})
+
+// The AI raid has to be able to play its own rota, or the player's half of the
+// fight is unplayable: every bot that eats two bites is a body off the health bar
+// and a share of the globule sweep gone. Nineteen raiders, one circle, three
+// bites, and the engine's own answer to "who goes in".
+//
+// This one also pins the reason the rota exists at all. The melee ring sits about
+// ten yards from Ithraz and the circle has a fourteen-yard radius, so the raid's
+// DEFAULT formation is inside it: with no rota most of the raid is fed on bite
+// one and dead on bite two, without anybody doing anything.
+test('the AI raid rotates through the three bites and loses nobody', async () => {
+  for (const seed of [1, 3, 7]) {
+    const { w, feast, fire, step, TICK_MS } = await feastBench('healer', 'ai', seed)
+    // A spread of counts, so the highest-venom-first ordering has work to do.
+    for (const a of w.allies) a.venom = a.id % 4
+    for (let ms = 0; ms < 3000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+
+    const before = w.alliesLost
+    fire(w, 'feast')
+    const inst = w.instances.find(i => i.def.id === 'feast')
+    // Sampled on every change of `bitesLeft` — see the note in the tank test
+    // above for why `resolved` is the wrong flag to watch from out here.
+    const fedByBite = []
+    let left = inst.bitesLeft
+    for (let ms = 0; ms < 12000; ms += TICK_MS) {
+      step(w, NO_INPUT(), TICK_MS)
+      if (inst.bitesLeft !== left) {
+        fedByBite.push((inst.fed ?? []).length)
+        left = inst.bitesLeft
+      }
+      if (!w.instances.includes(inst)) break
+    }
+
+    assert.equal(w.alliesLost, before,
+      `seed ${seed}: ${w.alliesLost - before} raiders were fed twice by one Ravenous Feast. ` +
+      'A rota the AI cannot walk is a rota the player is watching fail')
+    assert.equal(fedByBite.length, feast.rule.bites, `seed ${seed}: ${fedByBite.length} bites`)
+    // Every bite has to feed somebody new, or two thirds of the cast is scenery
+    // and "three groups, one per bite" is a sentence in a tooltip.
+    for (let i = 1; i < fedByBite.length; i++) {
+      assert.ok(fedByBite[i] > fedByBite[i - 1],
+        `seed ${seed}: bite ${i + 1} fed nobody new (${fedByBite.join(' -> ')}). The raid is ` +
+        'answering one bite and standing clear of the rest, which is not a rota')
+    }
+  }
+})

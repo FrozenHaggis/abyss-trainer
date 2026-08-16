@@ -566,20 +566,68 @@ export const twinfangs: BossDef = {
       id: 'feast',
       name: 'Ravenous Feast',
       spellId: 1290662,
-      what: "4.25s cast bites three times; each splits damage among players within 14 yards , sheds one stack, and applies Feasted — blocking further removal for 8s and multiplying Feast damage by nine.",
+      // THE ONLY WAY OUT OF THE ECONOMY. Everything else on this fight adds
+      // venom; this subtracts it, one stack at a time, three chances a cast and
+      // one of them yours. Which is why it is `shedStack` and not `beInside`:
+      // `beInside` scores you for being outside, and being outside is correct
+      // play for two of the three bites — and for the whole cast if you happen
+      // to be carrying nothing.
+      //
+      // "The circle will expire 3 times but spawn in the same place each time,
+      // the player can only be in the circle when it expires once and remove 1
+      // stack, standing in the circle more than one time kills them." Every
+      // clause of that is in the rule: `bites: 3`, `amount: 1`, the same
+      // instance re-armed rather than three fresh casts, and a second helping
+      // being fatal. The real ability agrees — the tactic file's Feasted
+      // (1310096) "blocks further removal for 8s and multiplies Feast damage by
+      // nine", which is "the second one kills you" written as a coefficient.
+      //
+      // The comment sits below `spellId:` rather than above `id:`, which is
+      // where the two boss-file parsers leave room for it: invariants.test.js
+      // splits a file on `{` alone on its line, so prose above `id:` is glued
+      // onto the previous def, and trace.test.js matches `id:` followed
+      // immediately by `name:` and then `spellId:`, so prose between any of
+      // those three makes the def invisible to it. Between spellId and the rest
+      // is the one gap both of them tolerate.
+      what: "4.25s cast biting three times in the same place. Standing in one bite takes a stack of Eternal Venom back off you — one per cast, and only one. A second bite of the same cast kills.",
       lethal: true,
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 4250,             // "4.25s cast"
       shape: { kind: 'circle', radius: 14 },   // "splits damage among players within 14 yards"
-      // A stack point you run to, not something that lands on you — being out of
-      // it is the failure. 12 deaths across 14 pulls and "the most common first
-      // blood", always from too few bodies in a bite.
-      origin: 'random',
-      rule: { type: 'beInside' },
-      soakers: 5,
+      // "A large circle in front of Ithraz", and boss-anchored rather than
+      // rolled for two separate reasons.
+      //
+      // The spec's, first: the circle appears where he is, every cast, so the
+      // raid can be standing on the mark before the bar finishes and can split
+      // into three groups that know in advance where they are going. A rolled
+      // position makes the rota unplannable.
+      //
+      // And it separates Ravenous Feast from Congealed Gore by construction.
+      // Coiling Ichor drops its pools 15-25 seconds earlier and they linger; a
+      // rolled Feast circle lands on top of one often enough to matter, and the
+      // fight then asks the raid to stand in a pool to shed a stack. The tactic
+      // file's own Bad line for Coiling Ichor names it — "pools parked on the
+      // Feast stack point" — which is only a thing you can say when the stack
+      // point has a fixed address. Ithraz is coiled off the top edge, so the
+      // circle hangs over the ledge and bites the northern strip of the floor:
+      // deliberately the busiest part of the room, and deliberately not where
+      // the ichor carriers are told to run.
+      origin: 'boss',
+      // 2 seconds between bites, so a cast runs 4.25 + 2 + 2 and finishes well
+      // inside one 9.5-second loop slot. The gap also has to be long enough for
+      // a body that has just been fed to physically leave a 14-yard circle
+      // before the next bite lands — at most 28 yards from the far side, two
+      // seconds at a raider's 12 yd/s, and a good deal less from where the rota
+      // actually puts them. Shorter and the second bite is an ambush rather
+      // than a decision, which on a mechanic that kills is the difference
+      // between teaching and punishing.
+      rule: { type: 'shedStack', amount: 1, bites: 3, biteGapMs: 2000 },
       good: 'Three distinct groups, one per bite, enough bodies to divide the damage; highest-venom players first; nobody takes two.',
-      failText: 'Out of the bite — Ravenous Feast was not split',
+      // The failure is greed, not absence. Nobody is ever named for staying out
+      // — the raid is SUPPOSED to be out for two bites in three, and a raider
+      // carrying nothing is supposed to be out for all of them.
+      failText: 'Took a second bite of Ravenous Feast',
     },
     {
       id: 'ichor',

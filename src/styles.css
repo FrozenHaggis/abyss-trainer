@@ -532,6 +532,28 @@ body {
 .mark.side-red.on .mark-num { color: #ffb3ae; }
 .mark-both { flex-basis: 100%; font-size: 11px; letter-spacing: .04em; color: #ffd0cd; }
 
+/* The stack counter. On the one fight that keeps one it is the number the whole
+   pull is about, so it sits with your own health rather than in the top-bar
+   chrome, and it is sized to be read without looking for it. It goes hot inside
+   the last three, where it stops being book-keeping and becomes the thing that
+   is about to kill you. */
+.venom-count {
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 5px 12px; border-radius: 8px;
+  background: rgba(22, 16, 42, .8); border: 1px solid var(--accent-line);
+}
+.venom-num { font-family: var(--font-mono); font-size: 21px; color: var(--venom); }
+.venom-num em { font-style: normal; font-size: 12px; opacity: .55; }
+.venom-name {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.venom-raid { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.venom-count.hot {
+  border-color: var(--danger); background: rgba(248, 81, 73, .12);
+  animation: sep-pulse .5s ease-in-out infinite alternate;
+}
+.venom-count.hot .venom-num { color: #ffb3ae; }
+
 /* Helical Toxins. The largest thing on the HUD on purpose: the wrong partner
    kills you instantly, so your own count has to be readable at a glance rather
    than counted. */

@@ -42,13 +42,27 @@ const BOT_KNOWS = {
   beInside: 'walks into the soak unless carrying something',
   collect: 'runs over the nearest pickup unless anchored as a tank',
   keepApart: 'nothing to press — the anchored-tank leash below is what answers it',
+  holdMelee: 'nothing of its own: the `tankedApart` anchor below already welds the '
+    + 'tank to the entity it is holding, and that anchor is what satisfies the '
+    + 'leash. It stands down while the entity is relocated off the floor — a '
+    + 'Submerge suspends the leash in the engine and the bot has to stop holding '
+    + 'a station on a serpent that is not there. Measured: zero Concentrated '
+    + 'Spittle and zero Clotted Bolt failures across every seed and role',
   lethalGround: 'absolute exclusion, and a hard constraint on the movement resolver',
   pairUp: 'walks at the partner whose orbs complete its own, steering round the rest',
   drainNearest: 'deliberately nothing: where the boss stands is the AI tank\'s call',
   trail: 'keeps moving so the ground it paves is behind it',
   burnWindow: 'holds `burst` for the window instead of spending it on cooldown',
-  syncKill: 'no fight declares one any more; target discipline is driven by the '
-    + 'engine\'s own kill-spread warning, below',
+  // This used to read "no fight declares one any more", which was already
+  // wrong before this merge — the Explorers dropped theirs for `killSpread`,
+  // but the Coiled Altar has carried a `syncKill` throughout. It is corrected
+  // here because that stale sentence is the reason nobody noticed the Coiled
+  // Altar has no target-discipline model at all: the council-evening block
+  // below is gated on `alliesChipOffTarget`, which only the Explorers declare.
+  syncKill: 'NOTHING on the one fight that declares it. The Coiled Altar\'s '
+    + 'window is a hard wipe and the bot picks targets by proximity there, so '
+    + 'the pools drift apart on their own; the council-evening block below '
+    + 'would answer it but is gated on a flag that fight does not set',
   faceAway: 'points the boss away from the raid while holding it',
   aimAway: 'deliberately nothing: the beam re-aims at the player while it telegraphs, '
     + 'so there is no pre-position a bot could make',
@@ -58,8 +72,37 @@ const BOT_KNOWS = {
   survive: 'deliberately nothing: the knockback is answered by not being at the rim, '
     + 'which the movement resolver already enforces',
   tankSwap: 'takes the swap where the fight trips on every cast',
+  // A GAP, WRITTEN DOWN AS ONE. This entry is not "deliberately nothing" and
+  // must not be read as one.
+  //
+  // The engine scores a missed pool only against the tank holding the caster
+  // (`sim.ts` `case 'tankSoak'`), and on the Twin Fangs the player tank is
+  // seated on Vexhul from the pull while Stone Breaker is cast by Ithraz — so
+  // for most of a pull these pools genuinely belong to the AI tank, who does
+  // walk them (`allyThink`, `rt === 'tankSoak'`). But `handOff` TRADES
+  // serpents: when the co-tank taunts Vexhul off an over-stacked player, the
+  // player is handed Ithraz and the pools become theirs. The bot has no model
+  // of that at all — no force pulls it onto a `tankSoak` instance it owns.
+  //
+  // It costs nothing measurable today only because the tank cell dies to
+  // Uncoiled Wrath at 46s, before enough Caustic Deluges have stacked to drive
+  // a second trade: zero Stone Breaker failures on any seed. That is the pull
+  // ending early, not the bot playing well, and the moment Twin Fangs pacing is
+  // fixed this becomes a live blind spot. Left unimplemented here because this
+  // is a merge and teaching the instrument a new behaviour would move cells on
+  // a fight neither side of the merge changed in this pass.
+  tankSoak: 'nothing yet, and that is a known gap rather than a decision — the '
+    + 'pools are the caster-holder\'s, the AI tank walks them while it holds '
+    + 'Ithraz, and the bot does not take them over when a swap hands it Ithraz',
   combo: 'deliberately nothing: a container that fires its parts, each handled on its own',
   groupSoak: 'into the cone when its group is called, well clear of it when not',
+  shedStack: 'the one mechanic whose right answer depends on what the player is '
+    + 'carrying, and all three states are modelled at the Ravenous Feast block '
+    + 'below: holding stacks and not yet bitten → get in, it is the only way '
+    + 'they come off; already bitten by this cast → get out, the second bite '
+    + 'kills; carrying nothing → stay out and let somebody who needs it have '
+    + 'the bite. Tanks skip it — one is exempt and welded inside it anyway, the '
+    + 'other is welded to a serpent of its own and cannot come',
   stackingDot: 'deliberately nothing: the two in the raid are consequences of another '
     + 'mechanic being failed, not casts with an answer of their own',
   windPair: 'lines up on the partner blown the other way',
@@ -423,6 +466,45 @@ function play(boss, role, smart, seed, side = 'green') {
         const d = Math.hypot(dx, dy) || 1
         tx += (dx / d) * weight; ty += (dy / d) * weight
       }
+
+      // ── Ravenous Feast ──
+      // The only mechanic in the raid whose right answer depends on a number the
+      // player is carrying, and the bot has to model all three states or the
+      // Twin Fangs rows stop measuring the fight.
+      //
+      // Without this the harness had NO model of it at all — the mechanic left
+      // `beInside` when it became the venom shedder, and with it went the only
+      // reason the bot ever walked into the circle. A competent healer then took
+      // ten stacks in eighty seconds with the one thing that removes them going
+      // off three times a rotation in front of them, and the row read as a fight
+      // that cannot be played rather than a bot that does not know how.
+      //
+      //   carrying stacks, not yet fed → get in, it is the only way out
+      //   already fed by this cast     → get out, the second bite kills
+      //   carrying nothing             → stay out, a bite spent at zero buys
+      //                                  nothing and costs you the cast
+      //
+      // Tanks skip it entirely, which is right on both serpents: the one holding
+      // the caster is exempt from the mechanic and welded inside it anyway, and
+      // the other is welded to a serpent of their own and cannot come.
+      for (const i of w.instances) {
+        if (i.resolved || i.def.rule.type !== 'shedStack') continue
+        if (anchoredTank || Object.keys(w.player.carrying).length) continue
+        const fed = !!i.fed?.includes(-1)
+        const dx = i.pos.x - w.player.pos.x, dy = i.pos.y - w.player.pos.y
+        const d = Math.hypot(dx, dy) || 1
+        const reach = (i.def.shape?.radius ?? 10) + 6
+        if (!fed && (w.player.venom ?? 0) > 0) {
+          tx += (dx / d) * 12; ty += (dy / d) * 12
+        } else if (d < reach) {
+          // Fed already outranks a puddle — a second bite is not damage, it is
+          // death. Wasting the cast is worth walking for, but not worth dying
+          // for, so the empty-handed weight sits below the avoid forces.
+          const weight = fed ? 12 : 4
+          tx -= (dx / d) * weight; ty -= (dy / d) * weight
+        }
+      }
+
       const carrying = Object.keys(w.player.carrying).length > 0
       const r = Math.hypot(w.player.pos.x, w.player.pos.y) || 1
 
@@ -536,7 +618,18 @@ function play(boss, role, smart, seed, side = 'green') {
       // The pull scales with how far they have strayed and is capped below the
       // life-critical forces, so the ordering is: never die, then hold station,
       // then everything else.
-      const mine = w.bosses?.find(b => b.targetId === 0)
+      //
+      // ...and it stops the moment the thing being held leaves the floor. A Twin
+      // Fangs Submerge takes both serpents into the acid and suspends both melee
+      // leashes, and the engine's own ally tanks drop their stations and rejoin
+      // the raid for the duration. Without the same rule here the bot spent
+      // every intermission pinned to a corner of the tanks' ledge that Vile
+      // Flood sweeps across, holding position on a boss that was not there — so
+      // the row measured the harness's ignorance of the stage rather than
+      // anything the stage does.
+      const submerged = new Set(
+        (boss.phases?.[w.phaseIndex]?.relocate ?? []).map(r => r.id))
+      const mine = w.bosses?.find(b => b.targetId === 0 && !submerged.has(b.def.id))
       if (mine?.def.tankedApart) {
         const ax = mine.def.start.x, ay = mine.def.start.y
         const d = Math.hypot(ax - w.player.pos.x, ay - w.player.pos.y)
@@ -789,6 +882,44 @@ function play(boss, role, smart, seed, side = 'green') {
         ty = (tankAnchor.y - w.player.pos.y) / tankAnchor.d
       }
 
+      // ── a knock the edge does not catch ──
+      //
+      // Stone Breaker throws every body ten yards straight away from Ithraz and
+      // does not stop them at the rim: 46% of the Twin Fangs floor is a landing
+      // in the venom, and the tank mark for Vexhul is one of the fatal squares.
+      // A bot with no model of this stood exactly where it was told to stand and
+      // died at twenty-seven seconds on every seed and all three roles — so the
+      // harness measured nothing this fight does after its first minute. Reading
+      // the push is not optional play here, it is the mechanic, and a "competent
+      // player" who cannot read it is not modelling one.
+      //
+      // Toward the caster, because the push is radial: every yard closer to it
+      // is a yard more floor left on the far side of you. Weighted above the
+      // tankedApart anchor (capped at 18) on purpose — holding the mark is the
+      // tank's job right up until the mark is the thing about to kill them.
+      const thrower = w.instances.find(i =>
+        !i.resolved && i.def.offPlatform && i.def.knockbackYards)
+      // `extra` is margin past the stated push, and the two callers want
+      // different amounts of it. The resolver below is choosing between headings
+      // and only needs the lip covered. The force needs MORE, or it switches
+      // itself off the instant the landing is barely on the floor and the
+      // tankedApart anchor — which is pulling the tank back at up to 18 — drags
+      // them straight back over the line. The bot oscillated on exactly that
+      // boundary and died on it, holding a mark that was a fatal square.
+      const landsOnFloor = (x, y, extra = 2) => {
+        if (!thrower) return true
+        const a = Math.atan2(y - thrower.pos.y, x - thrower.pos.x)
+        const p = thrower.def.knockbackYards + extra
+        return onFloor(boss, x + Math.cos(a) * p, y + Math.sin(a) * p)
+      }
+      if (thrower && !landsOnFloor(w.player.pos.x, w.player.pos.y, 6)) {
+        const dx = thrower.pos.x - w.player.pos.x
+        const dy = thrower.pos.y - w.player.pos.y
+        const d = Math.hypot(dx, dy) || 1
+        tx += (dx / d) * 26
+        ty += (dy / d) * 26
+      }
+
       // ── body-blocking ──
       //
       // An `intercept` add is stopped by standing in its way; killing it is not
@@ -861,7 +992,12 @@ function play(boss, role, smart, seed, side = 'green') {
             if (Math.hypot(nx - i.pos.x, ny - i.pos.y) < (i.def.shape.radius ?? 10) + 3) { bad = true; break }
           }
           if (bad) continue
-          const dot = dx * wx + dy * wy
+          // A heading whose LANDING is on the floor beats one that merely ends
+          // on it. Ranked rather than vetoed: when a knock is in the air and no
+          // heading saves you, standing still is worse than walking the best of
+          // a bad set — and `dot` never exceeds 1, so any survivable heading
+          // outranks every doomed one whatever direction the forces wanted.
+          const dot = dx * wx + dy * wy + (landsOnFloor(nx, ny) ? 2 : 0)
           if (dot > bestDot) { bestDot = dot; best = [dx, dy] }
         }
         // Boxed in on every heading: stand still rather than pick a lethal one.

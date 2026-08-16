@@ -138,8 +138,13 @@ test('sweep: no marker or dummy ID can be failed on any boss', () => {
   // (1295891) IS a cast marker, and without this line a polarity keyed to it
   // would have passed silently — it only survives the check because it is
   // `collective`, which is the honest escape rather than the invisible one.
+  //
+  // `shedStack` is on the list because it can kill you and name you for it — a
+  // second bite of one Ravenous Feast is a failure row and a corpse. It joined
+  // when Ravenous Feast stopped being a `beInside`, and without it a mechanic
+  // that had been swept here for its whole life would have quietly dropped out.
   const FAILABLE = ['avoid', 'beInside', 'collect', 'carryOut', 'survive', 'groupSoak', 'windPair',
-    'stackingDot', 'wave', 'polarity']
+    'stackingDot', 'shedStack', 'wave', 'polarity']
   for (const { key, mechanics } of readAllMechanics()) {
     const spells = spellsOf(key)
     for (const m of mechanics) {
@@ -174,8 +179,15 @@ test('sweep: mechanics the tactic files call collective never name a player', ()
     const tactic = readFileSync(BASE + MD[key], 'utf8')
     const spells = spellsOf(key)
     for (const m of mechanicsOf(key)) {   // guarded by readAllMechanics elsewhere
-      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair', 'wave', 'polarity']
-          .includes(m.rule) || m.collective) continue
+      // `shedStack` for the same reason it is on FAILABLE above: it names
+      // people, so its tactic file's Bad line has to agree that naming them is
+      // right. Ravenous Feast's does — "Deaths on 1290662 ... or 1290662 on a
+      // player already holding 1310096" — which is precisely the second bite.
+      // `wave` and `polarity` are here for the same reason again: both end with
+      // a name attached, so both owe their tactic file's Bad line the same
+      // agreement.
+      if (!['avoid', 'beInside', 'collect', 'carryOut', 'groupSoak', 'windPair', 'shedStack',
+        'wave', 'polarity'].includes(m.rule) || m.collective) continue
       const name = spells.get(m.spellId)?.name
       if (!name) continue
       // Find this ability's section and read its Bad line.
@@ -207,7 +219,19 @@ test('sweep: no mechanic is scored against a role that lacks the button', () => 
           assert.ok(KIT[r].includes('burst'), `${key}/${m.id}: burnWindow scores ${r}, who has no burst`)
         }
       }
-      if (['tankSwap', 'faceAway', 'keepApart'].includes(m.rule)) {
+      // `tankSoak` joins the list for exactly the same reason the other three are
+      // on it: it is one person's job by construction. Stone Breaker's slams are
+      // soaked by the tank holding Ithraz and by nobody else, and a def that
+      // listed a dps in `roles` would put a failure row on somebody the knock
+      // happened to throw into a pool.
+      //
+      // `holdMelee` joins them for the narrowest reason of the five: it is judged
+      // against ONE body's distance to the entity that body is holding, and
+      // nobody who is not a tank ever holds one. A dps listed in `roles` would be
+      // scored on a range check they are in no position to fail — and would be
+      // told, on the one fight that has this, to go and stand on a serpent that
+      // is coiled in the acid off the edge of the platform.
+      if (['tankSwap', 'faceAway', 'keepApart', 'tankSoak', 'holdMelee'].includes(m.rule)) {
         for (const r of m.roles) {
           assert.equal(r, 'tank', `${key}/${m.id}: '${m.rule}' is a tank job but scores ${r}`)
         }
@@ -239,10 +263,22 @@ test('sweep: every soak and pickup is reachable inside its telegraph', () => {
       // getting into it has to be possible. It is exempt from the `collective`
       // skip that beInside gets, because being late to THIS one is not merely a
       // missed split — the group that eats the next cone instead dies to it.
-      // `launchPad` and `feed` are "get to a thing" rules like the other three.
+      // `tankSoak` is the strictest case of all. One named tank has to be
+      // standing in it, so if the telegraph is shorter than the walk there is
+      // literally nobody who can answer it — and a Stone Breaker slam nobody
+      // answers does not cost a stack, it throws the whole raid into the acid.
+      // `shedStack` is a soak you run INTO, so it belongs here too — and it
+      // arrived on this list by being taken off it. Ravenous Feast was swept
+      // here for its whole life as a `beInside`, and changing its rule would
+      // have dropped it out with nothing to notice: the one mechanic in the
+      // raid whose telegraph you have to cross the room for three separate
+      // times would have stopped being checked that it can be reached once.
+      //
+      // `launchPad` and `feed` are "get to a thing" rules like all of the above.
       // A mushroom that despawns before the wave it answers, or a fish that
       // rots before you can walk it anywhere, is a mechanic with no play in it.
-      if (!['beInside', 'collect', 'groupSoak', 'launchPad', 'feed'].includes(m.rule)) continue
+      if (!['beInside', 'collect', 'groupSoak', 'tankSoak', 'shedStack', 'launchPad', 'feed']
+        .includes(m.rule)) continue
       if (m.collective && m.rule !== 'groupSoak') continue
       const reach = PLAYER_SPEED * Math.max(0, m.telegraphMs / 1000 - REACTION)
       assert.ok(reach >= arena * 0.55,
@@ -546,6 +582,63 @@ test('sweep: a wave always has a mushroom left to jump', () => {
   assert.ok(checked > 0, 'no wave mechanic in the registry — this sweep would be vacuous')
 })
 
+// ── 23. The venom economy closes for the one body that can never shed ────────
+//
+// Ravenous Feast exempts the tank holding the entity that casts it — the melee
+// leash welds them inside a 14-yard circle drawn from a serpent they may not
+// leave, so without the exemption the mechanic would feed them on bite one and
+// kill them on bite two, every rotation, for standing exactly where the fight
+// requires. The price of that exemption is that the same tank can never SHED
+// either. Their count only ever climbs.
+//
+// Which turns the whole economy into arithmetic for one body, and arithmetic is
+// something a test can check. If the unavoidable, whole-raid income of one
+// rotation ever grows to the point where three rotations reach the cap, that
+// tank dies of the fight working correctly and there is nothing they or the
+// player can do about it. Pure text over the boss file on purpose: it stays true
+// through any amount of engine churn, and it re-derives the income rather than
+// hard-coding it, so adding a second Venomous Emergence to the loop is caught
+// here rather than in a playtest three steps later.
+test('twinfangs: a clean tank stays under the venom cap for three rotations', () => {
+  const src = readFileSync('src/bosses/twinfangs.ts', 'utf8')
+  const mechs = mechanicsOf('twinfangs')
+
+  const cap = Number(src.match(/counter: \{ lethalAt: (\d+) \}/)?.[1] ?? 0)
+  assert.ok(cap > 0, 'the Twin Fangs no longer declares a lethal stack count — nothing to check')
+
+  const loopSrc = src.slice(src.indexOf('loop: ['), src.indexOf(']', src.indexOf('loop: [')))
+  const slots = [...loopSrc.matchAll(/'([^']+)'/g)].map(m => m[1])
+  assert.ok(slots.length > 0, 'the rotation is empty — this sum would be vacuous')
+
+  // What the raid takes whatever it does. `applies.raid` is the unavoidable
+  // half of the counter: Venomous Emergence hands one to every body in the room
+  // and there is nothing to dodge, soak or aim. Everything else on the fight is
+  // avoidable and a clean tank takes none of it.
+  const raidOf = id => {
+    const m = mechs.find(x => x.id === id)
+    return Number(m?.blk.match(/applies: \{[^}]*\braid: (\d+)/)?.[1] ?? 0)
+  }
+  const perRotation = slots.reduce((s, id) => s + raidOf(id), 0)
+  assert.ok(perRotation > 0,
+    'nothing in the rotation charges the whole raid a stack. Either the counter has no ' +
+    'unavoidable source left, in which case the economy is not one, or the parse broke')
+
+  // And the exemption is real, so the sum genuinely has nothing on the other
+  // side of it. If Ravenous Feast ever stops being the fight's shedder this
+  // whole calculation is measuring the wrong thing.
+  const feast = mechs.find(m => m.id === 'feast')
+  assert.ok(feast, 'Ravenous Feast is gone — nothing on this fight removes a stack at all')
+  assert.equal(feast.rule, 'shedStack',
+    `Ravenous Feast is rule '${feast.rule}', not shedStack — the one removal has moved`)
+
+  const afterThree = perRotation * 3
+  assert.ok(afterThree < cap,
+    `a tank who dodges everything still collects ${perRotation} unavoidable stacks a rotation, ` +
+    `so ${afterThree} after three against a cap of ${cap}. They cannot shed — the exemption ` +
+    'that stops Ravenous Feast killing them also stops it feeding them — so this is a death ' +
+    'with no play available. Cut an unavoidable source or raise the cap')
+})
+
 /**
  * The arena polygon's corners, or null for a round room.
  *
@@ -812,4 +905,275 @@ test('sweep: every Rule variant is declared in the playtest bot', () => {
       `BOT_KNOWS describes a '${k}' rule that no longer exists in types.ts — the manifest is ` +
       'drifting away from the engine it is supposed to describe')
   }
+})
+
+// ── 26. A melee leash must be reachable from the floor ───────────────────────
+//
+// Plan test 11, the second of its two static sweeps, and it exists because the
+// obvious number was wrong. `holdMelee` is a distance a tank must keep to the
+// entity they are holding, and the obvious value for it is the engine's own
+// MELEE_RANGE of 5 — which on the Twin Fangs is unsatisfiable: both serpents are
+// coiled in the acid three yards off the top edge of the platform, so the
+// nearest square of floor a body may stand on is 3.00 yards from either of them
+// and the AI tank's station is 4.947. A five-yard leash therefore fails both
+// tanks from the pull, forever, with nowhere on the platform to go and no AI
+// change able to fix it — a rule the room cannot satisfy.
+//
+// The margin is three yards rather than nothing. A leash satisfiable only by
+// standing on the single nearest point of floor is not a leash a body can hold:
+// the idle sway alone is worth 2.26 yards, the tank has to walk soaks and
+// sidestep pools inside it, and the AI station is itself a clamp two yards
+// inside the edge. So the demand is that the floor gets within `maxYards - 3` of
+// the entity, which leaves a tank somewhere to actually stand.
+//
+// Exact rather than rasterised: the nearest point of a polygon to a point
+// outside it is on its boundary, so this projects onto every edge and takes the
+// minimum. A room with no polygon uses the entity's distance from the centre
+// against the radius, the same way `inArena` falls back.
+test('sweep: every melee leash has floor a tank can hold it from', () => {
+  /** Distance from p to the segment ab. */
+  const toSeg = (p, a, b) => {
+    const vx = b.x - a.x, vy = b.y - a.y
+    const len2 = vx * vx + vy * vy
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0
+    return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t))
+  }
+
+  let checked = 0
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const leashes = [...code.matchAll(/rule: \{ type: 'holdMelee', maxYards: ([\d.]+) \}/g)]
+    if (!leashes.length) continue
+    // Which entity each one belongs to. Read out of the same block the rule is
+    // in, because a leash on the wrong serpent is measured from the wrong place.
+    const blocks = code.split(/\r?\n {4}\{\r?\n/).slice(1)
+    const pts = arenaPointsOf(code)
+    const radius = Number(/arenaRadius:\s*([\d.]+)/.exec(code)[1])
+    const starts = new Map([...code.matchAll(
+      /\{ id: '(\w+)'[^\n]*?start: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}/g,
+    )].map(m => [m[1], { x: Number(m[2]), y: Number(m[3]) }]))
+
+    for (const blk of blocks) {
+      const rule = blk.match(/rule: \{ type: 'holdMelee', maxYards: ([\d.]+) \}/)
+      if (!rule) continue
+      const max = Number(rule[1])
+      const id = blk.match(/id: '(\w+)'/)?.[1] ?? '?'
+      const from = blk.match(/from: '(\w+)'/)?.[1]
+      const at = from && starts.get(from)
+      assert.ok(at, `${key}/${id}: holdMelee is cast by '${from}', which has no start position`)
+
+      let nearest
+      if (pts) {
+        nearest = Infinity
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          nearest = Math.min(nearest, toSeg(at, pts[i], pts[j]))
+        }
+        // Inside the polygon the entity is standing on its own floor.
+        let inside = false
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          const a = pts[i], b = pts[j]
+          if ((a.y > at.y) !== (b.y > at.y) &&
+              at.x < ((b.x - a.x) * (at.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) inside = !inside
+        }
+        if (inside) nearest = 0
+      } else {
+        nearest = Math.max(0, Math.hypot(at.x, at.y) - radius)
+      }
+
+      checked++
+      assert.ok(nearest <= max - 3,
+        `${key}/${id}: the nearest floor to '${from}' is ${nearest.toFixed(2)}yd away and the ` +
+        `leash is ${max}yd, so a tank holding it has under three yards of platform to live on. ` +
+        'A range check the room cannot satisfy fails every tank from the pull and no AI ' +
+        'change can save them')
+    }
+  }
+  assert.ok(checked > 0, 'no holdMelee rule was found anywhere — this sweep would pass vacuously')
+})
+
+// ── 27. A carry-out must have somewhere to be carried to ─────────────────────
+//
+// Plan test 11, the first of its two static sweeps, and it exists because a
+// shipped rule was unsatisfiable by the room it was written for. Coiling Ichor
+// asked its carriers for 26 yards from the arena centre. On the Twin Fangs'
+// wedge that is 3.3% of 1158 square yards of floor, only TWO points of it are 12
+// yards apart, and the whole northern ledge — where both tanks are welded to
+// their serpents — tops out at 18.87, so a raider standing there failed the
+// mechanic no matter how they played it and a third carrier had nowhere legal to
+// stand at all. Nothing anywhere said so: every field was individually sensible
+// and the room was the thing that made them wrong together.
+//
+// So the demand is existence, checked against the real polygon: at least
+// `carriers` cells of floor satisfy every clause of the rule at once while being
+// pairwise `apart` apart. Rasterised at half-yard cells, which is finer than any
+// body in this engine can stand on.
+//
+// And none of them may be inside a tank's melee leash. That is the general form
+// of "not on the tanks' ledge": a `holdMelee` is a tank welded within so many
+// yards of an entity, so any drop spot inside that radius is a pool dropped on
+// top of somebody who is not allowed to walk away from it. It is vacuous on the
+// seven fights with no leash and exact on the one that has them.
+test('sweep: every carry-out has enough legal drop spots for its carriers', () => {
+  const CELL = 0.5
+
+  let checked = 0
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const pts = arenaPointsOf(code)
+    const radius = arenaOf(key)
+    const starts = new Map([...code.matchAll(
+      /\{ id: '(\w+)'[^\n]*?start: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}/g,
+    )].map(m => [m[1], { x: Number(m[2]), y: Number(m[3]) }]))
+
+    const inside = (p) => {
+      if (!pts) return Math.hypot(p.x, p.y) <= radius
+      let hit = false
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j]
+        if ((a.y > p.y) !== (b.y > p.y)
+            && p.x < ((b.x - a.x) * (p.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) hit = !hit
+      }
+      return hit
+    }
+    // Distance to the rim. On a polygon that is the nearest point of any edge;
+    // on a circle it is what is left of the radius.
+    const toRim = (p) => {
+      if (!pts) return Math.abs(radius - Math.hypot(p.x, p.y))
+      let best = Infinity
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[j], b = pts[i]
+        const vx = b.x - a.x, vy = b.y - a.y
+        const len2 = vx * vx + vy * vy
+        const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0
+        best = Math.min(best, Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t)))
+      }
+      return best
+    }
+
+    // Every welded tank on this fight, as a circle nothing may be dropped in.
+    const leashes = []
+    for (const blk of code.split(/\r?\n {4}\{\r?\n/).slice(1)) {
+      const rule = blk.match(/rule: \{ type: 'holdMelee', maxYards: ([\d.]+) \}/)
+      if (!rule) continue
+      const at = starts.get(blk.match(/from: '(\w+)'/)?.[1] ?? '')
+      if (at) leashes.push({ at, max: Number(rule[1]) })
+    }
+
+    for (const blk of code.split(/\r?\n {4}\{\r?\n/).slice(1)) {
+      const rule = blk.match(/rule: \{ type: 'carryOut',([^}]*)\}/)
+      if (!rule) continue
+      const id = blk.match(/id: '(\w+)'/)?.[1] ?? '?'
+      const num = (name) => {
+        const m = new RegExp(`${name}: ([\\d.]+)`).exec(rule[1])
+        return m ? Number(m[1]) : undefined
+      }
+      const minDistance = num('minDistance')
+      const edgeWithin = num('edgeWithin')
+      const apart = num('apart') ?? 0
+      const carriers = Number(/\n\s*carriers: (\d+)/.exec(blk)?.[1] ?? 1)
+      assert.ok(minDistance !== undefined, `${key}/${id}: a carryOut with no minDistance`)
+
+      // Greedy in scan order, capped at what the mechanic actually needs. Scan
+      // order is the weakest possible witness — it takes whatever it meets
+      // first rather than searching for a good set — so finding enough this way
+      // is a stronger statement than finding enough at all.
+      const spots = []
+      let legal = 0
+      for (let x = -radius; x <= radius && spots.length < carriers; x += CELL) {
+        for (let y = -radius; y <= radius && spots.length < carriers; y += CELL) {
+          const p = { x, y }
+          if (!inside(p)) continue
+          if (Math.hypot(x, y) < minDistance) continue
+          if (edgeWithin !== undefined && toRim(p) > edgeWithin) continue
+          if (leashes.some(l => Math.hypot(x - l.at.x, y - l.at.y) <= l.max)) continue
+          legal++
+          if (spots.every(q => Math.hypot(x - q.x, y - q.y) >= apart)) spots.push(p)
+        }
+      }
+
+      checked++
+      assert.equal(spots.length, carriers,
+        `${key}/${id}: ${carriers} carriers are told to get ${minDistance}yd out`
+        + (edgeWithin !== undefined ? `, inside ${edgeWithin}yd of the rim` : '')
+        + (apart ? `, and ${apart}yd from each other` : '')
+        + ` — and only ${spots.length} such spot(s) exist on a ${radius}yd floor `
+        + `(${legal} legal cells found before the search gave up). A rule the room cannot satisfy `
+        + 'fails whoever is handed it, however they play')
+    }
+  }
+  assert.ok(checked > 0, 'no carryOut rule was found anywhere — this sweep would pass vacuously')
+})
+
+// ── 28. The Twin Fangs room is finished, and finished means frozen ───────────
+//
+// Every other sweep in this file checks that a number is SENSIBLE. This one
+// checks that a number has not MOVED, which is a different kind of claim and
+// needs a different kind of justification.
+//
+// The wedge, the venom pocket bitten out of its bottom edge, the two serpents
+// coiled three yards off the top edge, and the point in the pocket the Spawn of
+// Vexhul surface at were designed, measured and merged as their own piece of
+// work, and the raid leader has since declared them settled. Everything built on
+// this floor afterwards was measured against it and nothing else: Stone Breaker's
+// 46.2% fatal band, Coiling Ichor's six legal drop spots, Vile Flood's 253
+// square yards of never-swept reserve, the six waves' worst-case fifth of the
+// room, the 12-yard melee leash that exists because the nearest floor to a
+// serpent is 3.00 yards. Move one vertex and every one of those numbers is
+// quietly wrong while every test that asserts them keeps passing, because they
+// all re-derive from the polygon rather than from a constant.
+//
+// So this is not a design check. It is a receipt. The values below are the ones
+// in commits 45955e7 and 4c81e39, and a red build here means somebody reshaped a
+// room that was explicitly closed — which is a decision to be taken on purpose,
+// with the numbers above re-measured, and never a tidy-up that slipped in
+// alongside a mechanic.
+//
+// THE ONE THING THIS DELIBERATELY DOES NOT FORBID: the Submerge stage's
+// `relocate`, which moves both serpents off the floor for the length of the
+// intermission and puts them back on `def.start` when it ends. That is
+// phase-scoped and lives on the PhaseDef; `entities[]` is what is frozen, and
+// the assertion below is written against that array so the two cannot be
+// confused for each other.
+test('twinfangs: the room is exactly the room that was signed off', () => {
+  const src = readFileSync('src/bosses/twinfangs.ts', 'utf8')
+  // Comments carry vertices too — every one of these numbers is argued for in
+  // prose a few lines above it — so the whole check runs over comment-free text.
+  const code = src.replace(/\/\/[^\n]*/g, '')
+
+  const arena = code.slice(code.indexOf('arena: {'), code.indexOf('],', code.indexOf('points: [')))
+  const pts = [...arena.matchAll(/x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)/g)].map(m => [+m[1], +m[2]])
+  assert.deepEqual(pts, [
+    [-10, -16], [10, -16],        // the tanks' ledge
+    [23, 21],                     // the right leg, flaring to the mouth
+    [6, 21], [4, 15], [-4, 15], [-6, 21],   // the venom pocket
+    [-23, 21],                    // the left leg
+  ], 'the Twin Fangs arena polygon has moved. Every geometric bound on this fight was ' +
+     'measured over these eight corners and re-derives from them, so they will all keep ' +
+     'passing against the wrong floor')
+
+  assert.match(code, /arenaRadius: 32,/, 'the Twin Fangs bounding radius has moved off 32')
+  assert.match(code, /\n\s*acid: true,/,
+    'the venom sea outside the platform is gone — falling off is no longer a death, and the ' +
+    'Stone Breaker knock and the pushoff both stop meaning anything')
+
+  // Both serpents, in one assertion, because what matters is the pair: they sit
+  // symmetrically about x = 0 three yards off the top edge, and Vile Flood's
+  // mirrored sweep is only provably the same sweep because of that symmetry.
+  const ents = code.slice(code.indexOf('entities: ['), code.indexOf('],', code.indexOf('entities: [')))
+  for (const [id, x, y] of [['vexhul', -8, -19], ['ithraz', 8, -19]]) {
+    const m = new RegExp(`id: '${id}'[^}]*start: \\{ x: (-?[\\d.]+), y: (-?[\\d.]+) \\}`).exec(ents)
+    assert.ok(m, `${id} is no longer declared in entities[] with a start position`)
+    assert.deepEqual([+m[1], +m[2]], [x, y],
+      `${id} has been moved off (${x}, ${y}). The serpents are coiled in the acid on purpose — ` +
+      'a shot is eaten by the first entity it passes, so floor behind them means the raid ' +
+      'shoots its own boss in the back at 100% recorded accuracy')
+  }
+  assert.equal((ents.match(/stationary: true/g) ?? []).length, 2,
+    'one of the serpents can walk again. They never move and the raid comes to them; a tank ' +
+    'dragging one changes every distance the melee leash, the Feast circle and the slam arc ' +
+    'are measured against')
+
+  assert.match(code, /spawnAt: \{ x: 0, y: 19 \}/,
+    'the Spawn of Vexhul no longer surface at (0, 19). Deeper or shallower and one of the ' +
+    'three fans onto the lip of the pocket, where the raid can stand on top of it')
 })

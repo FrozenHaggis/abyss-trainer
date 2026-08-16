@@ -363,7 +363,26 @@ export const explorers: BossDef = {
   // and survives; at 1.9 it enrages one seed in three and at 2.0 it reads 99% and
   // takes the pull. So the rate is pinned by the longest window, not the shortest
   // one, and the number the directive asks about is the one that has to give.
-  energyPerSec: 1.8,
+  //
+  // 1.8 → 1.75 WHEN origin/main's ALLY AI ARRIVED, and it is the second half of
+  // that retune rather than a number moved on its own — see the `loop` note
+  // below for the first half, which is the load-bearing one.
+  //
+  // What changed underneath: origin/main measures the ally movement deadzone in
+  // yards on the floor instead of against the eased step, so every raider in the
+  // raid now actually arrives where it was sent instead of stopping two to seven
+  // yards short. That is a straight improvement and this fight was tuned against
+  // the old behaviour. Delivery of the first fish moved from a reliable ~2s walk
+  // to 42.8-50.4s of wall clock depending on seed, and every downstream beat
+  // moved with it.
+  //
+  // Chosen off a PLATEAU rather than a cliff, which is the only reason to trust
+  // it: 1.75, 1.70 and 1.65 all clear 3/3 competent with all three careless cells
+  // dying, so the value is not balanced on one seed's arithmetic. 1.75 is the
+  // top of that plateau and therefore the smallest move from 1.8 that holds. At
+  // 1.8 the healer clears only 1/3. The longest-window ceiling above is unharmed:
+  // it bounds this number from ABOVE, and this moves down.
+  energyPerSec: 1.75,
   // atFullEnergy deliberately UNSET. The bar IS the enrage, and naming a
   // full-energy mechanic would make it empty itself.
   enrageName: "Final Ascension — Mor'zahi ascended",
@@ -415,9 +434,41 @@ export const explorers: BossDef = {
   // it to index 5 dropped it into the t=30 crate window, walked the bot eighteen
   // yards away from the boxes and wiped every competent pull. Re-order this list
   // against `npm run playtest`, never by eye.
+  //
+  // FROSTFIRE VOLLEY GETS A THIRD TURN, AT INDEX 9, AND IT IS THE ONE CHANGE
+  // THIS FIGHT NEEDED WHEN origin/main's ALLY AI ARRIVED.
+  //
+  // The re-arm chain is fish → feed → that explorer's empowered ability RESOLVES
+  // → six seconds → next crate window. `feedPriority` puts Iku first, so the
+  // FIRST fish of every pull empowers Iku and the whole rest of the fight hangs
+  // on Frostfire Volley getting a turn shortly after that feed lands. Miss it
+  // and the next one is a third of a rotation away.
+  //
+  // What made that fatal rather than merely slow: origin/main measures the ally
+  // deadzone in yards on the floor rather than against the eased step, so the
+  // raider carrying a refused fish now walks a real distance instead of stopping
+  // short. Measured across the three seeds, the first feed landed at 42.8s,
+  // 47.6s and 50.4s — a 7.6-second spread where the old AI delivered in about
+  // two. With volley's only early turn at index 7 (t=44.0s) two of those three
+  // seeds missed it, and the next volley at index 13 (t=77.0s) was 33 seconds
+  // later, by which time the raid had killed Iku and the ability could never
+  // fire again at all. One fish was delivered in the whole pull, Mor'zahi's bar
+  // was never emptied a second time, and the row read as a fight that cannot be
+  // played rather than as a beat the raid kept arriving just behind.
+  //
+  // MOVING the beat does not fix this and was tried first: at index 8 (t=49.5s)
+  // seed 90210's feed landed at 50.4s and missed it by nine tenths of a second.
+  // A single beat is a cliff wherever it is put, because delivery time is a
+  // distribution and the beat is a point. Two early turns are a WINDOW — 44.0s
+  // and 55.0s — and all three seeds fall inside it.
+  //
+  // Index 9 was a second `flames`, which is the cheapest slot in the array to
+  // spend: Icebound Flames already has turns at 0 and 5, so the fill loses one
+  // of three copies rather than its only one. Nothing in the first seven slots
+  // moved — see the note directly below, which is still exactly true.
   loop: [
     'flames', 'shards', 'splinters', 'patches', 'thud', 'flames',
-    'shards', 'volley', 'gebbospree', 'flames', 'splinters', 'thud',
+    'shards', 'volley', 'gebbospree', 'volley', 'splinters', 'thud',
     'escalation', 'volley', 'cataclysm', 'shards', 'gebbospree', 'shovel',
   ],
 

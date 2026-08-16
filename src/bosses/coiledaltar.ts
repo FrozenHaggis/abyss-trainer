@@ -113,7 +113,21 @@ export const coiledaltar: BossDef = {
       // The entities do not share a health pool, so leaving one far behind is
       // the failure this rule scores. Judged continuously from the moment the
       // first one dies.
-      rule: { type: 'syncKill', withinSec: 12 },
+      //
+      // FIVE, AND A WIPE — hardened alongside the Twin Fangs rather than left
+      // behind it, and that is a decision the raid leader took explicitly rather
+      // than a side effect of somebody else's fight. The alternative on the table
+      // was a per-boss escape hatch: keep twelve seconds here and let the rule
+      // mean two different things on the two fights that carry it. It was
+      // rejected. "Killing one berserks the other" is the same claim Uncoiled
+      // Wrath makes and the same uncapped rage, so it gets the same window and
+      // the same consequence — and a raid that learns the switch on one of these
+      // bosses has learned it on both.
+      //
+      // What it costs HERE is a real change and not a formality. This used to
+      // allow twelve seconds and 20% off the raid bar per overrun; it now ends
+      // the pull outright.
+      rule: { type: 'syncKill', withinSec: 5 },
       good: 'Health pools stay level and both bosses die together.',
       failText: 'Health pools drifted apart — killing one berserks the other',
     },

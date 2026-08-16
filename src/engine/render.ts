@@ -1,8 +1,7 @@
 import type { BossDef, Instance, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
-import { WIND_TOUCH_YARDS } from './sim'
-import { inArena } from './sim'
+import { VENOM_FLASH_MS, WIND_TOUCH_YARDS, bossUnitFor, inArena } from './sim'
 import { ROLE_COLOUR, ROLE_PATH_2D } from '../ui/RoleIcon'
 import { BOSS_SIGILS, sigilPath } from '../assets/bossSigils'
 
@@ -236,11 +235,47 @@ function ruleColour(inst: Instance, w?: World): string {
      */
     case 'groupSoak':
       return w && w.player.group === w.calledGroup && w.player.gash <= 0 ? GREEN : RED
+    /**
+     * The second one, and the same argument.
+     *
+     * A Stone Breaker slam is a place the Ithraz tank must be standing and a
+     * place nobody else may be. One colour for both would tell nineteen people
+     * to walk into the thing that is only survivable because one person is
+     * eating it — so it is green to the tank holding Ithraz and red to everybody
+     * else, including the OTHER tank, who is welded to Vexhul and cannot help.
+     */
+    case 'tankSoak':
+      return w && bossUnitFor(w, inst.fromId).targetId === 0 ? GREEN : RED
+    /**
+     * The third, and the same argument again — but the flip is in TIME rather
+     * than between two readers.
+     *
+     * Ravenous Feast is a place to run into for one bite and a place that kills
+     * you for the next two, and it is the same circle in the same spot the whole
+     * way through. Painting it green throughout would be the palette telling a
+     * raider who has already had their stack back to go and get another one,
+     * which is precisely how this mechanic kills people on the real fight. So it
+     * turns red the moment the cast has fed you, and stays red for the rest of
+     * the cast.
+     *
+     * Green while you have taken nothing, whatever your count is. A raider at
+     * zero loses nothing by being in it once and the colour has no business
+     * second-guessing that call — the panel explains the trade and the prompt
+     * stays quiet, which is the RL's ruling.
+     */
+    case 'shedStack':
+      return inst.fed?.includes(-1) ? RED : GREEN
     // Everything answered by not being on the ground it is drawn on, plus the
     // rules that draw no shape of their own and only reach this function through
     // one somebody else handed them. All red — but all named, so that adding a
-    // 27th verb fails the build here rather than inheriting "get out" from a
+    // 30th verb fails the build here rather than inheriting "get out" from a
     // `default` and being wrong in a way only a playtest would notice.
+    //
+    // `holdMelee` is in this list rather than green because the leash draws its
+    // OWN ring further down this file, in bone until the boundary is behind you.
+    // It reaches this function only if something ever hands it a telegraph, and
+    // red is what the `default` it replaces already returned for it.
+    case 'holdMelee':
     case 'avoid':
     case 'keepApart':
     case 'lethalGround':
@@ -294,7 +329,19 @@ function drawArrow(
 /** 0 at spawn, 1 at resolve — telegraphs fill as they approach. */
 function progress(inst: Instance): number {
   if (inst.resolved) return 1
-  const total = Math.max(1, inst.def.telegraphMs)
+  // A cast that bites more than once winds up against the CAST time for the
+  // first bite and against the gap between bites for the rest. Measured against
+  // the cast time throughout, a two-second gap on a four-second cast would draw
+  // its timing ring already half full, so the second and third bites of a
+  // Ravenous Feast would look most of the way landed from the instant they
+  // re-armed — which is the one number a raider has to read off the floor here,
+  // because the whole mechanic is being in it at the right moment and out of it
+  // at the wrong one.
+  const rule = inst.def.rule
+  const total = Math.max(1,
+    rule.type === 'shedStack' && inst.bitesLeft !== undefined && inst.bitesLeft < rule.bites
+      ? rule.biteGapMs
+      : inst.def.telegraphMs)
   return Math.min(1, 1 - inst.timer / total)
 }
 
@@ -1128,6 +1175,35 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (isLane(inst)) continue
     const col = ruleColour(inst, w)
     const t = progress(inst)
+
+    // On the floor, but not yet live.
+    //
+    // Caustic Deluge throws ten 4-yard circles onto a wedge that is barely a
+    // thousand square yards, five pairs of them a second apart. Drawn at full
+    // strength from the frame they land, that is a carpet: every pair reads as
+    // ground already killing you, the raid has nowhere it can see to go, and the
+    // mechanic teaches panic instead of a route. The circles arm 1.5 seconds
+    // after they appear, and drawing that window as a pale outline with no fill
+    // and no timing ring is what lets a raider look at the pair, pick a side and
+    // walk once — the shape is there, the danger is not, yet.
+    //
+    // THE ONLY READER of `armsAfterMs` in the codebase, and it has to stay that
+    // way. It scores nothing: `avoid` is judged once, at resolve, so a circle
+    // that armed late and one that armed on contact are worth exactly the same
+    // and there is nothing for the briefing or a tooltip to say about it. Told
+    // "1.5 seconds", a raider counts; shown pale-then-lit, they look at the
+    // floor, which is where the answer is. Pinned by a test in trace.test.js.
+    if (inst.def.armsAfterMs && inst.def.telegraphMs - inst.timer < inst.def.armsAfterMs) {
+      pathShape(ctx, cam, inst)
+      ctx.strokeStyle = `rgba(${col}, 0.32)`
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([5, 6])
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+      continue
+    }
+
     pathShape(ctx, cam, inst)
     ctx.fillStyle = `rgba(${col}, ${0.10 + t * 0.28})`
     ctx.fill()
@@ -1514,6 +1590,59 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
         }
       }
     }
+  }
+
+  // ── the melee leash ──
+  //
+  // Drawn for exactly the same reason the separation line above is, and it is
+  // the same argument inverted: knowing you are at 10 yards and drifting is what
+  // lets a tank fix it, and being told at 13 that the raid bar has already
+  // started emptying is not the same lesson.
+  //
+  // Only ever drawn for the entity the PLAYER is holding. Both serpents carry a
+  // leash and the AI tank holds the other one, so drawing both would put a line
+  // across the room to a rule the player cannot act on — and the ring around
+  // that serpent would read as ground to stay out of, which is the opposite of
+  // what it is.
+  //
+  // A ring AND a tether, because they answer different questions. The ring is
+  // where the boundary is, which is what you steer by; the tether carries the
+  // number, which is what you check.
+  for (const def of w.boss.mechanics) {
+    if (def.rule.type !== 'holdMelee') continue
+    const unit = bossUnitFor(w, def.from)
+    if (unit.targetId !== 0 || !unit.alive || !w.player.alive) continue
+    const max = def.rule.maxYards
+    const d = Math.hypot(w.player.pos.x - unit.pos.x, w.player.pos.y - unit.pos.y)
+    const out = d > max
+    // Bone inside the boundary rather than green: standing in melee is not a
+    // job well done, it is the default, and the palette's green means "get in
+    // here" everywhere else in this file. What the ring says is "this is the
+    // line", and it only turns hot once the line is behind you.
+    const col = out ? RED : BONE
+    const bp = toPx(cam, unit.pos)
+    const rr = max * cam.scale
+    ctx.save()
+    ctx.setLineDash([7, 7])
+    ctx.lineWidth = out ? 3 : 1.5
+    ctx.strokeStyle = `rgba(${col}, ${out ? 0.5 + 0.35 * pulse : 0.3})`
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, rr, 0, Math.PI * 2); ctx.stroke()
+    ctx.restore()
+
+    const pp = toPx(cam, w.player.pos)
+    ctx.save()
+    ctx.setLineDash([5, 5])
+    ctx.lineWidth = out ? 3 : 1.5
+    ctx.strokeStyle = `rgba(${col}, ${out ? 0.8 : 0.28})`
+    ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(pp.x, pp.y); ctx.stroke()
+    ctx.restore()
+    drawLabel(
+      ctx, `${Math.round(d)} YD  ·  STAY INSIDE ${max}`,
+      (bp.x + pp.x) / 2, (bp.y + pp.y) / 2, col, 12, out ? 1 : 0.75,
+    )
+    // And when it is broken, say what it costs — the bar is gone in about four
+    // seconds and the collapse is otherwise unexplained.
+    if (out) drawLabel(ctx, 'OUT OF RANGE — THE RAID IS TAKING IT', pp.x, pp.y - 34, RED, 13)
   }
 
   // ── the altars, and the pair the boss is about to drink ──
@@ -1905,6 +2034,34 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // on you rather than left in a debuff list nobody reads mid-flurry.
   if (w.player.gash > 0) {
     drawLabel(ctx, `GASH — STAY OUT`, pp.x, pp.y + 30, RED, 12, 0.75 + 0.25 * pulse)
+  }
+
+  // The stack counter, on the body carrying it.
+  //
+  // On the one fight in this tier that is a resource problem, this number is the
+  // fight. It is also on the HUD, and it is on the floor as well for the reason
+  // the Gash is: a count you have to look away from the arena to read is a count
+  // you read after it has already killed you.
+  //
+  // Violet rather than red while there is room left on it. Violet is the marker
+  // colour in this palette — a state you are carrying — and painting 1/10 the
+  // same colour as "get out of this" would spend the loudest thing on screen on
+  // a stack that costs nothing yet. It turns red inside the last three, where it
+  // genuinely is the thing about to kill you.
+  const counter = w.boss.mechanics.find(m => m.counter)
+  if (counter?.counter && w.player.venom > 0) {
+    const cap = counter.counter.lethalAt
+    const near = w.player.venom >= cap - 3
+    drawLabel(
+      ctx, `VENOM ${w.player.venom}/${cap}`, pp.x, pp.y + 30,
+      near ? RED : VIOLET, 12, near ? 0.75 + 0.25 * pulse : 0.85)
+  }
+  // And the moment of arrival, rising off your head and fading. The count says
+  // where you are; this says that something just charged you, which is the half
+  // that connects the number to the thing you stood in.
+  if (w.venomFlash) {
+    const t = Math.max(0, Math.min(1, w.venomFlash.ms / VENOM_FLASH_MS))
+    drawLabel(ctx, `+${w.venomFlash.n}`, pp.x, pp.y - 34 - (1 - t) * 18, RED, 15, t)
   }
 
   // Standing in range of both golems. This is the split raid's characteristic

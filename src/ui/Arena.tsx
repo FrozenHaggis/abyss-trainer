@@ -231,8 +231,32 @@ interface HudSample {
   separation: number | null
   /** The separation the fight demands, from its own `keepApart` rule. */
   minApart: number
+  /**
+   * The melee leash on the entity the player is holding: what it is called, how
+   * far out they are, and how far they may go.
+   *
+   * Null on the seven fights with no `holdMelee`, and null for anybody not
+   * currently holding one — including the other tank, who has their own leash on
+   * the other serpent and can do nothing about this one. The mirror of the
+   * separation readout, shown the same way for the same reason: a raid bar
+   * falling off a cliff because a tank drifted two yards is indistinguishable
+   * from a healing check until somebody puts the number on screen.
+   */
+  leash: { name: string; yards: number; max: number } | null
   /** Permanent proximity stacks the player is carrying, one row per aura. */
   marks: { id: string; name: string; side?: Side; stacks: number }[]
+  /**
+   * The fight's stack counter: what you are carrying, and the worst any one
+   * raider is carrying.
+   *
+   * Both, because they fail in opposite directions and the answer is different
+   * for each. Yours climbing is your footwork. The raid's climbing while yours
+   * does not is the soak rota drowning — and since a raider who reaches the cap
+   * dies, that number is also the clearest warning available that bodies are
+   * about to start dropping out of the globule rota.
+   */
+  venom: number
+  venomRaid: number
   /** Helical Toxins: the player's orbs, and what a partner has to bring. */
   marked: boolean
   green: number
@@ -367,6 +391,29 @@ function switchTargetOf(units: { name: string; hp: number }[]): string {
   return best
 }
 
+/**
+ * The leash on the entity the PLAYER is holding, measured the way the engine
+ * measures it: to that entity, never to the nearest one.
+ *
+ * Reading it off `w.bosses` rather than off `w.leashOutMs` on purpose. The
+ * readout has to be live at every distance so a tank can watch themselves drift
+ * — the engine's record only exists once the leash is already broken, which is
+ * the moment it stops being useful.
+ */
+function leashOf(w: World): { name: string; yards: number; max: number } | null {
+  for (const def of w.boss.mechanics) {
+    if (def.rule.type !== 'holdMelee') continue
+    const unit = w.bosses.find(b => b.def.id === def.from) ?? w.bosses[0]
+    if (!unit || unit.targetId !== 0 || !unit.alive) continue
+    return {
+      name: unit.def.name,
+      yards: Math.hypot(w.player.pos.x - unit.pos.x, w.player.pos.y - unit.pos.y),
+      max: def.rule.maxYards,
+    }
+  }
+  return null
+}
+
 export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
   boss: BossDef; role: Role; side?: Side; drillId?: string
   onEnd: (r: RunResult) => void; onQuit: () => void
@@ -377,12 +424,18 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
     health: 1, raid: 1, bossHp: 1, energy: 0, elapsed: 0, cooldowns: {},
     alive: true, stacks: 0, tanking: false, raidAlive: 0,
     prompt: null, next: [], waiting: [], drillReps: 0, drillClean: 0,
-    units: [], separation: null, minApart: 0, marks: [],
+    units: [], separation: null, minApart: 0, leash: null, marks: [],
     marked: false, green: 0, pairTarget: ORB_COUNT, phase: null,
-    altars: [], enrage: [], inbound: null,
+    altars: [], enrage: [], inbound: null, venom: 0, venomRaid: 0,
     fishFound: 0, fishSpent: 0, fishCarried: false,
     element: null, elementMs: 0, aloft: 0, killSpread: false,
   })
+  // The fight's stack counter, read off the boss file the same way the
+  // separation and the orb target are. Zero on the seven fights without one,
+  // and the whole readout then draws nothing.
+  const counterDef = boss.mechanics.find(m => m.counter)
+  const venomCap = counterDef?.counter?.lethalAt ?? 0
+  const venomName = counterDef?.name ?? ''
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   // A phase announcement, held for a few seconds and then dropped.
   const [banner, setBanner] = useState<PhaseDef | null>(null)
@@ -566,6 +619,7 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           })),
           separation: separationOf(world),
           minApart,
+          leash: leashOf(world),
           // Floored, because a mark is a whole stack — a fractional one would
           // read as a bug rather than as the aura ticking.
           marks: markDefs.map(m => ({
@@ -573,6 +627,11 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           })),
           marked: world.player.marked,
           green: world.player.green,
+          venom: world.player.venom,
+          // The worst any one raider is carrying, not the average. An average
+          // hides the body that is one globule from dying, which is the only
+          // thing about the raid's count anybody can act on.
+          venomRaid: world.allies.reduce((n, a) => (a.alive ? Math.max(n, a.venom) : n), 0),
           pairTarget,
           // The PhaseDef itself, so its identity is stable while the phase runs
           // and the banner below fires once per stage rather than ten times a
@@ -882,6 +941,21 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             </div>
           )}
 
+          {/* The melee leash, and the same argument as the separation above it
+              inverted. A tank welded to a serpent has one number to hold all
+              pull and no cast bar telling them how they are doing, so it is on
+              screen continuously rather than only once it has gone wrong.
+              Re-uses the separation row's styling deliberately: it is the same
+              kind of readout — a live yardage against a bound — and inventing a
+              second look for it would say the two were different things. */}
+          {hud.leash && (
+            <div className={`separation${hud.leash.yards > hud.leash.max ? ' hot' : ''}`}>
+              <span className="sep-lab">{hud.leash.name}</span>
+              <span className="sep-num">{Math.round(hud.leash.yards)}<em>yd</em></span>
+              <span className="sep-need">stay inside {hud.leash.max}</span>
+            </div>
+          )}
+
           {/* Everything still walking at the pool, and how much floor the
               nearest one has left. Killing them is a race against a distance,
               not against a health bar, and the distance was the half nobody
@@ -1069,6 +1143,26 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             <span className="bar-num">{hud.raidAlive} up</span>
           </div>
         </div>
+
+        {/* The stack counter, from zero, for the same reason the Marks are:
+            a count you only see once it is dangerous is a count you can no
+            longer do anything about. On the one fight that keeps one this is
+            the fight, so it sits beside your own health bar rather than in the
+            top-bar chrome with the boss's book-keeping.
+
+            The raid's worst is next to it because the two are answered
+            differently. Yours climbing is where you have been standing; theirs
+            climbing is the soak rota losing, and a raider who reaches the cap
+            dies and stops soaking — which makes the next one worse. */}
+        {venomCap > 0 && (
+          <div className={`venom-count${hud.venom >= venomCap - 3 ? ' hot' : ''}`}>
+            <span className="venom-num">{hud.venom}<em>/{venomCap}</em></span>
+            <span className="venom-name">{venomName}</span>
+            <span className="venom-raid" title="Worst any single raider is carrying">
+              raid {hud.venomRaid}
+            </span>
+          </div>
+        )}
 
         {/* Both Marks, always both, even at zero. They never fall off, so the
             only thing you can do about them is not collect the second one —

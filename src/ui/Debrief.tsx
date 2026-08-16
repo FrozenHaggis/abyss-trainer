@@ -42,6 +42,37 @@ export default function Debrief({ result, onRetry, onQuit }: {
             <span className="stat-lab">adds leaked</span>
           </div>
         )}
+        {/* The stack economy, on the one fight that has one. Three numbers, not
+            one, because they are answered differently: your own peak is where
+            you stood, the raid's is whether the soak rota held, and the shed
+            count is whether you ever played the other direction at all. A pull
+            lost to globules nobody swept looks identical to a pull lost to bad
+            footwork if you only report the first of them. */}
+        {result.venomPeak !== undefined && (
+          <div className="stat">
+            <span className="stat-num">{result.venomPeak}</span>
+            <span className="stat-lab">peak venom on you</span>
+          </div>
+        )}
+        {result.venomRaidPeak !== undefined && (
+          <div className="stat">
+            <span className="stat-num">{result.venomRaidPeak}</span>
+            <span className="stat-lab">worst on a raider</span>
+          </div>
+        )}
+        {/* The only one of the three that measures something the player DID
+            rather than something that happened to them. A peak of six with
+            nothing shed and a peak of six with four shed are two completely
+            different pulls: the first never found a Ravenous Feast bite, the
+            second took ten stacks and worked. Zero is printed rather than
+            hidden, because a pull that shed nothing is exactly the pull that
+            needs to be told so. */}
+        {result.venomShed !== undefined && (
+          <div className="stat">
+            <span className="stat-num">{result.venomShed}</span>
+            <span className="stat-lab">stacks shed</span>
+          </div>
+        )}
       </div>
 
       {clean ? (

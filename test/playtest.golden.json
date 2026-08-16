@@ -1,93 +1,90 @@
 {
   "careless/nekzali/tank": {
-    "wins": 1,
-    "cleared": false,
-    "outcome": "enrage",
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
       "Echo of Jawae": 2,
       "Hollowing Strikes": 2,
-      "Hungering Pyre": 3,
+      "Hungering Pyre": 4,
       "Possession Barrage": 1,
-      "Restless Amani": 7
+      "Restless Amani": 8
     }
   },
   "careless/nekzali/healer": {
     "wins": 0,
     "cleared": false,
-    "outcome": "enrage",
+    "outcome": "Latent Cultist",
     "failures": {
-      "Echo of Jawae": 1,
-      "Essence Rend": 1,
-      "Hungering Pyre": 2,
+      "Hungering Pyre": 1,
       "Latent Cultist": 1,
-      "Restless Amani": 8
+      "Restless Amani": 6
     }
   },
   "careless/nekzali/dps": {
-    "wins": 3,
+    "wins": 2,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
+      "Cremation": 1,
       "Echo of Jawae": 2,
-      "Essence Rend": 2,
+      "Essence Rend": 1,
       "Hungering Pyre": 4,
       "Latent Cultist": 1,
-      "Restless Amani": 6
+      "Restless Amani": 8
     }
   },
   "careless/sentinels/green/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "outcome": "Helical Toxins",
     "failures": {
-      "Living Venom": 3,
-      "Toxic Droplets": 5,
-      "Ula'tek's Dominance": 12,
-      "Venom Coagulation": 1
+      "Helical Toxins": 1,
+      "Toxic Droplets": 2,
+      "Ula'tek's Dominance": 2,
+      "Venom Coagulation": 2
     }
   },
   "careless/sentinels/green/healer": {
-    "wins": 0,
+    "wins": 1,
+    "cleared": false,
+    "outcome": "enrage",
+    "failures": {
+      "Toxic Droplets": 4,
+      "Venom Coagulation": 6
+    }
+  },
+  "careless/sentinels/green/dps": {
+    "wins": 1,
     "cleared": false,
     "outcome": "Helical Toxins",
     "failures": {
       "Helical Toxins": 1,
-      "Living Venom": 1,
-      "Toxic Droplets": 7,
-      "Venom Coagulation": 2
-    }
-  },
-  "careless/sentinels/green/dps": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
-    "failures": {
-      "Living Venom": 1,
-      "Toxic Droplets": 10,
+      "Toxic Droplets": 1,
       "Venom Coagulation": 2
     }
   },
   "careless/sentinels/red/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Living Venom",
+    "outcome": "Helical Toxins",
     "failures": {
+      "Helical Toxins": 1,
       "Venom Coagulation": 2
     }
   },
   "careless/sentinels/red/healer": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Helical Toxins",
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
-      "Blighted Blood": 1,
-      "Helical Toxins": 1,
-      "Unstable Miasma": 1,
-      "Venom Coagulation": 2
+      "Blighted Blood": 2,
+      "Unstable Miasma": 2,
+      "Venom Coagulation": 4
     }
   },
   "careless/sentinels/red/dps": {
-    "wins": 2,
+    "wins": 3,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
@@ -101,9 +98,10 @@
     "outcome": "KILL",
     "failures": {
       "Burning Venom": 2,
+      "Caustic Explosion": 1,
       "Deadly Venom": 1,
       "Dripping Fangs": 2,
-      "Shrouded Venom": 1,
+      "Shrouded Venom": 2,
       "Stygian Burst": 2
     }
   },
@@ -139,12 +137,12 @@
   "careless/explorers/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "outcome": "Final Ascension — Mor'zahi ascended",
     "failures": {
-      "Icebound Flames": 4,
-      "Shell Spin": 3,
-      "Shredding Shards": 2,
-      "Useless Junk": 5
+      "Icebound Flames": 3,
+      "Shredding Shards": 4,
+      "United Defense": 1,
+      "Useless Junk": 6
     }
   },
   "careless/explorers/healer": {
@@ -171,9 +169,8 @@
     "outcome": "Fell off the platform",
     "failures": {
       "Falling": 1,
-      "Ravage": 3,
-      "Tempest": 1,
-      "Viscous Cyst": 1
+      "Raging Crosswinds": 1,
+      "Ravage": 1
     }
   },
   "careless/sszorak/healer": {
@@ -221,45 +218,41 @@
   "careless/coiledaltar/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "outcome": "Health pools drifted apart — killing one berserks the other",
     "failures": {
       "Coalesced Venom": 1,
-      "Deathguard & Soulbound": 2,
+      "Deathguard & Soulbound": 1,
       "Eternal Nightfall": 1,
-      "Fragment of Malacrass": 2,
       "Guillotine": 1,
-      "Spiteful Soulcoiler": 2,
-      "Volatile Venom": 1,
-      "Widow's Kiss": 1
+      "Sever": 1,
+      "Volatile Venom": 1
     }
   },
   "careless/coiledaltar/healer": {
-    "wins": 1,
+    "wins": 0,
     "cleared": false,
-    "outcome": "enrage",
+    "outcome": "Health pools drifted apart — killing one berserks the other",
     "failures": {
       "Coalesced Venom": 1,
-      "Deathguard & Soulbound": 3,
-      "Eternal Nightfall": 2,
-      "Fragment of Malacrass": 2,
+      "Deathguard & Soulbound": 1,
+      "Eternal Nightfall": 1,
       "Guillotine": 1,
       "Spiteful Soulcoiler": 2,
-      "Venomfang": 2,
-      "Volatile Venom": 2,
+      "Venomfang": 1,
+      "Volatile Venom": 1,
       "Widow's Kiss": 1
     }
   },
   "careless/coiledaltar/dps": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "outcome": "Health pools drifted apart — killing one berserks the other",
     "failures": {
       "Coalesced Venom": 1,
-      "Deathguard & Soulbound": 2,
+      "Deathguard & Soulbound": 1,
       "Eternal Nightfall": 1,
-      "Fragment of Malacrass": 2,
       "Guillotine": 1,
-      "Spiteful Soulcoiler": 2,
+      "Spiteful Soulcoiler": 1,
       "Volatile Venom": 1,
       "Widow's Kiss": 1
     }
@@ -273,7 +266,7 @@
       "Blightscale Viper": 2,
       "Doomscale Eggs": 1,
       "Doomscale Warden": 1,
-      "Malice": 1,
+      "Malice": 2,
       "Serpent's Bite": 1,
       "Venomous Heart": 1,
       "Volatile Purge": 1
@@ -287,10 +280,11 @@
       "Acidic Burst": 1,
       "Blightscale Shrieker": 1,
       "Blightscale Viper": 2,
-      "Doomscale Eggs": 2,
+      "Doomscale Eggs": 1,
       "Doomscale Warden": 1,
       "Malice": 2,
       "Poisonous Bite": 1,
+      "Ravenous Doomscale": 1,
       "Serpent's Bite": 1,
       "Volatile Purge": 1
     }
@@ -302,10 +296,11 @@
     "failures": {
       "Acidic Burst": 1,
       "Blightscale Viper": 2,
-      "Doomscale Eggs": 2,
+      "Doomscale Eggs": 1,
       "Doomscale Warden": 1,
       "Malice": 1,
       "Serpent's Bite": 1,
+      "Venomous Heart": 1,
       "Vicious Echoes": 1,
       "Volatile Purge": 1
     }
@@ -315,33 +310,35 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Cremation": 2,
+      "Cremation": 1,
       "Echo of Jawae": 1,
       "Hollowing Strikes": 1,
       "Hungering Pyre": 2,
-      "Possession Barrage": 4,
-      "Restless Amani": 3
+      "Possession Barrage": 3,
+      "Restless Amani": 6
     }
   },
   "competent/nekzali/healer": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Latent Cultist",
+    "outcome": "Raid wiped — healing could not keep up",
     "failures": {
-      "Essence Rend": 1,
-      "Hungering Pyre": 1,
-      "Latent Cultist": 1
+      "Cremation": 2,
+      "Echo of Jawae": 2,
+      "Hungering Pyre": 2,
+      "Restless Amani": 6
     }
   },
   "competent/nekzali/dps": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 1,
+    "cleared": false,
+    "outcome": "Slithering Flame",
     "failures": {
-      "Cremation": 2,
-      "Echo of Jawae": 1,
-      "Hungering Pyre": 2,
-      "Restless Amani": 1
+      "Cremation": 1,
+      "Essence Rend": 1,
+      "Hungering Pyre": 1,
+      "Restless Amani": 1,
+      "Slithering Flame": 1
     }
   },
   "competent/sentinels/green/tank": {
@@ -349,8 +346,8 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Living Venom": 2,
-      "Toxic Droplets": 6
+      "Living Venom": 4,
+      "Toxic Droplets": 2
     }
   },
   "competent/sentinels/green/healer": {
@@ -358,20 +355,18 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Living Venom": 4,
-      "Venom Coagulation": 2
+      "Living Venom": 1,
+      "Venom Coagulation": 1
     }
   },
   "competent/sentinels/green/dps": {
     "wins": 3,
     "cleared": true,
     "outcome": "KILL",
-    "failures": {
-      "Living Venom": 2
-    }
+    "failures": {}
   },
   "competent/sentinels/red/tank": {
-    "wins": 3,
+    "wins": 2,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
@@ -379,13 +374,11 @@
     }
   },
   "competent/sentinels/red/healer": {
-    "wins": 1,
-    "cleared": false,
-    "outcome": "Blood Venom",
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
-      "Blighted Blood": 1,
-      "Blood Venom": 1,
-      "Venom Coagulation": 1
+      "Blighted Blood": 1
     }
   },
   "competent/sentinels/red/dps": {
@@ -402,14 +395,13 @@
     "outcome": "KILL",
     "failures": {
       "Burning Venom": 1,
-      "Deadly Venom": 1,
       "Stygian Burst": 2
     }
   },
   "competent/vashnik/healer": {
-    "wins": 2,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 1,
+    "cleared": false,
+    "outcome": "Burning Venom — two died within 3s",
     "failures": {
       "Burning Venom": 1,
       "Clotting Blood": 1,
@@ -432,18 +424,20 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Icebound Flames": 3,
-      "Useless Junk": 1
+      "Concussive Blast": 1,
+      "Icebound Flames": 2,
+      "Useless Junk": 2
     }
   },
   "competent/explorers/healer": {
-    "wins": 3,
+    "wins": 2,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
       "Aftershock": 1,
       "Concussive Blast": 1,
       "Icebound Flames": 4,
+      "Mighty Thud": 2,
       "Useless Junk": 1
     }
   },
@@ -453,7 +447,8 @@
     "outcome": "KILL",
     "failures": {
       "Concussive Blast": 2,
-      "Icebound Flames": 3
+      "Explosive Surprise": 1,
+      "Icebound Flames": 2
     }
   },
   "competent/sszorak/tank": {
@@ -469,80 +464,74 @@
     "wins": 3,
     "cleared": true,
     "outcome": "KILL",
-    "failures": {
-      "Caustic Claws": 1,
-      "Caustic Residue": 1
-    }
+    "failures": {}
   },
   "competent/sszorak/dps": {
     "wins": 3,
     "cleared": true,
     "outcome": "KILL",
-    "failures": {
-      "Caustic Claws": 1,
-      "Caustic Residue": 1
-    }
+    "failures": {}
   },
   "competent/twinfangs/tank": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Killed one serpent far ahead of the other — Uncoiled Wrath",
     "failures": {
-      "Envenomed": 1,
-      "Stir the Depths": 1,
-      "Stone Breaker": 1,
-      "Vile Flood": 1
+      "Caustic Deluge": 2,
+      "Corrosive Spit": 2,
+      "Uncoiled Wrath": 1
     }
   },
   "competent/twinfangs/healer": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Eternal Venom — 10 stacks",
     "failures": {
-      "Stone Breaker": 1,
-      "Vile Flood": 2
-    }
-  },
-  "competent/twinfangs/dps": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
-    "failures": {
-      "Stone Breaker": 1,
+      "Caustic Deluge": 1,
+      "Coiling Ichor": 1,
+      "Congealed Gore": 1,
       "Vile Flood": 1
     }
   },
-  "competent/coiledaltar/tank": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+  "competent/twinfangs/dps": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Killed one serpent far ahead of the other — Uncoiled Wrath",
     "failures": {
-      "Coalesced Venom": 2,
-      "Deathguard & Soulbound": 4,
-      "Spiteful Soulcoiler": 1,
-      "Widow's Kiss": 1
+      "Caustic Deluge": 1,
+      "Coiling Ichor": 1,
+      "Congealed Gore": 1,
+      "Uncoiled Wrath": 1
+    }
+  },
+  "competent/coiledaltar/tank": {
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Health pools drifted apart — killing one berserks the other",
+    "failures": {
+      "Coalesced Venom": 1,
+      "Deathguard & Soulbound": 1
     }
   },
   "competent/coiledaltar/healer": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Health pools drifted apart — killing one berserks the other",
     "failures": {
-      "Coalesced Venom": 4,
-      "Deathguard & Soulbound": 3,
-      "Eternal Nightfall": 1,
+      "Coalesced Venom": 2,
+      "Deathguard & Soulbound": 1,
       "Spiteful Soulcoiler": 1,
       "Venomfang": 1,
       "Widow's Kiss": 1
     }
   },
   "competent/coiledaltar/dps": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Health pools drifted apart — killing one berserks the other",
     "failures": {
-      "Coalesced Venom": 2,
-      "Deathguard & Soulbound": 3
+      "Coalesced Venom": 1,
+      "Deathguard & Soulbound": 1
     }
   },
   "competent/ulatek/tank": {
@@ -551,6 +540,7 @@
     "outcome": "KILL",
     "failures": {
       "Blightscale Viper": 1,
+      "Doomscale Warden": 1,
       "Malice": 1
     }
   },
@@ -559,9 +549,10 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Blightscale Shrieker": 1,
       "Blightscale Viper": 1,
-      "Malice": 2
+      "Doomscale Warden": 1,
+      "Malice": 2,
+      "Ravenous Doomscale": 1
     }
   },
   "competent/ulatek/dps": {
@@ -569,7 +560,9 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Malice": 1
+      "Doomscale Warden": 1,
+      "Malice": 1,
+      "Vicious Echoes": 1
     }
   }
 }

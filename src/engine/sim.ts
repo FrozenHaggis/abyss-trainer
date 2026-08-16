@@ -443,11 +443,13 @@ export interface World {
   /**
    * Has every soak in the run currently on the floor been covered?
    *
-   * Stone Breaker's reward. The three slams are answered one at a time and the
-   * tanks only trade if the tank held ALL of them, so the verdict has to survive
-   * between resolves — one boolean, set when the run is queued and knocked down
-   * by the first pool nobody stood in. Read by the last child of the run, which
-   * is also the only thing that ever trades on it.
+   * Whether the current run of soaks has been answered all the way through.
+   *
+   * Knocked down by the first pool nobody stood in. It used to be Stone
+   * Breaker's reward — a clean run traded the tanks — but the swap moved back to
+   * Envenomed, so nothing reads this to hand out a trade any more. Kept because
+   * a spoiled run is still a fact worth holding: the raid is already in the
+   * venom by then, and the debrief has somewhere to grow into.
    */
   soakRunClean: boolean
   /** How many times each mechanic that splits the raid in half has been cast. */
@@ -3191,30 +3193,21 @@ function resolveInstance(w: World, inst: Instance) {
         if (isInside(inst, a.pos)) a.health = Math.max(0.1, a.health - 0.12)
       }
 
-      // The last of the run, and the run was clean: the tanks trade.
+      // Nothing trades here, and that is the point of the mechanic.
       //
-      // "Once all three are soaked, the tank tanking Vexhul starts tanking
-      // Ithraz, and the tank tanking Ithraz tanks Vexhul." Last is read off the
-      // queue rather than counted, because the queue is the only thing that
-      // knows how many beats a channel put out.
-      if (def.tradeTanksOnClean && !w.queue.some(q => q.id === def.id)) {
-        if (w.soakRunClean) tradeTanks(w)
-        w.soakRunClean = true
-      }
+      // Stone Breaker used to hand the tanks a swap for a clean run of three.
+      // The raid leader corrected it: this is a soak the tanks TAKE TURNS at,
+      // and the turns are not something this mechanic arranges — Envenomed
+      // swaps who holds Ithraz, and whoever holds Ithraz walks the pools. The
+      // rota is a consequence of the swap driver, not a second swap driver.
       break
     }
 
-    case 'tankSwap': {
+    case 'tankSwap':
       // Applies a stack to whoever holds the entity that cast it. The failure is
       // checked continuously in step(), not here.
-      const unit = bossUnitFor(w, def.from)
-      if (unit.targetId === 0) w.playerStacks += 1
-      else {
-        const t = w.allies.find(a => a.id === unit.targetId)
-        if (t) t.stacks += 1
-      }
+      landTankStack(w, def.from)
       break
-    }
 
     case 'burnWindow':
       // Opens on resolve and runs on a clock. Judged when it closes, in step().
@@ -3546,11 +3539,13 @@ function resolveInstance(w: World, inst: Instance) {
     for (let i = 0; i < ch.count; i++) {
       w.queue.push({ id: ch.defId, atMs: w.elapsedMs + i * ch.everyMs, at: at?.[i] })
     }
-    // A run of soaks starts clean, and the first pool nobody covers spoils it.
-    // Reset here rather than on the first child so a run that was spoiled last
-    // time cannot deny the tanks a trade they earned this time.
-    const child = w.boss.mechanics.find(m => m.id === ch.defId)
-    if (child?.tradeTanksOnClean) w.soakRunClean = true
+    // The channel stacks the tank it is channelling into, once, as it opens.
+    //
+    // Caustic Deluge is the Twin Fangs' swap driver and Envenomed is what it
+    // does to the tank — the stack belongs to the channel, not to a cast of its
+    // own, so it lands here with the children rather than on a timer. One per
+    // channel; see MechanicDef.stacksTank for why not the tooltip's ten.
+    if (def.stacksTank) landTankStack(w, def.from)
   }
 
   // Energy is fed by events, never by the clock — see the bar in step().
@@ -5895,11 +5890,27 @@ function phaseComplete(w: World, ph: PhaseDef): boolean {
  * back on their stations rather than left in the middle where they met.
  *
  * Lifted out of `exitPhase` because the trade is not really a property of a
- * stage ending. On the Sentinels it happens to be, because Vitriolic Stasis is
- * where the swap is called; on the Twin Fangs the swap is the reward for a
- * clean set of Stone Breaker soaks and fires in the middle of a rotation, with
- * no stage boundary anywhere near it. One trade, two triggers.
+ * stage ending — it is just the thing a swap does, and `tankSwap` calls it from
+ * the middle of a rotation with no stage boundary anywhere near it.
  */
+/**
+ * One tank stack onto whoever currently holds `fromId`.
+ *
+ * Shared by the two things that can land one: a `tankSwap` mechanic resolving
+ * under its own name, and a `stacksTank` channel landing one on the tank it is
+ * channelling into. Written once because the player and the allies keep their
+ * stacks in different places, and a second copy of that split is a second place
+ * to get it wrong.
+ */
+function landTankStack(w: World, fromId?: string) {
+  const unit = bossUnitFor(w, fromId)
+  if (unit.targetId === 0) w.playerStacks += 1
+  else {
+    const t = w.allies.find(a => a.id === unit.targetId)
+    if (t) t.stacks += 1
+  }
+}
+
 function tradeTanks(w: World) {
   const held = w.bosses.filter(b => b.targetId !== -1)
   if (held.length !== 2) return

@@ -781,9 +781,74 @@ test('Stone Breaker is not an automatic wipe for a tanking player', async () => 
   assert.deepEqual([...w.failures.keys()], [],
     `failures recorded for a clean Stone Breaker: ${[...w.failures.keys()].join(', ')}`)
 
-  assert.equal(swaps, 1, `the tanks traded ${swaps} times, not once`)
-  assert.equal(vexhul.targetId, before.ithraz, 'Vexhul did not go to the tank who was on Ithraz')
-  assert.equal(ithraz.targetId, before.vexhul, 'Ithraz did not go to the tank who was on Vexhul')
+  // STONE BREAKER DOES NOT TRADE THE TANKS, and this assertion is the inverse of
+  // the one it replaced. The raid leader corrected the fight after the swap
+  // shipped here: Stone Breaker is a soak the tanks take turns at, and the turns
+  // come from Envenomed swapping who holds Ithraz. A clean run is worth exactly
+  // what it says — the raid is not thrown into the venom — and nothing else.
+  assert.equal(swaps, 0, `Stone Breaker traded the tanks ${swaps} times; the swap belongs to Envenomed`)
+  assert.equal(vexhul.targetId, before.vexhul, 'Vexhul changed hands on a Stone Breaker')
+  assert.equal(ithraz.targetId, before.ithraz, 'Ithraz changed hands on a Stone Breaker')
+})
+
+// The other half of the same correction: the swap that DOES exist.
+//
+// Envenomed is not cast, so nothing fires it and no loop contains it — Caustic
+// Deluge lands it on whoever it is channelling into, one stack per channel, via
+// `stacksTank`. This drives Deluge until the tanks trade and checks that they
+// trade for that reason, at that stack count, on their own.
+test('Caustic Deluge stacks Envenomed until the tanks trade', async () => {
+  const { boss } = await breakerBench('tank', 7)
+  const env = boss.mechanics.find(m => m.id === 'envenomed')
+  assert.ok(env, 'Envenomed is gone — it is the fight\'s swap driver')
+  assert.equal(env.rule.type, 'tankSwap', 'Envenomed is no longer the tankSwap mechanic')
+  assert.equal(
+    (boss.loop ?? []).includes('envenomed') ||
+    (boss.phases ?? []).some(p => (p.loop ?? []).includes('envenomed')),
+    false,
+    'Envenomed is in a loop. It is applied BY Caustic Deluge and must never be cast on its own',
+  )
+
+  // A REAL PULL, not the stripped bench. Hand-firing `deluge` into a world with
+  // no phases resolves the parent once and never again — the sequential script
+  // is what brings the next one round — so a bench cannot reach a second stack
+  // and cannot see this swap at all.
+  //
+  // The player is held immortal, in melee of Vexhul, and ON THE FLOOR every
+  // tick. That last part is not decoration: Stone Breaker's knock is lethal by
+  // the raid leader's ruling, so a player revived where it dropped them dies
+  // again immediately, and a dead player early-returns out of step() before the
+  // channel queue is drained — which stops the fight advancing at all and looks
+  // exactly like a scheduler bug. This asks WHEN THE SWAP FIRES, not whether
+  // the pull is survivable.
+  const { createWorld, step: rstep, seedRng, TICK_MS: T, BOSSES } = await engine()
+  const real = BOSSES.find(b => b.key === 'twinfangs')
+  seedRng(7)
+  const rw = createWorld(real, 'tank', 'green')
+  const rvex = rw.bosses.find(b => b.def.id === 'vexhul')
+  const rith = rw.bosses.find(b => b.def.id === 'ithraz')
+  const before = { vexhul: rvex.targetId, ithraz: rith.targetId }
+  assert.equal(before.vexhul, 0, 'a tanking player no longer opens holding Vexhul')
+
+  let tradedAt = -1
+  let peak = 0
+  for (let ms = 0; ms < 120000 && tradedAt < 0; ms += T) {
+    rw.player.alive = true; rw.player.health = 1; rw.raidHealth = 1; rw.player.venom = 0
+    rw.player.pos.x = -8; rw.player.pos.y = -14; rw.player.knock = null
+    rstep(rw, NO_INPUT(), T)
+    peak = Math.max(peak, rw.playerStacks)
+    if (rvex.targetId !== before.vexhul) tradedAt = rw.elapsedMs / 1000
+  }
+
+  assert.ok(tradedAt > 0,
+    `the tanks never traded in 120s (Envenomed peaked at ${peak.toFixed(1)} of ${env.rule.maxStacks}) — Caustic Deluge is not applying it`)
+  assert.equal(rith.targetId, before.vexhul, 'Ithraz did not go to the tank who was on Vexhul')
+  // Deluge opens each rotation and one channel is one stack, so at maxStacks 2
+  // the trade lands in the second rotation. Bounded loosely on purpose: the
+  // claim is that it takes more than one channel and still arrives inside a
+  // pull, not that it happens on a particular second.
+  assert.ok(tradedAt > 20 && tradedAt < 110,
+    `the trade landed at ${tradedAt.toFixed(0)}s — expected it inside the second rotation`)
 })
 
 // Plan test 9, the negative half.
@@ -854,8 +919,12 @@ test('a player tank can walk all three Stone Breaker soaks themselves', async ()
   assert.equal(w.seen.has('pushoff'), false, 'a pool the player stood in still fired the untanked variant')
   assert.deepEqual([...w.failures.keys()], [],
     `failures on a clean player-tank run: ${[...w.failures.keys()].join(', ')}`)
-  assert.equal(ithraz.targetId !== 0 && vexhul.targetId === 0, true,
-    'the player soaked the whole run and did not get the swap')
+  // No swap here either. The player walked the run because they were the one
+  // holding Ithraz, and they still are at the end of it — Stone Breaker asks
+  // who is holding Ithraz, it does not change the answer. See the Envenomed
+  // test above for the swap that actually exists.
+  assert.equal(ithraz.targetId, 0, 'the player stopped holding Ithraz mid-run')
+  assert.equal(vexhul.targetId !== 0, true, 'the player somehow ended up holding both serpents')
 })
 
 // Plan test 12, first half: the argument for the whole mechanic, rasterised.

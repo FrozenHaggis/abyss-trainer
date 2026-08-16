@@ -861,24 +861,31 @@ export interface MechanicDef {
    */
   offPlatform?: boolean
   /**
-   * On the CHILD of a `channel`: when the last of the run has been answered
-   * cleanly, the two tanks trade entities.
+   * Resolving this lands a tank stack of ANOTHER mechanic on the caster's
+   * current tank. Names that mechanic's id, and that mechanic must carry a
+   * `tankSwap` rule.
    *
-   * Stone Breaker's three slams are the Twin Fangs' swap driver — "once all
-   * three are soaked, the tank tanking Vexhul starts tanking Ithraz". Envenomed
-   * used to be, as a plain `tankSwap` on a timer, and the fight is better for
-   * the trade being earned rather than announced: a tank who covers the run gets
-   * the swap, a tank who drops one gets the raid pushed into the acid instead.
+   * Envenomed is not a cast. It is what Caustic Deluge does to the tank it is
+   * already channelling into — "+10% Caustic Deluge damage taken, stacking, ten
+   * stacks per channel" — so the stack has to ride the channel rather than
+   * arrive on a timer of its own. Without this the def would sit in the boss
+   * file and never fire, because `case 'tankSwap'` only stacks when the mechanic
+   * ITSELF resolves and Envenomed has nothing of its own to resolve.
    *
-   * On the child rather than on the parent `channel` deliberately. The child
-   * already knows both of the other two facts — whether it is the last of its
-   * run (`w.queue` has none of it left) and whether the run stayed clean
-   * (`World.soakRunClean`) — so putting the third here means the resolve reads
-   * three fields it holds. On the parent it would need a reverse lookup over
-   * every mechanic on the boss on every child resolve, which returns `undefined`
-   * the day somebody renames the child.
+   * On the PARENT, unlike everything else about a channel. The tank is stacked
+   * by the channel as a whole, once — the splashes are the raid's problem and
+   * the tank is the one body on the field they are not aimed at.
+   *
+   * ONE stack per channel, not the tooltip's ten. The engine's tank-stack model
+   * is scaled to firings throughout — `maxStacks` counts casts and stacks decay
+   * at 0.35/s while untanked — so ten per channel would trip a swap inside a
+   * single Deluge and the number would stop meaning anything.
+   *
+   * This replaced `tradeTanksOnClean`, which made Stone Breaker the swap. The
+   * raid leader corrected that: Stone Breaker is a soak the tanks take turns at,
+   * and the turns fall out of Envenomed doing the swapping.
    */
-  tradeTanksOnClean?: boolean
+  stacksTank?: string
   /**
    * Which half of a split raid this belongs to. A side-tagged mechanic only
    * fires at that group, and is only scored against the player when they are

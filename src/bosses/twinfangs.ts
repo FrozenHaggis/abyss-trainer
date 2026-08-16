@@ -551,8 +551,44 @@ export const twinfangs: BossDef = {
       // read twice as bad as the fight is.
       rule: { type: 'raidDamage', dps: 0 },
       channel: { defId: 'splash', count: 5, everyMs: 1000 },
+      // The channel is what applies Envenomed, and Envenomed is what swaps the
+      // tanks. "+10% Caustic Deluge damage taken, stacking, ten stacks per
+      // channel" — the tank being channelled into is the one who takes it, so
+      // the stack rides this rather than arriving on a cast of its own. One per
+      // channel; see MechanicDef.stacksTank.
+      stacksTank: 'envenomed',
       good: 'Tank holds the channel still; the raid reads each pair as it lands and walks between them.',
       failText: '',
+    },
+    {
+      id: 'envenomed',
+      name: 'Envenomed',
+      spellId: 1310360,
+      what: "1310360 — +10% Caustic Deluge damage taken, stacking. Every Caustic Deluge channel lands it on the tank being channelled into, so it climbs until the tanks trade.",
+      from: 'vexhul',
+      roles: ['tank'],
+      telegraphMs: 0,
+      origin: 'boss',
+      // THE FIGHT'S SWAP DRIVER, and it never fires on its own — it has no slot
+      // in any loop and must not be given one. Caustic Deluge applies it, via
+      // `stacksTank` on the channel above, which is what the ability actually
+      // says: the debuff is "+10% CAUSTIC DELUGE damage taken", a thing that
+      // only means anything to the tank standing in the channel.
+      //
+      // Stone Breaker was briefly the swap instead, and it was wrong twice over:
+      // it made the trade a reward for a soak rather than a consequence of
+      // stacks, and it left the tanks with no reason to alternate at Stone
+      // Breaker itself. Now the swap is here and the Stone Breaker rota falls
+      // out of it — whoever the swap leaves on Ithraz walks the pools.
+      //
+      // maxStacks 2, NOT the 4 this def carried when it fired from the loop on
+      // every third slot. A stack now costs a whole Caustic Deluge, and Deluge
+      // comes round twice a rotation, so 4 would be two full rotations per swap
+      // and the tanks would never trade inside a pull. 2 is a swap every second
+      // Deluge, which is roughly once a rotation.
+      rule: { type: 'tankSwap', maxStacks: 2 },
+      good: "Vexhul's tanks trade before the third channel, and the stacks decay on whoever steps off.",
+      failText: 'Held Envenomed through another Caustic Deluge — taunt the swap sooner',
     },
     {
       // THE CIRCLES. Two per beat, fanned around a rolled point on the floor —
@@ -1147,12 +1183,14 @@ export const twinfangs: BossDef = {
       origin: 'random',
       rule: { type: 'tankSoak', missFires: 'pushoff' },
       damage: 0.2,
-      // "Once all three are soaked, the tank tanking Vexhul starts tanking
-      // Ithraz, and the tank tanking Ithraz tanks Vexhul." On the CHILD, because
-      // the child is what knows whether it is the last of the run and whether the
-      // run stayed clean — see MechanicDef.tradeTanksOnClean.
-      tradeTanksOnClean: true,
-      good: 'The Ithraz tank walks all three in appearance order and the tanks trade; nobody else is anywhere near them.',
+      // NOT a tank swap. The tanks take TURNS at this, and the turns come from
+      // Envenomed: Caustic Deluge stacks whoever is holding Vexhul until they
+      // trade, and whoever comes off that trade holding Ithraz is the one who
+      // walks these pools next time. So the rota exists without this mechanic
+      // arranging anything, and the Vexhul tank never crosses the room to soak —
+      // which matters, because crossing would break their own melee leash and
+      // the leash is a raid wipe.
+      good: 'Whoever is holding Ithraz walks all three in appearance order; nobody else is anywhere near them.',
       failText: 'A Stone Breaker slam landed on nobody — the raid was thrown into the venom',
     },
     {

@@ -823,3 +823,77 @@ test('sweep: every carry-out has enough legal drop spots for its carriers', () =
   }
   assert.ok(checked > 0, 'no carryOut rule was found anywhere — this sweep would pass vacuously')
 })
+
+// ── 22. The Twin Fangs room is finished, and finished means frozen ───────────
+//
+// Every other sweep in this file checks that a number is SENSIBLE. This one
+// checks that a number has not MOVED, which is a different kind of claim and
+// needs a different kind of justification.
+//
+// The wedge, the venom pocket bitten out of its bottom edge, the two serpents
+// coiled three yards off the top edge, and the point in the pocket the Spawn of
+// Vexhul surface at were designed, measured and merged as their own piece of
+// work, and the raid leader has since declared them settled. Everything built on
+// this floor afterwards was measured against it and nothing else: Stone Breaker's
+// 46.2% fatal band, Coiling Ichor's six legal drop spots, Vile Flood's 253
+// square yards of never-swept reserve, the six waves' worst-case fifth of the
+// room, the 12-yard melee leash that exists because the nearest floor to a
+// serpent is 3.00 yards. Move one vertex and every one of those numbers is
+// quietly wrong while every test that asserts them keeps passing, because they
+// all re-derive from the polygon rather than from a constant.
+//
+// So this is not a design check. It is a receipt. The values below are the ones
+// in commits 45955e7 and 4c81e39, and a red build here means somebody reshaped a
+// room that was explicitly closed — which is a decision to be taken on purpose,
+// with the numbers above re-measured, and never a tidy-up that slipped in
+// alongside a mechanic.
+//
+// THE ONE THING THIS DELIBERATELY DOES NOT FORBID: the Submerge stage's
+// `relocate`, which moves both serpents off the floor for the length of the
+// intermission and puts them back on `def.start` when it ends. That is
+// phase-scoped and lives on the PhaseDef; `entities[]` is what is frozen, and
+// the assertion below is written against that array so the two cannot be
+// confused for each other.
+test('twinfangs: the room is exactly the room that was signed off', () => {
+  const src = readFileSync('src/bosses/twinfangs.ts', 'utf8')
+  // Comments carry vertices too — every one of these numbers is argued for in
+  // prose a few lines above it — so the whole check runs over comment-free text.
+  const code = src.replace(/\/\/[^\n]*/g, '')
+
+  const arena = code.slice(code.indexOf('arena: {'), code.indexOf('],', code.indexOf('points: [')))
+  const pts = [...arena.matchAll(/x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)/g)].map(m => [+m[1], +m[2]])
+  assert.deepEqual(pts, [
+    [-10, -16], [10, -16],        // the tanks' ledge
+    [23, 21],                     // the right leg, flaring to the mouth
+    [6, 21], [4, 15], [-4, 15], [-6, 21],   // the venom pocket
+    [-23, 21],                    // the left leg
+  ], 'the Twin Fangs arena polygon has moved. Every geometric bound on this fight was ' +
+     'measured over these eight corners and re-derives from them, so they will all keep ' +
+     'passing against the wrong floor')
+
+  assert.match(code, /arenaRadius: 32,/, 'the Twin Fangs bounding radius has moved off 32')
+  assert.match(code, /\n\s*acid: true,/,
+    'the venom sea outside the platform is gone — falling off is no longer a death, and the ' +
+    'Stone Breaker knock and the pushoff both stop meaning anything')
+
+  // Both serpents, in one assertion, because what matters is the pair: they sit
+  // symmetrically about x = 0 three yards off the top edge, and Vile Flood's
+  // mirrored sweep is only provably the same sweep because of that symmetry.
+  const ents = code.slice(code.indexOf('entities: ['), code.indexOf('],', code.indexOf('entities: [')))
+  for (const [id, x, y] of [['vexhul', -8, -19], ['ithraz', 8, -19]]) {
+    const m = new RegExp(`id: '${id}'[^}]*start: \\{ x: (-?[\\d.]+), y: (-?[\\d.]+) \\}`).exec(ents)
+    assert.ok(m, `${id} is no longer declared in entities[] with a start position`)
+    assert.deepEqual([+m[1], +m[2]], [x, y],
+      `${id} has been moved off (${x}, ${y}). The serpents are coiled in the acid on purpose — ` +
+      'a shot is eaten by the first entity it passes, so floor behind them means the raid ' +
+      'shoots its own boss in the back at 100% recorded accuracy')
+  }
+  assert.equal((ents.match(/stationary: true/g) ?? []).length, 2,
+    'one of the serpents can walk again. They never move and the raid comes to them; a tank ' +
+    'dragging one changes every distance the melee leash, the Feast circle and the slam arc ' +
+    'are measured against')
+
+  assert.match(code, /spawnAt: \{ x: 0, y: 19 \}/,
+    'the Spawn of Vexhul no longer surface at (0, 19). Deeper or shallower and one of the ' +
+    'three fans onto the lip of the pocket, where the raid can stand on top of it')
+})

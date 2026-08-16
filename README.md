@@ -101,8 +101,9 @@ data. Tests run on every build and every deploy:
   other one's pool, so a polarity mechanic has to name two real element pools
   that outlive the volley. Blast Wave is survived only by being airborne, so a
   wave has to have a Bouncy Mushroom whose lifetime covers the whole chain from
-  bomb to blast. Authored either way round without the answer, both are
-  unwinnable and neither would have failed anything
+  bomb to blast — and now that the wave is a ring that travels, that chain runs
+  on until the line reaches the far rim. Authored either way round without the
+  answer, both are unwinnable and neither would have failed anything
 - **the fish economy is finite and cannot be double-spent.** Three Disgusting
   Fish exist in the whole Explorers encounter, each explorer can eat exactly one,
   and feeding one that has already eaten is rejected rather than consumed — a
@@ -160,6 +161,12 @@ that produces it is planted ten seconds earlier, so the bot waited for the front
 and then started a thirty-yard sprint it lost by a stride. It reads the chain
 now — and *waits beside* a mushroom rather than standing on one, because a
 mushroom is consumed on contact and eating it early was worse than being late.
+(Blast Wave is an expanding ring now, so the front is on the floor *after* the
+cast resolves rather than before it. The bot reads the line's eta instead: it
+sets off for a pad when the walk plus half a launch is all the time it has left,
+waits beside it, steps on when the line is about a launch out, and holds still
+while airborne — because a mushroom slows you to a quarter speed and drifting
+toward the crater brings the line back to meet you.)
 
 That mattered more than it sounds. Nine cells were failing; investigating them
 one at a time took the score from 18/27 to 24/27 **without tuning a single
@@ -236,9 +243,10 @@ Recorded honestly rather than quietly left out.
   the directive describes three projectiles fired in straight lines — a different
   lesson, and a sharper one. Cataclysmic Invocation "hits harder and harder" and
   is modelled as a hard flat drain, because a per-cast multiplier is not
-  something this engine has. And the Bouncy Mushrooms scatter around the arena
-  centre rather than around Gebbo, who patrols the north rim — mushrooms only he
-  can reach are not an answer to a bomb dropped on the melee stack.
+  something this engine has. And the Bouncy Mushrooms scatter across the floor
+  rather than around Gebbo — he now laps the middle of the room, so pads that
+  followed him would cluster on the one ring of floor the tanks are steering
+  everybody away from.
 - **Shell Spin's spread and speed are chosen, not measured.** The directive gives
   the shape — one shell forward and one off each shoulder — and no angles. ±35°
   and an 8 yd lane are picked so the three lanes separate 13 yards out from Nama
@@ -248,6 +256,25 @@ Recorded honestly rather than quietly left out.
   modelled — the engine has no stun — so the damage on contact carries the whole
   cost of being clipped. If playtest shows the lanes are unreadable rather than
   hard, those are the numbers to move.
+- **Blast Wave's speed and width are chosen too, and the mushroom lifetime falls
+  out of them.** The directive says the bomb sends a wave across the room and
+  that the only answer is to jump it; it gives no numbers. 11 yd/s against a
+  14 yd/s run is picked so the line can be backed away from to buy a second and
+  line a mushroom up, and never escaped — outward is the rim and inward is the
+  crater. A 6-yard band is picked so the danger is a stripe of floor you can time
+  rather than a mathematical line nothing could be judged against at 60fps. The
+  mushrooms then have to last 28 seconds, and that one is arithmetic rather than
+  taste: worst case the pads land at T, the bomb is dealt at T+0.8 and drops at
+  T+10.8, the ring is born at T+16.3 and is retired once it has passed
+  2×50+4 = 104 yards, which at 11 yd/s takes 10 more seconds. An 18-second pad
+  left the answer gone for eight seconds of the question.
+- **Frostfire Volley drops one pool per carrier, not a trail.** Each carrier lays
+  a single patch of their own element the instant it lands, offset a few yards
+  along the bearing *away* from the other carrier so the two patches end up
+  further apart than the two bodies are, and neither pool is consumed by curing
+  somebody. It used to drip a fresh pool every nine tenths of a second, which
+  painted two converging stripes and solved the trade by accident somewhere in
+  the middle — the mechanic is one decision about one destination.
 - **An unsynchronised Explorers kill is no longer scored.** The survivors gaining
   Relentless Escalation, Cataclysmic Invocation and Smashing Shovel *is* the
   punishment, and charging a failure row on top of it punishes one mistake twice.
@@ -307,21 +334,80 @@ Recorded honestly rather than quietly left out.
   to about two minutes before the raid bar gives out. The two non-tank careless
   cells still end at forty seconds on the first window, and that is the
   directive's own consequence rather than a tuning choice.
-- **The Explorers' tank kills marginally faster than its dps, and that is the
-  fight's design showing up in the sweep.** The bar the project holds is "dps
-  fastest, healer slowest"; the Explorers land 124s tank, 125s dps, 155s healer,
-  so the healer half is right and the other two are a tie inside the noise. The
-  cause is structural rather than a tuning error: a tank on this fight is a
-  passenger on Throw Junk and never carries a fish, so they hold 99% accuracy
-  standing next to Iku while the dps runs crates and errands at 96%. Moving it
-  would mean giving the tank something to do during the crate window, which is
-  the one thing the directive rules out.
+- **The Explorers' tank kills marginally faster than its dps, and the reason it
+  used to has just been removed.** The bar the project holds is "dps fastest,
+  healer slowest"; the Explorers landed 124s tank, 125s dps, 155s healer, so the
+  healer half was right and the other two were a tie inside the noise. The stated
+  cause was that a tank on this fight was a *passenger* — never on a crate, never
+  on a fish, holding 99% accuracy standing next to Iku while the dps ran errands
+  at 96%. That is no longer true: the tanks now stack Nama and Iku and walk the
+  pair around a lapping Gebbo continuously, which is a job with no idle moment in
+  it. Those three timings pre-date the rebuild and are not re-measured here.
+- **The Explorers' tank job was authored backwards and is now the other way
+  round.** United Defense links when **all three** explorers are inside 30 yards
+  of one another — which is "the widest pair is under 30" — so two of them
+  standing on top of each other is legal, and the only distance that matters is
+  the pair's distance to Gebbo. The fight shipped holding Nama and Iku *apart* at
+  fixed stations, with a live readout of the gap between them, which measured a
+  number nobody could fail and left neither tank watching the body that actually
+  closes the link. Gebbo also patrolled a small circle off in the north, which
+  made a link arithmetically impossible. He now laps the **arena centre** at
+  radius 16 and the two tanked bodies are stacked and kited: the engine derives
+  the walk from the fight's own data (link radius 30 + margin 8 − his reach 16 =
+  a 22-yard ring, opposite him), and the middle of the room — a flat 16 yards
+  from him wherever he is — is permanently inside the link and is not a parking
+  space. The `keepApart` rule itself did not change; it was already right.
+- **The Explorers' feed range came down from 6 yards to 3, and it had to.** The
+  engine feeds the first living explorer inside the range, and two stacked bodies
+  stand four yards apart, so a six-yard range covered both of them from anywhere
+  near the mark and every fish walked to the pair went to Iku because Iku is
+  `entities[0]`. "Which explorer do you empower" would have been answered by
+  array order. At three yards the two shoulders are separable — walk in on the
+  outboard side of the one you want — and the raid's own errand walk stops well
+  inside it, so an ally delivery is unaffected.
+- **A ring is answered on a schedule, and eight things in the engine were asking
+  the wrong question.** Blast Wave is now an expanding ring off the bomb rather
+  than a slab: the danger is the travelling line, it is judged on contact, and
+  being airborne on a mushroom as it reaches you is the only exemption. Every
+  consumer originally tested "is a wave live" as `!instance.resolved`, which is
+  exactly backwards for a ripple — it resolves at the moment the ring is *born*
+  and is dangerous for the ten seconds after — so the raid downed tools at the
+  instant the danger started existing and a wave that killed 7 of 20 raiders as a
+  slab killed all 20 as a ring. The fix is `wavePending` and `rippleEta`, and then
+  seven separate things that each looked like the fight being too hard: an ally
+  claimed a pad once per *mushroom on the floor* rather than once per tick, so
+  capacity was full after two bodies; the idle sway was wider than the gap between
+  the loiter ring and the trigger, so raiders drifted onto their pads one at a
+  time; the clean-floor pass relocated a raider waiting beside one; a pad vanished
+  under the group arriving with the first body onto it; raiders crossing the floor
+  spent every mushroom they walked over, including the player's; the leaving time
+  was measured at the pad instead of at the raider; and an AI tank was leashed six
+  yards from its station and could not reach a pad at all — so it died, and the
+  entity it held stopped moving for the rest of the pull. All eight are fixed and
+  the ring is now answered by the raid, with tests.
+- **Two things a player could not have prevented, found by chasing that.** A taunt
+  took the nearest *entity*, so a tank whose footwork put them nearer Trader Gebbo
+  than to their own pair took a boss nobody is meant to hold and orphaned Nama —
+  thirteen United Defense links a pull, invisible and unrecoverable. And with the
+  patroller dead, the two stacked explorers were still scored as a linked council,
+  which charges the tank for the one thing the fight has spent the whole pull
+  telling them to do. A taunt now only takes an entity some tank is meant to hold,
+  and a pair the fight told the tanks to stack is not a pair.
+- **The Explorers have no adds, and no Splinters.** Both were cut in the same
+  pass. The Useless Junk kill-wave (with `addEverySec` and `maxAdds`) taught a
+  raid to cleave crates while a fish sat unfound — Throw Junk crates are a
+  `collect` you walk onto and Bouncy Mushrooms are launch pads, so nothing in the
+  encounter is an enemy and nothing is shot down. Relic Rupture left with the add
+  that cast it. Splinters is real, but it only ever happens as the price of
+  soaking a crate; as a free-floating debuff on the rotation it showcased a
+  mechanic the fight does not have. The one-box-per-player limit it enforces was
+  already deliberately unmodelled, and stays so.
 - **The Creepy Statues are cut from the Explorers trainer.** Evil Eyes was the
   highest-cast ability in the real fight and is real content left out on purpose:
-  with three rotations, a patrolling third boss, a fish economy and a polarity
-  puzzle all running, a seventh source of small floor damage is noise over the
-  top of decisions rather than another decision. Creepy Flames still has no
-  confirmed damage ID at all.
+  with three rotations, a lapping third boss, a fish economy, a moving tank mark
+  and a polarity puzzle all running, a seventh source of small floor damage is
+  noise over the top of decisions rather than another decision. Creepy Flames
+  still has no confirmed damage ID at all.
 - **Sszorak inverts its tactic file twice, on purpose.** Both are stated in the
   boss file rather than left to be found. Raging Crosswinds is authored so two
   raiders thrown into each other CANCEL — the source's Good line is "drift back

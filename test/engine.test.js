@@ -199,22 +199,45 @@ test('a blast wave passes under an airborne player and kills a grounded one', as
   assert.ok(wave && pad, 'the Explorers no longer declare a wave and a mushroom')
   assert.ok(wave.lethal, 'Blast Wave is no longer lethal — this check would measure nothing')
 
-  // Both runs are identical except for the mushroom. Anything else that differed
-  // would make the comparison meaningless.
+  // ── the ring is spawned AWAY from the player and walked onto them ──
+  //
+  // Blast Wave is a ripple now: a band of floor that starts tucked behind its own
+  // anchor covering nothing at all, and travels outward. So "fire it at the
+  // player's feet and check they are inside it" is a question with no answer —
+  // the epicentre is the one place the line never reaches. The exemption is
+  // measured where it actually happens, which is thirty yards out and several
+  // seconds later, and the run only counts once the ring has demonstrably
+  // arrived. That `covered` flag is the replacement for the old birth-frame
+  // assertion and does the same job: without it a wave that touched nobody would
+  // let both halves of this test pass on an engine that does nothing.
+  const OFFSET = 30
   const run = (aloft) => {
     seedRng(1337)
     const w = createWorld(boss, 'dps', 'green')
-    fire(w, wave.id, { x: w.player.pos.x, y: w.player.pos.y })
+    // Toward the middle of the room, so the bomb is on the floor whatever the
+    // role's opening spot is: |bomb| = | |player| - OFFSET | and the arena is 50.
+    const r = Math.hypot(w.player.pos.x, w.player.pos.y)
+    const ux = r > 0.5 ? -w.player.pos.x / r : 1
+    const uy = r > 0.5 ? -w.player.pos.y / r : 0
+    const at = { x: w.player.pos.x + ux * OFFSET, y: w.player.pos.y + uy * OFFSET }
+    fire(w, wave.id, at)
     const inst = w.instances.find(i => i.def.id === wave.id)
     assert.ok(inst, 'firing the wave produced no instance')
-    assert.ok(isInside(inst, w.player.pos),
-      'the wave did not cover the player, so neither run would measure the exemption')
+    assert.equal(isInside(inst, w.player.pos), false,
+      'the ring covered floor on the frame it was born. The band opens behind its ' +
+      'own anchor precisely so a contact hazard cannot kill on the tick it spawns')
+    let covered = false
     for (let i = 0; i < 60 * 8; i++) {
       // Topped up every tick: `aloft` ticks down, and the point is to be off the
       // floor AT the moment it passes.
       if (aloft) w.player.aloft = Math.max(w.player.aloft, pad.rule.launchMs)
       step(w, IDLE(), TICK_MS)
+      const live = w.instances.find(i2 => i2.uid === inst.uid)
+      if (live && isInside(live, w.player.pos)) covered = true
     }
+    assert.ok(covered,
+      `the ring never reached a player standing ${OFFSET}yd from the bomb, so neither ` +
+      'run would measure the exemption')
     return w
   }
 
@@ -285,6 +308,349 @@ test('United Defense links the council only while ALL THREE are close', async ()
     place([{ x: 0, y: 0 }, { x: min * 0.4, y: 0 }, { x: 0, y: min + 12 }]), false,
     'pulling a single explorer clear did not break the link. One tank walking one body out ' +
     'has to be enough, or the answer to the mechanic needs two people to agree on a tick')
+})
+
+// ── the reversed tank job, and the lap it is played around ───────────────────
+//
+// Four claims, and none of them can be read off the boss file: a patrol is an
+// arithmetic promise about every tick of the pull, a kite is a promise about what
+// a tank who does as they are told experiences, and the 99% is a promise about
+// what happens when they do not.
+
+test('Trader Gebbo laps the middle of the room, all pull', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+  const def = boss.entities.find(e => e.patrol)
+  assert.ok(def, 'nothing in this fight patrols — this check would be vacuous')
+  const p = def.patrol
+
+  // The lap is centred on the ARENA CENTRE and that is the whole reason the
+  // middle of the room is not a parking space. A patrol tucked off in a corner
+  // reads as a boss wandering about rather than as a boss walking a beat, and it
+  // leaves a permanently safe station in the middle for the tanks to park in.
+  assert.equal(Math.hypot(p.centre.x, p.centre.y) < 0.001, true,
+    `the lap is centred on (${p.centre.x}, ${p.centre.y}) rather than on the arena centre — ` +
+    'a patrol that misses the middle leaves the middle safe, and the tank job with it')
+  assert.ok(p.radius < boss.mechanics.find(m => m.rule.type === 'keepApart').rule.minYards,
+    'the lap is wider than the link radius, so the centre of the room would be OUTSIDE ' +
+    'United Defense and the pair could simply park there')
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  const unit = w.bosses.find(b => b.def.id === def.id)
+  assert.ok(unit, 'the patrolling entity is not on the field')
+
+  let worst = 0
+  let swept = 0
+  let prev = Math.atan2(unit.pos.y - p.centre.y, unit.pos.x - p.centre.x)
+  let ticks = 0
+  for (let i = 0; i < 60 * 90 && unit.alive; i++) {
+    // The claim is about the LAP, not about survival. An idle probe dies at
+    // about forty seconds — which is one lap EXACTLY, so the measurement would
+    // otherwise stop a rounding error short of the circle it is trying to prove.
+    // Nothing else about the pull is touched: the loop, the timeline, the crates
+    // and the bar all run, which is the point of measuring this in a pull rather
+    // than in a drill.
+    w.player.health = 1
+    w.player.alive = true
+    w.raidHealth = 1
+    step(w, IDLE(), TICK_MS)
+    ticks++
+    const r = Math.hypot(unit.pos.x - p.centre.x, unit.pos.y - p.centre.y)
+    worst = Math.max(worst, Math.abs(r - p.radius))
+    const a = Math.atan2(unit.pos.y - p.centre.y, unit.pos.x - p.centre.x)
+    let d = a - prev
+    while (d > Math.PI) d -= Math.PI * 2
+    while (d < -Math.PI) d += Math.PI * 2
+    swept += Math.abs(d)
+    prev = a
+  }
+  assert.ok(ticks > 60 * 40,
+    `the pull ended after ${(ticks / 60).toFixed(0)}s, which is less than one lap — this check ` +
+    'would not have measured a full circle')
+  // Half a yard of slack for the fixed timestep, and no more: `start` is pinned
+  // to the point the lap is at when the pull opens precisely so he never snaps
+  // onto his circle from somewhere else.
+  assert.ok(worst < 0.5,
+    `Trader Gebbo strayed ${worst.toFixed(2)}yd from his ${p.radius}yd lap. The kite ring the ` +
+    'engine derives for the tanks is measured against that radius, so a patrol that wanders ' +
+    'makes the safe distance a fiction')
+  assert.ok(swept > Math.PI * 2.5,
+    `he covered only ${(swept * 57.3).toFixed(0)} degrees in ${(ticks / 60).toFixed(0)}s — the ` +
+    'lap has to be continuous, because a patroller that stops hands the tanks a station')
+  // Continuously, at the rate the file states. "Never leaves the circle" is also
+  // true of a boss standing still on it, and a boss standing still is the exact
+  // defect the reversal was made to remove.
+  const wantSwept = (p.degPerSec * Math.PI / 180) * (ticks / 60)
+  assert.ok(Math.abs(swept - wantSwept) < 0.05,
+    `he swept ${(swept * 57.3).toFixed(1)} degrees where ${p.degPerSec} deg/s over ` +
+    `${(ticks / 60).toFixed(1)}s asks for ${(wantSwept * 57.3).toFixed(1)} — the lap stalls or ` +
+    'skips somewhere, and the tanks are walking against a clock that does not hold')
+})
+
+test('the stacked pair is walked clear of the patroller, and links when it is not', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+  const apart = boss.mechanics.find(m => m.rule.type === 'keepApart')
+  const min = apart.rule.minYards
+  const stacked = boss.entities.filter(e => e.tankedStacked)
+  assert.equal(stacked.length, 2,
+    'the fight no longer stacks two explorers — the kite this measures would not exist')
+  assert.ok(!boss.entities.some(e => e.tankedApart),
+    'an explorer is still held APART. United Defense links on all three being close, so ' +
+    'separating the two tanked bodies spends both tanks on a distance nothing scores')
+
+  // ── the walk ──
+  //
+  // A tank who does exactly what the fight tells them: stand on the mark, which
+  // the engine recomputes every tick as Gebbo laps. Nothing else is played. If
+  // the mark is wrong, or does not move, this links.
+  seedRng(2024)
+  const w = createWorld(boss, 'tank', 'green')
+  const held = w.bosses.find(b => b.targetId === 0)
+  assert.ok(held?.def.tankedStacked, 'the player tank was not given a stacked body to hold')
+  const input = IDLE()
+
+  let linkedTicks = 0
+  let ticks = 0
+  let closest = Infinity
+  for (let i = 0; i < 60 * 90; i++) {
+    // The mark is refreshed at the END of a tick, after the bodies have moved, so
+    // it is null until the world has run once — hence the walk being driven off
+    // the previous tick's mark, which is also what a player is doing.
+    const mark = w.tankStackMark
+    if (mark) {
+      const dx = mark.x - w.player.pos.x
+      const dy = mark.y - w.player.pos.y
+      input.right = dx > 0.4; input.left = dx < -0.4
+      input.down = dy > 0.4; input.up = dy < -0.4
+    }
+    // Same as the patrol probe: the claim is about the walk, and a tank who dies
+    // to something else half way through has stopped answering the question.
+    w.player.health = 1
+    w.player.alive = true
+    w.raidHealth = 1
+    step(w, input, TICK_MS)
+    ticks++
+    assert.ok(w.tankStackMark,
+      'the engine stopped publishing a mark for a fight that has a stacked pair')
+    // The opening seconds are the pull: the three start more than fifty yards
+    // apart on purpose and the tanks are bringing two of them together.
+    if (i < 60 * 12) continue
+    if (w.bossesLinked) linkedTicks++
+    const gebbo = w.bosses.find(b => b.alive && !b.def.untargetable && !b.def.tankedStacked)
+    const pair = w.bosses.filter(b => b.alive && b.def.tankedStacked)
+    if (gebbo && pair.length === 2) {
+      // The WIDEST of the pair-to-patroller distances, because that is the number
+      // United Defense scores: with Nama and Iku stacked the widest pair in the
+      // council is one of them against Gebbo. Measuring the nearer one would fail
+      // the fight for a shoulder two yards inside a line nothing reads.
+      closest = Math.min(closest,
+        Math.max(...pair.map(b => Math.hypot(b.pos.x - gebbo.pos.x, b.pos.y - gebbo.pos.y))))
+    }
+  }
+  assert.ok(ticks > 60 * 40,
+    `the tank pull lasted ${(ticks / 60).toFixed(0)}s, which is not long enough to walk a lap`)
+  assert.equal(linkedTicks, 0,
+    `a tank standing on the published mark still linked the council for ${(linkedTicks / 60).toFixed(1)}s. ` +
+    'The mark IS the instruction, so a player who holds it perfectly must never fail the ' +
+    'mechanic it exists to answer')
+  assert.ok(closest >= min,
+    `the pair came within ${closest.toFixed(1)}yd of the patroller against a ${min}yd link. The ` +
+    'margin is what makes the walk playable rather than frame-perfect')
+
+  // ── and the consequence, when they are not walked ──
+  //
+  // The link is not a warning light. It is 99% damage reduction on every body in
+  // the council, which is what makes standing still lose the pull rather than
+  // merely look untidy.
+  const hpUnder = (linked) => {
+    seedRng(4242)
+    const p = createWorld(boss, 'dps', 'green')
+    const bodies = p.bosses.filter(b => !b.def.untargetable)
+    // The two measured bodies sit in the SAME place in both runs; only the third
+    // moves. Anything else that differed would be measuring range, not the link.
+    const spots = [{ x: 0, y: 0 }, { x: min * 0.4, y: 0 },
+      linked ? { x: 0, y: min * 0.4 } : { x: 0, y: -(min + 16) }]
+    const pin = () => bodies.forEach((b, i) => {
+      b.def = { ...b.def, patrol: undefined, stationary: true }
+      b.pos = { ...spots[i] }
+      b.station = { ...spots[i] }
+    })
+    pin()
+    const before = bodies[0].hp + bodies[1].hp
+    const input2 = { ...IDLE(), firing: true }
+    for (let i = 0; i < 60 * 6; i++) { pin(); step(p, input2, TICK_MS) }
+    assert.equal(p.bossesLinked, linked,
+      `the council read linked=${p.bossesLinked} for an arrangement built to be ${linked}`)
+    return before - (bodies[0].hp + bodies[1].hp)
+  }
+
+  // ── and the pair alone is NOT a council ──
+  //
+  // United Defense is "all three explorers take 99% reduced damage while within
+  // 30 yds of each other". With the patroller dead there are not three, and the
+  // two survivors are standing together because the fight spent the whole pull
+  // telling their tanks to stack them. Scored as a link it is a failure the
+  // instruction itself guarantees — measured before the rule was fixed, thirteen
+  // of them in the last thirty seconds of a tank pull.
+  seedRng(99)
+  const late = createWorld(boss, 'dps', 'green')
+  const pair = late.bosses.filter(b => b.def.tankedStacked)
+  const patrol = late.bosses.find(b => !b.def.untargetable && !b.def.tankedStacked)
+  assert.ok(patrol && pair.length === 2, 'the council is not two stacked bodies and a patroller')
+  patrol.alive = false
+  patrol.hp = 0
+  pair.forEach((b, i) => {
+    b.def = { ...b.def, patrol: undefined, stationary: true }
+    b.pos = { x: i * 2, y: 0 }
+    b.station = { ...b.pos }
+  })
+  step(late, IDLE(), TICK_MS)
+  assert.equal(late.bossesLinked, false,
+    'two yards apart with the third explorer dead, the survivors were scored as linked. ' +
+    'Standing together is the instruction, so it can never be the failure — and there is no ' +
+    'third body left for "all three within 30" to be about')
+
+  const free = hpUnder(false)
+  const shackled = hpUnder(true)
+  assert.ok(free > 0, 'six seconds of an unlinked council took no damage at all — this check ' +
+    'would pass on an engine that deals none')
+  assert.ok(shackled < free * 0.1,
+    `a linked council still took ${(shackled / free * 100).toFixed(0)}% of its unlinked damage. ` +
+    'The ability says 99% reduced, and a reduction the raid cannot feel is not a mechanic the ' +
+    'tanks have any reason to prevent')
+})
+
+test('a landed kick visibly breaks the cast and says so', async () => {
+  const { createWorld, step, seedRng, TICK_MS, fire, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+  const kick = boss.mechanics.find(m =>
+    m.rule.type === 'press' && m.rule.ability === 'interrupt')
+  assert.ok(kick, 'the fight has no interruptible cast — this check would be vacuous')
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  fire(w, kick.id)
+  const inst = w.instances.find(i => i.def.id === kick.id)
+  assert.ok(inst, 'firing the kickable cast produced no instance')
+  assert.ok(!inst.interrupted, 'the cast was born already broken')
+  assert.equal(w.interruptFlash, null, 'the callout fired before anybody pressed anything')
+
+  // One tick of cast bar, then the button.
+  step(w, IDLE(), TICK_MS)
+  step(w, { ...IDLE(), pressed: ['interrupt'] }, TICK_MS)
+
+  assert.ok(inst.interrupted,
+    'a landed kick left no mark on the instance. The renderer draws the break off this flag, ' +
+    'and without it four seconds of cast bar simply carry on filling — which on screen is ' +
+    'indistinguishable from a kick that missed')
+  assert.ok(w.interruptFlash, 'a landed kick produced no callout at all')
+  assert.equal(w.interruptFlash.name, kick.name,
+    `the callout named '${w.interruptFlash.name}' rather than ${kick.name} — a player must ` +
+    'never have to guess WHICH cast their kick went through')
+  assert.ok(inst.timer <= 0,
+    'the cast bar kept running after it was kicked. The cast is over; a countdown that ' +
+    'continues is the ambiguity this whole change exists to remove')
+  assert.ok(!w.failures.has(kick.id),
+    'pressing the kick in time was recorded as a failure')
+
+  // And it leaves nothing behind: a kicked cast does not get to spawn, summon or
+  // rearm anything on its way out.
+  const before = w.instances.length
+  for (let i = 0; i < 60 * 3; i++) step(w, IDLE(), TICK_MS)
+  assert.ok(w.player.alive, 'a kicked cast still killed the player')
+  assert.ok(!w.instances.some(i => i.uid === inst.uid),
+    'the kicked cast is still on the floor three seconds later')
+  assert.ok(w.instances.length <= before,
+    'a kicked cast still put something on the floor — a kick that lands has to end the chain')
+})
+
+test('nothing in this fight is an add, and none ever arrives', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+
+  // Vacuity guard: `w.adds` has to be a live system somewhere in the raid, or
+  // "no add ever spawned" is a claim about an engine that cannot spawn one.
+  assert.ok(BOSSES.some(b => (b.adds?.length ?? 0) > 0 && b.addEverySec),
+    'no fight in the raid runs an add wave — a pull with no adds in it would prove nothing')
+
+  assert.equal(boss.adds, undefined,
+    'the Lost Explorers declares adds. The crates are a `collect` and the mushrooms are launch ' +
+    'pads; nothing in this encounter is shot down, and a kill-wave taught the raid to cleave ' +
+    'junk instead of finding a fish')
+  assert.equal(boss.addEverySec, undefined, 'an add wave is still scheduled on a fight with no adds')
+  assert.equal(boss.maxAdds, undefined, 'a concurrency cap is declared for adds that do not exist')
+  assert.ok(!boss.mechanics.some(m => m.summons),
+    'a mechanic still summons something on a fight that declares no adds')
+
+  // And the pull agrees with the file. A `summons` on a mechanic, an `adds` list
+  // reached through a phase, or a rule that quietly makes bodies would all show
+  // up here and nowhere in the assertions above.
+  for (const role of ['tank', 'dps', 'healer']) {
+    seedRng(90210)
+    const w = createWorld(boss, role, 'green')
+    let ticks = 0
+    for (let i = 0; i < 60 * 200 && w.player.alive && !w.over; i++) {
+      step(w, IDLE(), TICK_MS)
+      ticks++
+      assert.equal(w.adds.length, 0,
+        `${role}: an add appeared at ${(w.elapsedMs / 1000).toFixed(1)}s on a fight that has none`)
+    }
+    assert.ok(ticks > 60 * 20, `${role}: the pull ended after ${(ticks / 60).toFixed(0)}s — too ` +
+      'short to have reached anything that could spawn')
+  }
+})
+
+test('a Frostfire Volley leaves exactly one pool per carrier', async () => {
+  const { createWorld, step, seedRng, TICK_MS, fire, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+  const pol = boss.mechanics.find(m => m.rule.type === 'polarity')
+  assert.ok(pol, 'the Explorers no longer declare a polarity — this check would be vacuous')
+  const ids = [pol.rule.firePoolId, pol.rule.frostPoolId]
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  const iku = w.bosses.find(b => b.def.id === pol.empoweredOnly)
+  iku.empowered = true
+  fire(w, pol.id)
+
+  const count = (id) => w.instances.filter(i => i.def.id === id).length
+  // Long enough that a drip would have painted a stripe: the version this
+  // replaces laid a fresh pool every nine tenths of a second, so eight seconds
+  // was nine of them per carrier and the trade got solved by accident somewhere
+  // in the middle of two converging smears.
+  let peakFire = 0
+  let peakFrost = 0
+  for (let i = 0; i < 60 * 8; i++) {
+    step(w, IDLE(), TICK_MS)
+    peakFire = Math.max(peakFire, count(ids[0]))
+    peakFrost = Math.max(peakFrost, count(ids[1]))
+  }
+  assert.equal(peakFire, 1,
+    `one volley put ${peakFire} Burning Flames pools on the floor. The directive says a hit ` +
+    'carrier "will leave either a fire pool or ice pool", singular — one pool is one decision ' +
+    'about one destination')
+  assert.equal(peakFrost, 1,
+    `one volley put ${peakFrost} Piercing Frost pools on the floor — see above, and the two ` +
+    'halves of a trade have to be symmetrical or one carrier is playing a different mechanic')
+
+  // And the pool is NOT consumed by curing somebody. Whoever arrives second must
+  // not be the loser of a race the fight never called.
+  const pool = w.instances.find(i => i.def.id === ids[0])
+  assert.ok(pool, 'the fire pool expired before the cure could be measured')
+  w.player.element = 'frost'
+  w.player.elementMs = 60000
+  let cleaned = false
+  for (let i = 0; i < 60 * 6 && !cleaned; i++) {
+    w.player.pos = { ...pool.pos }
+    step(w, IDLE(), TICK_MS)
+    if (!w.player.element) cleaned = true
+  }
+  assert.ok(cleaned, 'standing in the opposite pool did not cure — the trade has no other answer')
+  assert.equal(count(ids[0]), 1,
+    'the pool vanished when it cured somebody. Two carriers walk into two pools and neither ' +
+    'of them is racing the other')
 })
 
 // A cyst burst used to end exactly on the boss however hard it hit, because the
@@ -369,7 +735,12 @@ test('a tanking player holds an entity on tick one', async () => {
     const w = createWorld(boss, 'tank', 'green')
     // Which entities the fight asked to have a tank on: the primary, plus
     // anything held apart from it. Mirrors `makeBosses`.
-    const wants = w.bosses.filter((b, i) => (i === 0 || b.def.tankedApart) && !b.def.untargetable)
+    // `tankedStacked` counts exactly as `tankedApart` does — both are "this
+    // entity wants a tank of its own", and they differ only in where that tank
+    // is asked to stand. Left off, this check quietly stopped noticing that the
+    // Lost Explorers wants two tanks the moment Nama and Iku started stacking.
+    const wants = w.bosses.filter((b, i) =>
+      (i === 0 || b.def.tankedApart || b.def.tankedStacked) && !b.def.untargetable)
 
     if (w.bosses.length < 2) {
       // Single-boss fights are deliberately untouched. The co-tank opens on the

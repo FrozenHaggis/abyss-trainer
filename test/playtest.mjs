@@ -188,6 +188,11 @@ function play(boss, role, smart, seed, side = 'green') {
   const waveIds = new Set(boss.mechanics.filter(m => m.rule.type === 'wave').map(m => m.id))
   const bringsWave = new Set(boss.mechanics
     .filter(m => m.spawns && waveIds.has(m.spawns.defId)).map(m => m.id))
+  // How long a mushroom keeps you off the floor, in seconds — the window the
+  // ring has to arrive inside. Read off the fight rather than assumed, because
+  // it is the number the "step on it now" decision is measured against.
+  const launchSec = (boss.mechanics.find(m => m.rule.type === 'launchPad')
+    ?.rule.launchMs ?? 3000) / 1000
   const COMPASS = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } }
   const OPPOSITE = { N: 'S', S: 'N', E: 'W', W: 'E' }
   let ticks = 0
@@ -255,9 +260,28 @@ function play(boss, role, smart, seed, side = 'green') {
       // The tactic files agree: "Toxic Droplet Clearers" and "Venom Kill Squads"
       // are assignments given to other people. Letting the bot help with them
       // was worth thirty separation failures a pull.
-      const anchoredTank = !!w.bosses?.find(b => b.targetId === 0)?.def.tankedApart
+      // A STACKED tank is anchored too, and to a mark that MOVES. `tankedApart`
+      // holds a fixed corner; `tankedStacked` holds a station the engine
+      // recomputes every tick as the patroller laps, and the walk is the job.
+      // Either way the bot has one thing to do and errands are somebody else's.
+      const heldByPlayer = w.bosses?.find(b => b.targetId === 0)?.def
+      const anchoredTank = !!(heldByPlayer?.tankedApart || heldByPlayer?.tankedStacked)
       // Where a tank aiming a frontal has to be standing, filled in below.
       let tankAnchor = null
+      // Every Bouncy Mushroom still on the floor, and whether the bot is
+      // currently trying NOT to tread on one. A pad is consumed by contact and
+      // the answer to a Blast Wave is exactly one pad, so a heading that crosses
+      // one while the ring is still four seconds out is a heading that throws
+      // the answer away — which is a hard constraint rather than a preference,
+      // and it lives in the resolver with the arena edge for that reason. As a
+      // force it was 25 against a tank anchor of 18 and shoved the bot off its
+      // stack mark for the whole of every bomb chain: thirteen United Defense
+      // links a pull, traded for the one it was preventing.
+      // Ground the bot must not walk over by accident, as {pos, r}. Mushrooms
+      // while a ring is more than a stride away, and — for an anchored tank with
+      // no mouth left that they can reach — the fish, because picking one up you
+      // cannot deliver takes it out of the raid's hands for the rest of the pull.
+      const noTread = []
       for (const i of w.instances) {
         if (!i.def.shape || i.def.rule.type !== 'avoid') continue
         // The glob a gale is aimed at is the way OUT of the stage, not a puddle.
@@ -343,7 +367,19 @@ function play(boss, role, smart, seed, side = 'green') {
       // that found the fish mid-window and walked fifty yards south to deliver it
       // abandoned three crates to do so and wiped the raid at forty-eight seconds
       // holding the thing that would have saved it. Finish the window, then walk.
-      if (!anchoredTank) {
+      //
+      // AN ANCHORED TANK DOES NOT GO FETCHING, BUT THEY DO DELIVER. A tank
+      // walking a stacked pair around the room cannot leave to hunt a fish —
+      // that is the whole reason `feedPriority` exists — but they can and must
+      // walk one they are already holding into a mouth, because the mouths are
+      // the two bodies they are steering. Measured: the tank crossed the fish on
+      // their kite, picked it up, and then held it for the rest of the pull with
+      // this whole block switched off. The raid cannot take it back — the engine
+      // only hands a fish to a raider when nobody is carrying one — so the bar
+      // filled with the answer in the tank's pocket, and the row read as a fight
+      // that cannot be played by a tank rather than as a bot that had trapped
+      // itself. Fetching stays off; delivering never was the problem.
+      if (!anchoredTank || w.fishCarried) {
         const windowOpen = w.instances.some(i =>
           !i.resolved && !i.answered && i.def.rule.type === 'collect')
         // And a fish is SPENT deliberately, not reflexively.
@@ -362,20 +398,47 @@ function play(boss, role, smart, seed, side = 'green') {
           !i.resolved && !i.answered && i.def.rule.type === 'feed')
         const spendIt = w.bossEnergy >= 70 || fishWaiting
         if (w.fishCarried && !windowOpen && spendIt) {
-          // A destination, not a distance. Nearest body that has not eaten, and
-          // only those: the renderer draws the link to exactly this set, and
-          // walking into an empowered explorer is a rejected feed and a wasted
-          // walk.
-          let mouth = null, md = Infinity
+          // A destination, not a distance, and a CHOICE rather than the nearest
+          // body: which explorer you empower is the whole of what finding the
+          // fish buys you. The fight states the order it wants in `feedPriority`
+          // — Iku first, because Frostfire Volley is the empowerment that most
+          // changes the pull and the one whose resolve re-arms the next crate
+          // window soonest. Fed by proximity instead, the bot handed the first
+          // fish to whichever body it happened to be standing next to; on the
+          // seeds where that was Gebbo the next crate window was eighteen seconds
+          // late (a ten-second bomb fuse plus the six-second re-arm) and the pull
+          // never caught up. Distance is the tie-break, not the rule.
+          const order = w.boss.feedPriority ?? []
+          const rank = (b) => {
+            const i = order.indexOf(b.def.id)
+            return i < 0 ? order.length : i
+          }
+          let mouth = null, md = Infinity, mr = Infinity
           for (const b of w.bosses) {
             if (b.def.untargetable || !b.alive || b.empowered) continue
+            // An anchored tank feeds the bodies they are already walking and
+            // nothing else. The nearest unfed mouth can be the PATROLLER, forty
+            // yards away across the room, and walking a stacked pair at him is
+            // United Defense by definition — measured, twelve links a pull, in
+            // exchange for a reset the same walk was throwing away.
+            if (anchoredTank && b.targetId < 0) continue
             const d = Math.hypot(b.pos.x - w.player.pos.x, b.pos.y - w.player.pos.y)
-            if (d < md) { md = d; mouth = b }
+            const r = rank(b)
+            if (r < mr || (r === mr && d < md)) { mr = r; md = d; mouth = b }
           }
           if (mouth) {
             tx += (mouth.pos.x - w.player.pos.x) / (md || 1) * 16
             ty += (mouth.pos.y - w.player.pos.y) / (md || 1) * 16
           }
+          // NOT paired with a "walk around every other mouth" rule, and that was
+          // measured rather than assumed. A feed is positional and has no button,
+          // so a carrier who strays inside `feedRange` of the wrong explorer does
+          // spend the reset on it — but teaching the bot to give every other body
+          // a wide berth cost more than the mistake did: it drags a ranged player
+          // off the boss they are shooting and a tank away from the pair they are
+          // walking, and the sweep went from fifteen competent cells in eighteen
+          // to thirteen. Feeding the wrong explorer is a real cost the fight is
+          // allowed to charge; not being able to stand anywhere is not.
         } else if (!w.fishCarried) {
           let fish = null, fd = Infinity
           for (const i of w.instances) {
@@ -428,24 +491,116 @@ function play(boss, role, smart, seed, side = 'green') {
       // few yards off the nearest mushroom; once the front is actually on the
       // floor, step on it. Waiting beside it is what a player who has seen this
       // fight once does, and it is the only part of it the bot was missing.
-      const waveLive = w.instances.some(i => !i.resolved && i.def.rule.type === 'wave')
-      const chained = w.instances.some(i => !i.resolved && bringsWave.has(i.def.id))
-      if ((waveLive || chained) && w.player.aloft <= 0) {
-        let pad = null, pd = Infinity
-        for (const i of w.instances) {
-          if (i.resolved || i.answered || i.def.rule.type !== 'launchPad') continue
-          const d = Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
-          if (d < pd) { pd = d; pad = i }
+      //
+      // AND A RIPPLE IS TIMED, NOT FLED. The two wave forms are read with
+      // different questions and asking a ring the slab's question is exactly
+      // inverted: a slab is pending while UNRESOLVED, a ring is BORN at the
+      // resolve and travels for ten seconds afterwards. `!i.resolved` therefore
+      // switched the bot off at the instant the danger started existing — it
+      // stopped walking to a mushroom the moment the ring appeared and stood
+      // still while the line ran over it, on every cell, every seed. Now the eta
+      // to the line is the clock: loiter beside a pad while it is far away, step
+      // on when it is about half a launch out.
+      //
+      // THE PAD IS CHOSEN FIRST, because the clock the last stride is measured
+      // against is the walk to it. "Half a launch out" is the right moment to be
+      // STANDING on a mushroom and the wrong moment to set off for one: measured
+      // on a tank pull, the bot was fourteen yards from the nearest pad when the
+      // ring came inside 1.65s and needed 23 yd/s to make it. So the commitment
+      // is `eta <= step + the time this walk takes`, and a player who is already
+      // beside one commits late while a tank halfway across the room commits
+      // early — which is what a real raider does and is why one number could not
+      // express it.
+      let pad = null, pd = Infinity
+      const pads = []
+      for (const i of w.instances) {
+        if (i.resolved || i.answered || i.def.rule.type !== 'launchPad') continue
+        pads.push(i)
+        const d = Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
+        if (d < pd) { pd = d; pad = i }
+      }
+      // 0.55 of a launch of margin either side of the line, plus the walk, plus a
+      // beat for the eight-way input quantisation and anything tugging the other
+      // way. PLAYER_SPEED is 14 and this is deliberately pessimistic about it.
+      const stride = pad ? pd / 11 + 0.35 : 0
+      let waveStep = false     // step onto the pad THIS tick
+      let waveNow = false      // set off for a pad NOW or be caught on the floor
+      let waveSoon = false     // a ring is coming; stand near one
+      for (const i of w.instances) {
+        if (i.def.rule.type !== 'wave') continue
+        if (i.def.ripple) {
+          const rip = i.def.ripple
+          const lead = i.resolved ? (i.ringRadius ?? -rip.thickness) + rip.thickness : 0
+          const wait = i.resolved ? 0 : Math.max(0, i.timer) / 1000
+          const at = pad ? pad.pos : w.player.pos
+          const eta = wait + (Math.hypot(i.pos.x - at.x, i.pos.y - at.y) - lead) / rip.speed
+          const mine = wait + (Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y)
+            - lead) / rip.speed
+          // Behind you and gone, and behind the pad too: the ring cannot come
+          // back, so there is nothing left to answer.
+          if (mine < -rip.thickness / rip.speed && eta < 0) continue
+          waveSoon = true
+          if (eta <= launchSec * 0.40 + stride) waveNow = true
+          // ...and stepping on is a SEPARATE moment from setting off. Folded
+          // together, a tank who committed early because the walk was long then
+          // walked straight onto the pad on arrival and spent the launch four
+          // seconds before the line got there: measured, aloft ran out 0.15s
+          // into the half-second the band takes to cross, and the tank died on a
+          // mushroom they had reached in good time.
+          if (eta <= launchSec * 0.40) waveStep = true
+        } else if (!i.resolved) {
+          waveNow = true
+          waveStep = true
         }
+      }
+      const chained = w.instances.some(i => !i.resolved && bringsWave.has(i.def.id))
+      // An ANCHORED tank does not camp a mushroom, they step onto one. Loitering
+      // is a twenty-second commitment once the bomb chain is counted, and a tank
+      // walking a stacked pair cannot stop for that long: at a loiter weight of
+      // 14 against the mark's 18 the bot spent every bomb cycle drifting between
+      // the two and linked United Defense nine times a pull. Setting off in time
+      // still outranks everything — that is what `waveNow` is for.
+      const padHunt = waveNow || ((waveSoon || chained) && !anchoredTank)
+      if (padHunt && w.player.aloft <= 0) {
         if (pad) {
           // Loiter radius: outside the pad's own trigger so it is not eaten by
           // accident, inside a stride of it so the last step is instant.
-          const hold = waveLive ? 0 : (pad.def.shape?.radius ?? 4) + 3
-          const push = waveLive ? 24 : 11
+          const hold = waveStep ? 0 : (pad.def.shape?.radius ?? 4) + 3
+          // The last stride has to WIN, not merely lead. A tank is being pulled
+          // back to their stack mark at up to 18 and the two bearings are rarely
+          // the same: at 30 the sum very nearly cancelled and the bot sat 5.2
+          // yards from a mushroom oscillating between two headings for eighteen
+          // ticks while the ring closed on it. Nothing else on this floor is
+          // worth being on the ground for, so nothing else gets to out-vote it.
+          const push = waveStep ? 60 : waveNow ? 40 : 14
           if (pd > hold) {
             tx += (pad.pos.x - w.player.pos.x) / (pd || 1) * push
             ty += (pad.pos.y - w.player.pos.y) / (pd || 1) * push
           }
+        }
+      }
+      // AIRBORNE, HOLD STILL. A mushroom slows you to a quarter speed, so the only
+      // thing walking achieves up there is moving your own arrival time — and the
+      // bot spent it walking INWARD, toward the crater the ring came out of,
+      // which brings the line back to meet you. Measured: launched with 2.07s of
+      // eta and three seconds of air, landed at eta -0.35 with the band still on
+      // top of it, having eaten 0.55s of its own margin by drifting six yards.
+      // Only while a ring is in the air: a Crosswinds knock is a different thing
+      // and the raid still has to walk out of the rest of the fight.
+      if (w.player.aloft > 0 && waveSoon) { tx = 0; ty = 0 }
+      // ...and never spend one by ACCIDENT — see `noTread` and the resolver.
+      if (!waveStep && w.player.aloft <= 0) {
+        for (const p of pads) noTread.push({ pos: p.pos, r: (p.def.shape?.radius ?? 4) + 0.5 })
+      }
+      // A fish an anchored tank cannot deliver is a fish nobody can: the engine
+      // only hands one to a raider while nobody is carrying it, so a tank who
+      // treads on it with both of their own bodies already fed has taken the
+      // raid's only reset out of play for the rest of the pull.
+      if (anchoredTank && !w.fishCarried
+          && !w.bosses?.some(b => b.targetId >= 0 && b.alive && !b.empowered)) {
+        for (const i of w.instances) {
+          if (i.resolved || i.answered || i.def.rule.type !== 'feed') continue
+          noTread.push({ pos: i.pos, r: (i.def.shape?.radius ?? 3) + 0.5 })
         }
       }
 
@@ -629,9 +784,21 @@ function play(boss, role, smart, seed, side = 'green') {
       // anything the stage does.
       const submerged = new Set(
         (boss.phases?.[w.phaseIndex]?.relocate ?? []).map(r => r.id))
+      //
+      // A STACKED entity is anchored to a MOVING mark rather than to its own
+      // corner. `w.tankStackMark` is where the engine wants the pair standing
+      // this instant — recomputed every tick against the patroller's lap — so
+      // the bot walks that instead of `def.start`, which for a stacked fight is
+      // only the spot the pull opened on. Reading `start` there pinned the tank
+      // to the south rim for the whole pull while the two bodies it was supposed
+      // to be walking orbited away from it, and United Defense linked eight
+      // times a pull with the tank standing obediently still.
       const mine = w.bosses?.find(b => b.targetId === 0 && !submerged.has(b.def.id))
-      if (mine?.def.tankedApart) {
-        const ax = mine.def.start.x, ay = mine.def.start.y
+      const anchor = mine?.def.tankedStacked
+        ? w.tankStackMark
+        : (mine?.def.tankedApart ? mine.def.start : null)
+      if (anchor) {
+        const ax = anchor.x, ay = anchor.y
         const d = Math.hypot(ax - w.player.pos.x, ay - w.player.pos.y)
         if (d > 3) {
           const pull = Math.min(18, d * 1.6)
@@ -997,7 +1164,19 @@ function play(boss, role, smart, seed, side = 'green') {
           // heading saves you, standing still is worse than walking the best of
           // a bad set — and `dot` never exceeds 1, so any survivable heading
           // outranks every doomed one whatever direction the forces wanted.
-          const dot = dx * wx + dy * wy + (landsOnFloor(nx, ny) ? 2 : 0)
+          // A heading that treads on a mushroom you did not mean to spend is
+          // ranked below every heading that does not, and still above nothing at
+          // all — the same shape as the landing test above, and for the same
+          // reason: boxed in, walking over the answer beats standing still.
+          let wastes = 0
+          for (const p of noTread) {
+            for (let s = 0.5; s <= LOOK; s += 0.5) {
+              if (Math.hypot(w.player.pos.x + dx * s - p.pos.x,
+                w.player.pos.y + dy * s - p.pos.y) < p.r) { wastes = 4; break }
+            }
+            if (wastes) break
+          }
+          const dot = dx * wx + dy * wy + (landsOnFloor(nx, ny) ? 2 : 0) - wastes
           if (dot > bestDot) { bestDot = dot; best = [dx, dy] }
         }
         // Boxed in on every heading: stand still rather than pick a lethal one.
@@ -1182,6 +1361,43 @@ function play(boss, role, smart, seed, side = 'green') {
           + (w.bosses ? ` [energy ${Math.round(w.bossEnergy)}]` : ''))
       }
       lastUid = top
+    }
+    // LINK=1 prints every tick a keepApart is linking, with each entity's tank.
+    // "United Defense ×13" tells you the tanks are losing and nothing else; the
+    // answer was that the player had taunted the patroller and orphaned the boss
+    // they were supposed to be holding, which is visible here in one line and
+    // nowhere else in the harness.
+    if (process.env.LINK && w.bossesLinked) {
+      const b = w.bosses.filter(x => !x.def.untargetable && x.alive)
+      console.log(`      link t=${(w.elapsedMs / 1000).toFixed(2)}s `
+        + b.map(x => `${x.def.id}#${x.targetId}(${x.pos.x.toFixed(0)},${x.pos.y.toFixed(0)})`).join(' ')
+        + ` player=(${w.player.pos.x.toFixed(0)},${w.player.pos.y.toFixed(0)})`
+        + ` mark=(${w.tankStackMark ? w.tankStackMark.x.toFixed(0) + ',' + w.tankStackMark.y.toFixed(0) : '-'})`)
+    }
+    // RIPPLE=1 prints the expanding-ring question tick by tick: how long until
+    // the line reaches the player, whether they are off the floor, and how many
+    // mushrooms are left for them and for the raid. A ring is answered on a
+    // half-second and the per-second dump below cannot see that at all — it was
+    // written for hazards you either stand in or do not.
+    if (process.env.RIPPLE) {
+      for (const i of w.instances) {
+        if (!i.def.ripple || !i.resolved) continue
+        const rip = i.def.ripple
+        const lead = (i.ringRadius ?? -rip.thickness) + rip.thickness
+        const eta = (Math.hypot(i.pos.x - w.player.pos.x, i.pos.y - w.player.pos.y) - lead) / rip.speed
+        const free = w.instances.filter(x =>
+          !x.resolved && !x.answered && x.def.rule.type === 'launchPad')
+        let pd = Infinity
+        for (const p of free) pd = Math.min(pd, Math.hypot(p.pos.x - w.player.pos.x, p.pos.y - w.player.pos.y))
+        console.log(`      ring t=${(w.elapsedMs / 1000).toFixed(2)}s eta=${eta.toFixed(2)}`
+          + ` aloft=${(w.player.aloft / 1000).toFixed(2)} pads=${free.length}`
+          + ` nearest=${pd === Infinity ? '-' : pd.toFixed(1)} lostAllies=${w.alliesLost}`
+          + ` pos=(${w.player.pos.x.toFixed(1)},${w.player.pos.y.toFixed(1)})`
+          + ` r=${Math.hypot(w.player.pos.x, w.player.pos.y).toFixed(1)}`
+          + ` in=${input.left ? 'L' : ''}${input.right ? 'R' : ''}${input.up ? 'U' : ''}${input.down ? 'D' : ''}`
+          + ` allies=${w.allies.filter(a => a.alive).length}`
+          + ` aloft=${w.allies.filter(a => a.alive && a.aloft > 0).length}`)
+      }
     }
     // TRACE=1 prints a per-second dump. Kept in the harness rather than in a
     // throwaway probe because every balance question so far has been answered by

@@ -1,4 +1,4 @@
-import type { AddDef, MechanicDef, Role } from './types'
+import type { AddDef, BossDef, MechanicDef, Role } from './types'
 import { abilitiesFor, carryOutClauses } from './sim'
 
 /** "a", "a and b", "a, b and c" — one clause list read as a sentence. */
@@ -107,7 +107,20 @@ export function briefForAdd(def: AddDef, role: Role): RoleBrief {
   }
 }
 
-export function briefFor(def: MechanicDef, role: Role): RoleBrief {
+/**
+ * `boss` is optional and only one rule reads it, but that rule cannot be
+ * answered without it: `keepApart` asks for opposite footwork on the two fights
+ * that have it, and which one you are on is a fact about the ENTITIES rather
+ * than about the mechanic. Two golems held at arm's length and a council where
+ * two bodies are stacked and walked away from a third declare the same rule with
+ * the same radius, and a briefing that told the Explorers' tanks to pull their
+ * pair apart would be teaching the fight backwards in the one place a tank
+ * cannot check it against the floor.
+ *
+ * Everything else in this file stays derivable from the mechanic alone, and a
+ * caller that omits the boss gets the generic sentence rather than a wrong one.
+ */
+export function briefFor(def: MechanicDef, role: Role, boss?: BossDef): RoleBrief {
   const kit = abilitiesFor(role)
   const mine = def.roles.includes(role) && !def.collective
   // How many copies a narrow fan throws. Zero on everything that is not one,
@@ -409,10 +422,39 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
           }
         : notYours(`The tanks are welded to their serpents — anything past about ${def.rule.maxYards} yards and it turns on the raid instead. Nothing here is yours except not pulling them off it: never make a tank chase you, and expect the bar to fall off a cliff rather than sag if one of them is dragged out.`)
 
-    case 'keepApart':
+    case 'keepApart': {
+      // THE RULE IS "ALL OF THEM AT ONCE", AND ON A COUNCIL THAT IS NOT THE SAME
+      // INSTRUCTION AS "PULL THEM APART".
+      //
+      // The link needs every live body inside the radius simultaneously, so two
+      // of them standing on top of each other with the third across the room
+      // links nothing at all — which is exactly how the Lost Explorers is
+      // tanked: the pair is held TOGETHER and walked away from the body nobody
+      // holds. Told to pull them apart, those two tanks would spend the pull
+      // undoing the only thing keeping the council off its damage reduction.
+      //
+      // Read off the entity flags rather than off the rule, because the rule is
+      // identical on both fights and the footwork is opposite. A caller that did
+      // not pass the boss gets the two-body sentence, which is the one this file
+      // has always given and is right for the fight that has always had it.
+      const stacked = (boss?.entities ?? []).filter(e => e.tankedStacked)
+      if (stacked.length > 1) {
+        // The body the pair is kited around: live, targetable, and nobody's.
+        const loose = (boss?.entities ?? []).find(e =>
+          !e.untargetable && !e.tankedStacked && !e.tankedApart)
+        const him = loose?.name ?? 'the one nobody is holding'
+        return role === 'tank'
+          ? {
+              verb: 'STACK THEM AND WALK',
+              line: `Park your two together — that is fine, and pulling them apart is not what this asks. It only fires when ALL of them are inside ${def.rule.minYards} yards at once, so the job is keeping the pair more than ${def.rule.minYards} yards from ${him}${loose?.patrol ? ', who laps the middle of the room all pull and cannot be moved by anybody' : ''}. There is no spot to park on — the centre of the room is inside his circle — so the two of you hold the pair on the far side of him and keep walking as he comes round. Let all three meet and every one of them gains 99% damage reduction.`,
+              yours: mine,
+            }
+          : notYours(`The tanks hold two of these together and walk the pair away from ${him}. It takes all of them inside ${def.rule.minYards} yards to fire, and if that happens your damage does nothing until the pair is walked back out.`)
+      }
       return role === 'tank'
         ? { verb: 'PULL THEM APART', line: `Hold them at least ${def.rule.minYards} yards apart. Let them close and both gain 99% damage reduction — your damage stops mattering.`, yours: mine }
         : notYours('The tanks hold these apart. If they close, your damage does nothing until they are split again.')
+    }
 
     case 'pairUp':
       return {
@@ -568,6 +610,21 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
       }
 
     case 'wave':
+      // An expanding ring is a different lesson from a slab, and the difference
+      // is that a ring can be TIMED. The danger is the line: the floor it has
+      // crossed is finished with and the floor it has not reached is not
+      // dangerous yet, so the mechanic is not "be somewhere else" or even "be off
+      // the floor" — it is "be off the floor at the moment the line arrives".
+      // That is a thing a raider counts in, and it needs saying, because a
+      // player who jumps on the mushroom the instant the bomb goes off comes back
+      // down before the wave gets there.
+      if (def.ripple) {
+        return {
+          verb: 'TIME THE JUMP',
+          line: `The bomb throws out a ring that travels across the room at about ${def.ripple.speed} yards a second, and the danger is the LINE — not the ground inside it, which it has already crossed, and not the ground outside it, which it has not reached. There is nowhere on the floor to stand and no way round it, so watch it come and be airborne off a Bouncy Mushroom at the moment it reaches you. Backing away buys you a second to line a mushroom up; it never buys you an escape, because the room has a rim.`,
+          yours: mine,
+        }
+      }
       return {
         verb: 'GET AIRBORNE',
         line: 'A ground-level front that crosses the whole room from the bomb. You do not outrun it and there is nowhere on the floor to stand — be off the floor on a Bouncy Mushroom when it arrives.',

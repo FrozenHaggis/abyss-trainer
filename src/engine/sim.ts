@@ -399,6 +399,21 @@ export interface World {
   /** True while two tanked entities are close enough to gain their damage reduction. */
   bossesLinked: boolean
   linkedMs: number
+  /**
+   * Where the `tankedStacked` pair should be standing this instant, or null on a
+   * fight that has no stacked pair.
+   *
+   * Published rather than left inside the ally AI because on a TANK pull the
+   * player is one of the two doing the walking, and a moving destination nobody
+   * draws is a moving destination nobody can hit. The AI tanks already know where
+   * to go; this is so the player can be shown the same mark, and so the renderer
+   * and the prompt are reading the one the engine actually used rather than
+   * re-deriving it a frame later and disagreeing by a yard.
+   *
+   * Refreshed at the end of every tick, after the entities have moved, so it is
+   * the answer to where the patroller is NOW.
+   */
+  tankStackMark: Vec | null
 
   // ── the melee leash ──
   //
@@ -571,6 +586,24 @@ export interface World {
    * So the reservation is a uid, made once and kept until that instance is gone.
    */
   reservedPickups: Set<number>
+  /**
+   * The one Bouncy Mushroom the raid may not spend, by uid, or -1.
+   *
+   * Exactly the same bargain as `reservedPickups` and it exists for the third
+   * defect listed above: the raid AI already declined to TARGET the pad nearest
+   * the player, and it made no difference, because a mushroom launches whoever
+   * touches it and is then consumed. Nineteen raiders crossing the floor to
+   * their own pads walk over everything in between. Measured on a Blast Wave at
+   * sixty-four seconds: the player was 4.4 yards from their pad with the ring
+   * 1.2 seconds out when a raider bumbled across it, and the nearest mushroom on
+   * the floor went from 4.4 yards to 52.5 in a single tick. The player then died
+   * to the only mechanic in the fight with exactly one answer, having played it
+   * correctly, because somebody else walked through the answer.
+   *
+   * Refreshed every tick rather than held, because a pad the player has ALREADY
+   * spent should hand the reservation to the next one.
+   */
+  reservedPad: number
 
   // ── the fountains ────────────────────────────────────────────────────────
   /** One per `boss.altars`, in the order the boss file lists them. Empty elsewhere. */
@@ -710,15 +743,27 @@ export interface World {
   /** One entity is below 10% and another is more than 10% above it. */
   killSpreadWarning: boolean
   /**
-   * ms until every element carrier drips their next pool.
+   * The kick that just landed: which mechanic, and when.
    *
-   * ONE shared cadence rather than a timer per carrier, and deliberately: the
-   * two carriers are meant to read as one mechanic laying two patches of ground
-   * at once, and independent clocks made a floor that filled up at no particular
-   * rhythm. It also sidesteps keying a per-body clock into `trailTimers`, which
-   * is a map of instance uids and would collide with them.
+   * A `press` the player satisfied has always been silent. It stops damaging
+   * them, the failure row never appears, and that is the whole of the feedback —
+   * which is fine for a taunt, where the boss visibly turns round, and useless
+   * for an interrupt, where the evidence of success is a thing NOT happening.
+   * Icebound Flames is the only kickable cast in the Lost Explorers and players
+   * were finishing pulls unsure whether a single one of their kicks had gone
+   * through.
+   *
+   * So the engine states it out loud: `Instance.interrupted` breaks the
+   * telegraph where the cast was, and this carries the announcement. `atMs` is
+   * `elapsedMs` at the moment of the kick, so a renderer or a voice layer can
+   * decide for itself how long the callout lives rather than having the engine
+   * pick a duration for both of them.
+   *
+   * Set for the PLAYER'S kicks only. The raid interrupts things too — `allyThink`
+   * answers presses the player's role cannot — and announcing those would tell a
+   * healer their kick landed on a cast they never pressed anything for.
    */
-  elementDripMs: number
+  interruptFlash: { id: string; name: string; atMs: number } | null
 
   // ── the stack economy ─────────────────────────────────────────────────────
   /**
@@ -765,13 +810,16 @@ export interface World {
 const ELEMENT_MS = 60000
 
 /**
- * How often a carrier lays down a patch of their own element.
+ * How far in front of a carrier their one pool is laid.
  *
- * Slow enough that a carrier walking to their partner leaves a readable trail
- * rather than a solid stripe, fast enough that the two of them have something to
- * trade within a couple of paces of the volley landing.
+ * Not on top of them, and the yard matters. A pool centred on the body that
+ * made it is a pool that body is standing in, which reads as "I am in my own
+ * fire" at the exact moment the fight is asking them to go and find somebody
+ * else's. Set down half a pace away, the two carriers each have a patch of
+ * ground they are visibly next to rather than inside, and the trade is a walk
+ * between two marked places.
  */
-const ELEMENT_DRIP_MS = 900
+const ELEMENT_POOL_OFFSET = 3
 
 const ABILITIES_BY_ROLE: Record<Role, Ability[]> = {
   tank: ['taunt', 'defensive', 'interrupt', 'burst'],
@@ -822,7 +870,7 @@ function makeAllies(playerRole: Role, playerSide: Side): Ally[] {
       // a raid that discovered that by luck of array order would read as the
       // trainer being broken rather than as a mechanic.
       group: i % 2, wind: null, windMate: -1, gash: 0, gashMs: 0, venom: 0,
-      element: null, elementMs: 0, aloft: 0,
+      element: null, elementMs: 0, aloft: 0, padUid: -1,
     })
   })
   assignSides(out, playerRole, playerSide)
@@ -901,7 +949,12 @@ function makeBosses(boss: BossDef, allies: Ally[]): BossUnit[] {
     return t.id
   }
   return defs.map((d, i) => {
-    const wants = i === 0 || d.tankedApart
+    // A stacked entity wants a tank for the same reason a `tankedApart` one
+    // does: somebody has to walk it. It is only the DESTINATION that differs —
+    // apart is a fixed corner each, stacked is one moving mark shared between
+    // them — and an entity nobody holds is an entity that stands still, which is
+    // the one thing a kite cannot do.
+    const wants = i === 0 || d.tankedApart || d.tankedStacked
     return {
       def: d,
       pos: { ...d.start },
@@ -966,7 +1019,7 @@ function seatPlayerTank(w: World) {
   // with two tanks and one tankable entity.
   if (displaced <= 0) return
   const wantsTank = (b: BossUnit) =>
-    !b.def.untargetable && (b.def.tankedApart || b === w.bosses[0])
+    !b.def.untargetable && (b.def.tankedApart || b.def.tankedStacked || b === w.bosses[0])
   const orphan = w.bosses.find(b => b !== ours && b.targetId === -1 && wantsTank(b))
   if (orphan) { orphan.targetId = displaced; return }
   const other = w.bosses.find(b => b !== ours && b.targetId === 0)
@@ -1075,6 +1128,178 @@ function faceAwayStation(w: World): Vec {
   return clampToArena(w.boss, { x: dir.x * AIM_RANGE, y: dir.y * AIM_RANGE }, 4)
 }
 
+// ── the stacked pair, and the walk ───────────────────────────────────────────
+//
+// The other way a link rule can be answered, and the Lost Explorers is the case
+// that forced it.
+//
+// `keepApart` fires when the WIDEST pair of live entities is inside its radius,
+// which is the literal reading of "all three take 99% reduced damage while
+// within 30 yds of each other". On the Twin Fangs, with two entities, widest and
+// closest are the same number and the answer is to hold them at opposite corners
+// — `tankedApart`, a pair of fixed stations, done. On a THREE-body council the
+// same rule says something completely different: two of them standing on top of
+// each other is legal, and the only thing that can close the link is the third
+// body, who nobody tanks and nobody can move.
+//
+// So the two tanks stop being two separate jobs and become one: keep the pair
+// together, and keep the pair away from the patroller. And because he laps a
+// circle centred on the room, there is no square yard of floor that is
+// permanently far enough from him — the middle of the room is INSIDE his lap and
+// therefore inside the link radius for half of every circuit. There is nothing
+// to park on. The tanks walk, all pull, and that walk is the fight's tank job.
+//
+// Every number below is derived from data the fight already declares — the link
+// radius from `keepApart`, the threat's circle from its `patrol` — so a second
+// encounter with a patrolling body and two stacked tanks gets this behaviour
+// without adding a line to the engine.
+
+/**
+ * How much daylight the pair keeps beyond the link radius, in yards.
+ *
+ * Not zero, and not a token yard. The station is recomputed every tick and the
+ * bodies chase it at a walking pace, so a pair aimed at exactly the link radius
+ * is a pair that is permanently a step behind and permanently linked.
+ *
+ * The number is pinned by the AI tank's own leash rather than chosen for feel.
+ * A tank is allowed to wander six yards off station to dodge things, an entity
+ * follows to within `MELEE_RANGE` of wherever its tank ended up, and the entity
+ * never ends up further IN than its tank because it closes from outside — so the
+ * worst honest case is the pair sitting `margin - 6` yards further in than the
+ * derivation put them. Eight leaves two yards of that intact, which is the
+ * difference between "a tank who dodges badly links the council" — the fight's
+ * own contract, and correct — and "the AI links it every time something lands
+ * near them", which is a fight nobody can play.
+ */
+/**
+ * How long a Bouncy Mushroom keeps throwing once the first body lands on it, in
+ * ms. Half a second: long enough for the group that walked in together to all
+ * get off the floor, far too short to be a second attempt at anything.
+ */
+const PAD_LAUNCH_HOLD_MS = 500
+
+const STACK_KITE_MARGIN = 8
+
+/**
+ * How far apart the two stacked bodies stand, in yards.
+ *
+ * They are meant to be stacked, so this is a drawing distance rather than a
+ * separation: two entities on identical coordinates are one dot, and a tank
+ * cannot see which of the two they are holding. Far inside the link radius, so
+ * it can never itself be the thing that breaks or makes the rule.
+ */
+const STACK_SPREAD = 4
+
+/**
+ * Where the stacked pair has to be right now: the far side of the room from
+ * whatever is not in the stack.
+ *
+ * Bearing first, then distance, and both from the ARENA CENTRE rather than from
+ * the pair's own position. Measured off the pair, "away from him" is a direction
+ * that changes every time the pair moves — the runaway this file has documented
+ * three times now, where a station anchored on a thing that follows you crawls
+ * to the wall and takes the fight with it.
+ */
+function stackedCentre(w: World): Vec | null {
+  const apart = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
+  if (!apart || apart.rule.type !== 'keepApart') return null
+  // Every live body that is not in the stack. Not "the patroller": the rule is
+  // about the widest pair among ALL of them, so anything on the floor the tanks
+  // are not holding is something they have to stay clear of.
+  const threats = w.bosses.filter(b =>
+    b.alive && !b.def.untargetable && !b.def.tankedStacked)
+  if (!threats.length) return null
+  const kite = w.boss.tankStackKite
+  const need = apart.rule.minYards + (kite?.marginYards ?? STACK_KITE_MARGIN)
+
+  // The bearing: the sum of the unit vectors pointing away from each threat, so
+  // two of them on opposite sides of the room cancel out and leave the pair in
+  // the middle rather than picking one arbitrarily and hiding behind it.
+  let dx = 0
+  let dy = 0
+  for (const t of threats) {
+    const d = Math.hypot(t.pos.x, t.pos.y)
+    if (d < 0.5) continue
+    dx -= t.pos.x / d
+    dy -= t.pos.y / d
+  }
+  let dl = Math.hypot(dx, dy)
+  if (dl < 1e-6) {
+    // Everything is sitting on the middle of the room, so there is no "away".
+    // South is as good as any bearing and is at least stable — a station that
+    // jittered here would have both tanks pirouetting on the spot.
+    dx = 0; dy = 1; dl = 1
+  }
+  dx /= dl
+  dy /= dl
+
+  /**
+   * The distance: far enough out that the patroller's own circle can never
+   * reach.
+   *
+   * A body on a patrol is not AT a point, it is anywhere on a lap, and a station
+   * chosen against where it happens to be standing this frame is a station that
+   * has to be re-walked the moment it moves. So the reach used here is the
+   * furthest from the centre that lap ever gets, and the pair sits `need` beyond
+   * THAT — which for a circle centred on the room is simply `need - radius`, and
+   * makes the whole walk a slow orbit at a fixed distance rather than a scramble.
+   */
+  let reach = 0
+  for (const t of threats) {
+    const p = t.def.patrol
+    reach = Math.max(reach, p
+      ? Math.hypot(p.centre.x, p.centre.y) + p.radius
+      : Math.hypot(t.pos.x, t.pos.y))
+  }
+  const ring = kite?.ringYards ?? Math.max(6, need - reach)
+  let at = clampToArena(w.boss, { x: dx * ring, y: dy * ring }, 3)
+
+  // And the backstop, because the derivation can be defeated by a room. A short
+  // floor clamps the station inward, a pinned `ringYards` may be wrong, and a
+  // threat that is not on a patrol at all can walk anywhere — in every one of
+  // those cases the answer is the same: step directly away from whichever body
+  // is too close, as far as the floor allows, and check again. Three passes
+  // rather than a loop, because two threats can each push the pair back toward
+  // the other and a fight that has arranged that has no answer for its tanks
+  // anyway.
+  for (let pass = 0; pass < 3; pass++) {
+    let worst: BossUnit | null = null
+    let wd = Infinity
+    for (const t of threats) {
+      const d = dist(t.pos, at)
+      if (d < need && d < wd) { wd = d; worst = t }
+    }
+    if (!worst) break
+    const ax = at.x - worst.pos.x
+    const ay = at.y - worst.pos.y
+    const d = Math.hypot(ax, ay) || 1
+    at = clampToArena(w.boss,
+      { x: worst.pos.x + (ax / d) * need, y: worst.pos.y + (ay / d) * need }, 3)
+  }
+  return at
+}
+
+/**
+ * Where the tank holding one particular stacked entity stands: on the pair's
+ * mark, a couple of yards off their partner.
+ *
+ * The offset is perpendicular to the outward bearing, so the two bodies sit
+ * shoulder to shoulder ACROSS the walk rather than one behind the other. Nose to
+ * tail, the trailing one is always the nearer to the patroller and eats the link
+ * on its own.
+ */
+function stackedStation(w: World, unit?: BossUnit): Vec | null {
+  const at = stackedCentre(w)
+  if (!at || !unit) return at
+  const stacked = w.bosses.filter(b => b.def.tankedStacked && b.alive)
+  const i = stacked.indexOf(unit)
+  if (i < 0 || stacked.length < 2) return at
+  const perp = Math.atan2(at.y, at.x) + Math.PI / 2
+  const off = (i - (stacked.length - 1) / 2) * STACK_SPREAD
+  return clampToArena(w.boss,
+    { x: at.x + Math.cos(perp) * off, y: at.y + Math.sin(perp) * off }, 3)
+}
+
 /**
  * Where the tank holding `unit` should be standing right now.
  *
@@ -1087,6 +1312,12 @@ function faceAwayStation(w: World): Vec {
  * the thing worth practising.
  */
 function tankStation(w: World, unit: BossUnit): Vec | null {
+  // A stacked entity has exactly one demand on its tank and it outranks
+  // everything else on the floor, because it is the only one that is being
+  // judged continuously: aim a cone badly and the next cast fixes it, drift
+  // toward the patroller and the council is at 99% damage reduction until
+  // somebody walks back out.
+  if (unit.def.tankedStacked) return stackedStation(w, unit)
   let next: Instance | null = null
   for (const i of w.instances) {
     if (i.resolved || i.fromId !== unit.def.id) continue
@@ -1345,6 +1576,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     burnUsed: false,
     bossesLinked: false,
     linkedMs: 0,
+    tankStackMark: null,
     leashOutMs: {},
     leashHolder: {},
     leashGraceMs: {},
@@ -1379,6 +1611,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     pairFired: false,
     carriers: {},
     reservedPickups: new Set(),
+    reservedPad: -1,
     // Seeded from the boss file, in its own order, so "the red one" means the
     // same thing to the engine, the renderer and the raid calling the fight.
     altars: (boss.altars ?? []).map(def => ({
@@ -1413,7 +1646,7 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     polarityPartnerId: -1,
     leapQueue: [],
     killSpreadWarning: false,
-    elementDripMs: ELEMENT_DRIP_MS,
+    interruptFlash: null,
     venomPeak: 0,
     venomRaidPeak: 0,
     venomShed: 0,
@@ -1883,6 +2116,55 @@ function angleDelta(a: number, b: number): number {
   return d
 }
 
+/**
+ * Seconds until a ripple's leading edge reaches this point, or `null` when the
+ * instance is not a travelling ring.
+ *
+ * Negative once the line has arrived, and it keeps going negative as the ring
+ * runs away — so the sign is "still coming" and the magnitude is "how long", and
+ * a caller wanting "has it passed" asks for `< -thickness / speed`.
+ *
+ * It exists because a ripple is the one hazard in the engine whose danger is a
+ * SCHEDULE rather than a region. Everything else can be answered with `isInside`
+ * on the current tick; this one has to be answered several seconds early, by the
+ * player lining a mushroom up and by the raid AI deciding when to step onto one.
+ * Both of them were previously asking `!resolved`, which for a ring is exactly
+ * inverted — it resolves at the instant it is born and is dangerous for the ten
+ * seconds after — so the raid stopped answering the wave the moment it appeared.
+ */
+export function rippleEta(inst: Instance, p: Vec): number | null {
+  const rip = inst.def.ripple
+  if (!rip) return null
+  // Before the ring is born the cast bar is part of the answer: the bomb is on
+  // the floor, everybody can see where the line will come from, and the seconds
+  // left on the telegraph are seconds to walk in. Reading only the travel would
+  // say "no time at all" for the whole telegraph and then hand the raid a
+  // fully-grown ring to react to.
+  if (!inst.resolved) return Math.max(0, inst.timer) / 1000 + dist(inst.pos, p) / rip.speed
+  const lead = (inst.ringRadius ?? -rip.thickness) + rip.thickness
+  return (dist(inst.pos, p) - lead) / rip.speed
+}
+
+/**
+ * A wave that still has to be answered — the state a raider has to be reading.
+ *
+ * The two wave forms answer this differently and that is the whole point. A slab
+ * wave is a telegraph you must be airborne for when it lands, so it is pending
+ * while UNRESOLVED. A ripple is a line that is born at the resolve and travels,
+ * so it is pending while RESOLVED and still short of the far rim. Asking
+ * `!resolved` of a ripple, which is what every consumer did first, means the raid
+ * downs tools at exactly the moment the danger starts existing.
+ */
+export function wavePending(w: World, inst: Instance): boolean {
+  if (inst.def.rule.type !== 'wave') return false
+  const rip = inst.def.ripple
+  if (!rip) return !inst.resolved
+  // A ring is pending from the cast bar all the way to the far rim: the raid
+  // has to be walking during the telegraph, and the danger only starts when the
+  // telegraph ends. Both halves are the same question.
+  return !inst.resolved || (inst.ringRadius ?? 0) <= w.boss.arenaRadius * 2 + 4
+}
+
 /** Is the player inside this instance's telegraph? */
 export function isInside(inst: Instance, p: Vec): boolean {
   const s = inst.def.shape
@@ -1890,6 +2172,25 @@ export function isInside(inst: Instance, p: Vec): boolean {
   const dx = p.x - inst.pos.x
   const dy = p.y - inst.pos.y
   const d = Math.hypot(dx, dy)
+  /**
+   * A ripple is its own geometry and the declared `shape` is only there so the
+   * dozen guards that skip shapeless instances still see one.
+   *
+   * The band is `[ringRadius, ringRadius + thickness]` and nothing else is in
+   * it: not the floor inside the ring, which is the crater the bomb left, and
+   * not the floor outside it, which the line has not reached yet. That is the
+   * whole difference between this and every other shape in the engine — the
+   * danger is a moving edge rather than a region, so being "past" it is as safe
+   * as never having been in front of it.
+   */
+  const rip = inst.def.ripple
+  if (rip) {
+    const inner = inst.ringRadius ?? -rip.thickness
+    // The outer bound is STRICT, and that one character is what makes the birth
+    // frame harmless: the band opens as `[-thickness, 0)`, which contains no
+    // point on the floor at all, not even the anchor the bomb is sitting on.
+    return d >= inner && d < inner + rip.thickness
+  }
   switch (s.kind) {
     case 'circle':
       return d <= s.radius
@@ -2338,6 +2639,22 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
     inst.angle = flip ? Math.PI - start : start
     inst.spin = flip ? -rate : rate
   }
+  /**
+   * A ring is born with its OUTER edge on the spawn point, which is why the
+   * inner edge starts NEGATIVE.
+   *
+   * The alternative — start the band at zero and let it grow — puts a stripe of
+   * lethal floor `thickness` yards wide on top of the drop point on the frame it
+   * appears, which breaks the rule this raid holds everywhere else: a contact
+   * hazard cannot kill you on the frame it spawns. Starting the band behind the
+   * origin means the ring touches exactly nothing at t=0 and the first body it
+   * can reach is one it has visibly travelled to.
+   *
+   * `drift` is deliberately not used for this. A drift vector walks the whole
+   * shape across the floor; a ripple's anchor never moves at all, and its radius
+   * is the only thing that changes.
+   */
+  if (def.ripple) inst.ringRadius = -def.ripple.thickness
   if (def.driftSpeed) {
     // A radial hazard leaves on the bearing it was fanned onto. The Tempest
     // vortices are spokes coming out of the boss, and rolling a fresh bearing
@@ -3831,16 +4148,54 @@ function resolveInstance(w: World, inst: Instance) {
       // do. "Nearest body with the other element" looks equivalent and is not:
       // a puzzle whose only valid answer can wander off is not a puzzle.
       w.polarityPartnerId = -1
+      /**
+       * ONE pool per carrier, laid the instant the element lands, and never
+       * another.
+       *
+       * This used to be a drip: every carrier laid a fresh patch of their own
+       * element every nine tenths of a second for as long as they held it, so
+       * two raiders walking toward each other painted two converging stripes and
+       * the trade was solved by accident somewhere in the middle. That is not the
+       * mechanic. The mechanic is that there are exactly TWO patches of ground on
+       * the floor, one of each element, and each carrier has to go and stand in
+       * the other one — a single decision about a single destination, which is
+       * what makes it a trade rather than a smear.
+       *
+       * The pool is NOT consumed by the cleanse. A patch of frostfire on the
+       * floor does not know how many people have walked through it, and a cure
+       * that vanished on first use would make whoever got there second the loser
+       * of a race the fight never called.
+       */
+      const poolFor = (el: 'fire' | 'frost') =>
+        w.boss.mechanics.find(m => m.id === (el === 'fire' ? r.firePoolId : r.frostPoolId))
+      const dropPool = (el: 'fire' | 'frost', at: Vec, bearing: number) => {
+        const d = poolFor(el)
+        if (!d) return
+        spawn(w, d, clampToArena(w.boss, {
+          x: at.x + Math.cos(bearing) * ELEMENT_POOL_OFFSET,
+          y: at.y + Math.sin(bearing) * ELEMENT_POOL_OFFSET,
+        }, 2))
+      }
       if (playerTakes) {
         w.player.element = mine
         w.player.elementMs = ELEMENT_MS
         const p = pool[Math.floor(rnd() * Math.max(1, pool.length))]
         if (p) { p.element = theirs; p.elementMs = ELEMENT_MS; w.polarityPartnerId = p.id }
+        // Each pool is set down on the side AWAY from the other carrier, so the
+        // two patches are further apart than the two bodies are. Dropped toward
+        // each other they land in the same square yard of floor, both carriers
+        // are cleansed by walking two paces, and the puzzle solves itself.
+        const to = p ? Math.atan2(p.pos.y - w.player.pos.y, p.pos.x - w.player.pos.x) : 0
+        dropPool(mine, w.player.pos, to + Math.PI)
+        if (p) dropPool(theirs, p.pos, to)
       } else {
         const a1 = pool[Math.floor(rnd() * Math.max(1, pool.length))]
         const a2 = pool.find(a => a !== a1)
         if (a1) { a1.element = mine; a1.elementMs = ELEMENT_MS }
         if (a2) { a2.element = theirs; a2.elementMs = ELEMENT_MS }
+        const to = a1 && a2 ? Math.atan2(a2.pos.y - a1.pos.y, a2.pos.x - a1.pos.x) : 0
+        if (a1) dropPool(mine, a1.pos, to + Math.PI)
+        if (a2) dropPool(theirs, a2.pos, to)
       }
       break
     }
@@ -3868,13 +4223,28 @@ function resolveInstance(w: World, inst: Instance) {
       // The shape is meant to be too big to outrun. Drawn as something you sidestep
       // this taught the wrong habit entirely: the answer is not to be somewhere
       // else, it is to be off the floor.
-      if (inside && w.player.aloft <= 0) {
-        if (scored) recordFailure(w, def)
-        if (def.lethal) killPlayer(w, def.name)
-        else hurt(w, def.damage ?? 0.4, def.name)
-      }
-      for (const a of w.allies) {
-        if (a.alive && a.aloft <= 0 && isInside(inst, a.pos)) { a.alive = false; w.alliesLost++ }
+      //
+      // A RIPPLE has nothing to judge here and must not be judged here. Its
+      // resolve is the moment the ring is BORN, not the moment it arrives — the
+      // band is still tucked behind its own anchor and has touched nobody — so
+      // scoring the player's feet at this instant would blame whoever happened
+      // to be standing near the bomb for a wave that had not travelled a yard.
+      // The whole cost lands on contact in the linger tick instead, the same
+      // arrangement `edgeArc` and `sweep` already use for hazards with no instant
+      // at which they "go off". The airborne exemption is enforced identically
+      // there, on both the player and the raid; it is the MOMENT of the test that
+      // moves, not the test. It is also what keeps the raid's rule true for a
+      // hazard whose entire existence is contact: it cannot kill on the frame it
+      // spawns, because on that frame it covers no floor at all.
+      if (!def.ripple) {
+        if (inside && w.player.aloft <= 0) {
+          if (scored) recordFailure(w, def)
+          if (def.lethal) killPlayer(w, def.name)
+          else hurt(w, def.damage ?? 0.4, def.name)
+        }
+        for (const a of w.allies) {
+          if (a.alive && a.aloft <= 0 && isInside(inst, a.pos)) { a.alive = false; w.alliesLost++ }
+        }
       }
       break
 
@@ -3921,6 +4291,25 @@ function resolveInstance(w: World, inst: Instance) {
       w.shake = Math.min(1, w.shake + 0.5)
     }
   }
+
+  /**
+   * A KICKED CAST HAS NO CONSEQUENCES. That is what a kick is.
+   *
+   * Everything below this line is what a cast LEAVES BEHIND — the pool, the
+   * adds, the channel's beats, the tank stack, the energy it feeds the bar — and
+   * an interrupt is the statement that the cast did not happen. The rule switch
+   * above has already run and has already declined to charge anybody for it,
+   * because `answered` was doing that job long before the break was drawn; this
+   * is the other half, and it was quietly missing. A kicked cast that still
+   * dropped its puddle would make the interrupt cosmetic on the one fight where
+   * it is the whole of a dps's contribution.
+   *
+   * Placed after the rule rather than before it so an interrupt cannot skip the
+   * bookkeeping at the top — `resolved`, `resolvedCount` and the drill's rep
+   * count all have to happen, or a kicked cast reads as a cast that is still
+   * pending.
+   */
+  if (inst.interrupted) return
 
   // A cast whose whole point is what it leaves standing on the floor. The
   // summon ignores the concurrency cap on purpose: the cap governs the trash
@@ -4349,6 +4738,15 @@ function threatAt(inst: Instance, x: number, y: number): number {
   const dx = x - inst.pos.x
   const dy = y - inst.pos.y
   const d = Math.hypot(dx, dy) || 0.001
+  // The travelling line, plus a couple of yards of "it is nearly here". Measured
+  // off the band rather than off the anchor, so a raider standing well inside a
+  // ring that has already passed them reads as safe — which they are.
+  const rip = inst.def.ripple
+  if (rip) {
+    const inner = (inst.ringRadius ?? -rip.thickness) - 3
+    const outer = inner + rip.thickness + 6
+    return d > inner && d < outer ? outer - d : 0
+  }
   switch (sh.kind) {
     case 'circle': return d < sh.radius + 5 ? (sh.radius + 5) - d : 0
     case 'annulus': return d > sh.inner - 2 ? d - (sh.inner - 2) : 0
@@ -4574,11 +4972,41 @@ function allyThink(w: World) {
   // Reserved rather than searched for each tick, and nearest-to-the-player
   // rather than first-in-array — the same two lessons as `windMate` and the
   // Mighty Thud soak sort directly above.
-  const pads = w.instances
-    .filter(i => !i.resolved && !i.answered && i.def.rule.type === 'launchPad')
+  //
+  // A pad that has just been spent is still claimable for the half-second it
+  // keeps throwing — see `PAD_LAUNCH_HOLD_MS`. The raider two strides behind
+  // their group is meant to be carried up with them, and dropping the pad out of
+  // the list the instant it fires sent them off to look for another one.
+  const padsLive = w.instances.filter(i =>
+    !i.resolved && i.def.rule.type === 'launchPad' && (!i.answered || i.timer > 0))
+  // The reservation only ever falls on a FRESH pad: holding back one that is
+  // half a second from vanishing is holding back nothing.
+  const padsFresh = padsLive.filter(i => !i.answered)
     .sort((x, y) => dist(y.pos, w.player.pos) - dist(x.pos, w.player.pos))
-  const padsForRaid = pads.slice(0, Math.max(0, pads.length - 1))
-  const padClaimed = new Set<number>()
+  // ...and the one held back is held back for real: the contact test in step()
+  // refuses to launch a raider off it. Declining to send anybody there was never
+  // enough, because a mushroom is spent by whoever walks over it and the raid
+  // crosses the whole floor to reach its own. Nothing here is reserved for a
+  // corpse — a dead player has no wave to answer.
+  w.reservedPad = w.player.alive && padsFresh.length
+    ? padsFresh[padsFresh.length - 1].uid : -1
+  const padsForRaid = padsLive.filter(i => i.uid !== w.reservedPad)
+  /**
+   * How many raiders each pad is carrying this tick, rather than whether it has
+   * been spoken for at all.
+   *
+   * A mushroom launches EVERYBODY standing on it and is then consumed, so one
+   * pad per raider is not the bargain the mechanic offers — one pad per GROUP
+   * is. A ring that crosses the whole floor asks all nineteen raiders to be off
+   * it at once, and with a strict one-claim-per-pad rule fourteen of them had
+   * nowhere to go and simply died where they stood, every wave, on every seed.
+   * The cap spreads the raid over the pads that exist and lets a pad serve the
+   * handful of bodies that arrive on it together.
+   */
+  const padLoad = new Map<number, number>()
+  const padCap = padsForRaid.length
+    ? Math.max(1, Math.ceil(w.allies.filter(a => a.alive).length / padsForRaid.length))
+    : 0
 
   // Corpse duty. While an intermission that would raise the bodies is running,
   // the raid stands on them so the flames have something to land on — all but
@@ -4681,7 +5109,21 @@ function allyThink(w: World) {
     //    with everybody else, which is what the intermission is.
     const heldUnit = w.bosses.find(b => b.targetId === a.id)
     const held = heldUnit && submergedUnits.has(heldUnit.def.id) ? undefined : heldUnit
-    if (held?.def.tankedApart) {
+    if (held?.def.tankedStacked) {
+      // The kite. Both tanks walk to the same moving mark, so the two bodies
+      // travel as one and the pair stays on the far side of the room from the
+      // patroller — see `stackedCentre` for why the mark moves and why the
+      // middle of the room is not an option.
+      //
+      // Above the `tankedApart` branch and not merged with it, because the two
+      // are opposite instructions: that one pins a body to a corner, this one
+      // refuses to let it stand still. A fight declares one or the other.
+      const st = stackedStation(w, held)
+      if (st) {
+        a.want.x = st.x
+        a.want.y = st.y
+      }
+    } else if (held?.def.tankedApart) {
       // Hold it at its assigned corner. Standing relative to the boss made the
       // tank and the boss chase each other now that a tanked entity follows its
       // tank — a slow crawl that eventually walked the pair together, which is
@@ -4730,6 +5172,27 @@ function allyThink(w: World) {
       a.want.x = sweep.pos.x
       a.want.y = sweep.pos.y
     }
+    /**
+     * A pickup the author has PRICED, which is the opt-in that lets a sweeper
+     * stand in a puddle to reach it.
+     *
+     * Throw Junk drops six crates onto a floor that already carries Fire Patches
+     * for twenty-five seconds and Shell Spin lanes for six, and every crate left
+     * standing when the window shuts costs the raid a whole bar. Both tidiness
+     * passes below — the flee at 4 and the clean-floor relocation at 5 — pushed
+     * an assigned sweeper straight back off any crate that landed in one, every
+     * tick, so those crates were unreachable by anybody. Measured on a tank pull,
+     * where every crate is the raid's: three of six went untouched and the pull
+     * ended on a mechanic the raid was standing ten yards from.
+     *
+     * So it is the same bargain corpse duty, the orb pairing and the element
+     * trade already have — a job whose destination is a specific patch of ground
+     * outranks clean feet, and ground that KILLS still moves them. Gated on
+     * `missCost` rather than on `collect`, so nothing else in the raid changes:
+     * the Sentinels' Toxic Droplets declare no price and are tuned around a raid
+     * that keeps its feet clean.
+     */
+    const pricedSweep = sweep?.def.missCost !== undefined
 
     // The pool this raider has to be standing in, because they are the tank
     // holding the thing that cast it. Found once here rather than inside the
@@ -4754,6 +5217,9 @@ function allyThink(w: World) {
     // Without this the flee pass below drags them straight back out of a front
     // they cannot outrun — the answer to Blast Wave is height, not distance.
     let onMushroomDuty = false
+    // Re-decided every tick, never remembered: a raider is committed to a
+    // mushroom only while they are actually walking onto it.
+    a.padUid = -1
     if (a.role !== 'tank' && corpseNext < claimableCorpses.length) {
       const c = claimableCorpses[corpseNext++]
       a.want.x = c.pos.x
@@ -5001,28 +5467,110 @@ function allyThink(w: World) {
           a.want.y = -dir.y * 6
         }
       } else if (rt === 'launchPad') {
+        // ONCE PER RAIDER PER TICK. This loop runs over every unresolved
+        // instance, and a Mushroom Toss puts ten of them on the floor at once —
+        // so without this the same raider claimed a slot ten times over and the
+        // per-pad capacity was full after two bodies had been assigned anything.
+        // Sixteen raiders then had nowhere to go and died on a floor with eight
+        // unspent mushrooms on it. Harmless while the claim was a Set, because a
+        // Set is idempotent and a counter is not.
+        if (onMushroomDuty) continue
         // Blast Wave is coming and the only answer is being off the floor. The
         // raid goes and stands on mushrooms, visibly, because an instruction
         // nineteen people ignore reads as advice rather than as the mechanic.
-        const wave = w.instances.find(i => !i.resolved && i.def.rule.type === 'wave')
+        // `wavePending` rather than `!resolved`, and the distinction is the
+        // difference between the raid answering this mechanic and the raid
+        // standing still through it. A RIPPLE resolves at the moment it is born
+        // and is dangerous for the ten seconds after, so the old test switched
+        // the whole raid off at precisely the wrong instant.
+        const wave = w.instances.find(i => wavePending(w, i))
         if (wave && a.aloft <= 0) {
           // Nearest mushroom this raider is ALLOWED to take. `padsForRaid` has
-          // already held the one nearest the player back, and `padClaimed` stops
-          // two raiders spending the same one — without either, the raid eats
-          // every mushroom on the floor and the player answers the wave with
-          // nothing.
+          // already held the one nearest the player back, and `padLoad` caps how
+          // many bodies pile onto one — without either, the raid eats every
+          // mushroom on the floor and the player answers the wave with nothing.
+          //
+          // REACHABLE first, nearest second. A ring reaches the inside of the
+          // room before the outside, so a raider caught near the bomb has to run
+          // OUTWARD to a pad the line has not passed yet — and the walk is worth
+          // starting only because `ALLY_SPEED` is a yard a second quicker than
+          // the ring. Sorted purely by distance the same raider walks to the pad
+          // behind them, arrives after the line has gone over it, and dies on a
+          // mushroom that was still on the floor.
           let best: Instance | null = null
           let bd = Infinity
+          let slot = 0
+          let bestReach = false
           for (const m of padsForRaid) {
-            if (m.answered || padClaimed.has(m.uid)) continue
+            const load = padLoad.get(m.uid) ?? 0
+            if (load >= padCap) continue
             const d = dist(m.pos, a.pos)
-            if (d < bd) { bd = d; best = m }
+            const e = rippleEta(wave, m.pos)
+            const reach = e === null || d / ALLY_SPEED + 0.4 <= e
+            if (bestReach && !reach) continue
+            if (reach && !bestReach) { bd = Infinity; bestReach = true }
+            if (d < bd) { bd = d; best = m; slot = load }
           }
           if (best) {
-            padClaimed.add(best.uid)
-            a.want.x = best.pos.x
-            a.want.y = best.pos.y
+            const rad = best.def.shape?.kind === 'circle' ? best.def.shape.radius : 4
+            const launchSec = (best.def.rule.type === 'launchPad'
+              ? best.def.rule.launchMs : 3000) / 1000
+            /**
+             * WAIT BESIDE IT, THEN STEP ON TOGETHER — AND NOT A MOMENT EARLIER.
+             *
+             * The pad is consumed by the first body to touch it and the launch
+             * lasts three seconds, so a raider who walks straight on at the moment
+             * the ring appears is back on the floor long before the line arrives —
+             * and has spent the answer for everybody standing with them. So the
+             * group loiters a stride outside the trigger radius, on evenly spaced
+             * bearings, and steps in as the line arrives. They start from equal
+             * distance and move at the same capped speed, so they cross the rim on
+             * the same tick and one launch carries all of them.
+             *
+             * The LEAVING time matters as much as the stepping-on time. A ring is
+             * on the floor for ten seconds and the raid has other work — Throw
+             * Junk's window is ten seconds too, and every crate left standing is a
+             * literal wipe. A raid that downed tools the instant a ring appeared
+             * abandoned the crates and lost the pull to the thing it was not
+             * looking at. So a raider stays on their own job until the walk to the
+             * pad plus a beat of loitering is all the time they have left.
+             *
+             * A slab wave has no arrival to time — it lands where it was drawn —
+             * so `eta` is null there and the raid simply goes and stands on it,
+             * which is what it did before.
+             */
+            // TWO CLOCKS, and using one for both jobs is what broke this twice.
+            //
+            // WHEN TO LEAVE is the raider's own: a ring reaches every body at a
+            // different moment, and one who waits out the mushroom's arrival is
+            // struck standing next to it. Measured with the pad's clock driving
+            // both: nine mushrooms unspent on the floor and sixteen raiders dead
+            // around them.
+            //
+            // WHEN TO STEP ON is the MUSHROOM's, and it has to be, because it is
+            // the only clock the whole group standing round it shares. A pad
+            // launches everyone inside it and is then spent, so a group timing
+            // their last stride off their own arrivals goes in one at a time and
+            // spends nine pads on nine bodies. Off the pad's clock they cross the
+            // rim on the same tick and one launch carries all of them.
+            const etaSelf = rippleEta(wave, a.pos)
+            const etaPad = rippleEta(wave, best.pos)
+            const step = launchSec * 0.55
+            const leave = step + bd / ALLY_SPEED + 1.2
+            if (etaSelf !== null && Math.min(etaSelf, etaPad ?? etaSelf) > leave) continue
+            const eta = etaPad
+            padLoad.set(best.uid, slot + 1)
             onMushroomDuty = true
+            if (eta === null || eta <= step) {
+              // Committed: this is the one pad this raider is allowed to spend.
+              a.padUid = best.uid
+              a.want.x = best.pos.x
+              a.want.y = best.pos.y
+            } else {
+              const th = (slot / Math.max(1, padCap)) * Math.PI * 2
+              a.want.x = best.pos.x + Math.cos(th) * (rad + 1.6)
+              a.want.y = best.pos.y + Math.sin(th) * (rad + 1.6)
+            }
           }
         }
       } else if (rt === 'press' && inst.def.rule.ability === 'dispel') {
@@ -5171,7 +5719,8 @@ function allyThink(w: World) {
       // A carrier standing in a pool on purpose is in the same position: their
       // cure is a patch of ground, and a tidiness pass that walked them out of
       // it would make the trade impossible to complete.
-      if ((onCorpseDuty || a.marked || a.wind || a.element !== null)
+      // A sweeper sent to a priced pickup is the same again — see `pricedSweep`.
+      if ((onCorpseDuty || pricedSweep || a.marked || a.wind || a.element !== null)
           && inst.resolved && inst.def.rule.type === 'avoid') continue
       const sh = inst.def.shape
       const threatWant = threatAt(inst, a.want.x, a.want.y)
@@ -5231,8 +5780,18 @@ function allyThink(w: World) {
       // the third slam struck nobody, and the raid was thrown into the venom at
       // thirty-four seconds — for tidiness. Ground that KILLS still moves them,
       // which is the same line step 4 draws.
-      if (onCorpseDuty || a.marked || a.wind || a.element !== null || soakTarget
-          || !inst.resolved || !inst.def.shape) continue
+      //
+      // A sweeper on a priced pickup is the same and worse again: this pass will
+      // walk a body twenty-six yards to find cleaner ground, and a Throw Junk
+      // crate that lands in a Fire Patch is a whole raid bar. See `pricedSweep`.
+      //
+      // A raider waiting beside a mushroom is in the same position again, and
+      // worse: this pass relocates by ten to twenty-six yards, and the bomb's own
+      // Concussive Blast is a twelve-yard circle sitting where the ring came
+      // from. Walked off their pad they are on the floor when the line arrives,
+      // holding nothing.
+      if (onCorpseDuty || pricedSweep || onMushroomDuty || a.marked || a.wind
+          || a.element !== null || soakTarget || !inst.resolved || !inst.def.shape) continue
       if (isHarmlessGround(inst.def)) continue
       if (!inst.def.lingerMs && !inst.def.permanent) continue
       fouled += threatAt(inst, a.want.x, a.want.y) > 0 ? 1 : 0
@@ -5268,7 +5827,13 @@ function allyThink(w: World) {
     //    are up: a partner holding station two yards outside collision range is
     //    the difference between a pairing and a death, and idling across that
     //    line is not a decision anybody made.
-    if (!a.marked && !a.wind) {
+    //    Not while waiting beside a mushroom either, and for the same reason
+    //    written larger. The loiter ring is a stride and a half outside a
+    //    four-yard trigger, so a 1.6-yard sway is most of the gap: raiders drifted
+    //    onto their pads one at a time, each spending a mushroom that was meant to
+    //    carry three, and the raid ran out of pads with two thirds of it still on
+    //    the floor. Waiting is a decision here, not idling.
+    if (!a.marked && !a.wind && !onMushroomDuty) {
       a.want.x += Math.sin(w.elapsedMs / 2600 + a.id * 1.7) * 1.6
       a.want.y += Math.cos(w.elapsedMs / 3100 + a.id * 2.3) * 1.6
     }
@@ -5294,9 +5859,18 @@ function allyThink(w: World) {
     //     bound live would pin them within six yards of a ledge the Vile Flood
     //     beam sweeps across, holding them in the one part of the room the
     //     intermission is about leaving.
+    //     And a station that MOVES is still a station. A stacked pair's mark
+    //     travels all pull, so binding its tank to `def.start` would leash them
+    //     to the spot they spawned on and the kite would get six yards from the
+    //     pull before it stopped — the bound has to be re-read every tick from
+    //     the same function that set the destination, or it is a leash to a place
+    //     the fight has left.
     const myStation = w.bosses.find(b =>
-      b.targetId === a.id && b.def.tankedApart && !submergedUnits.has(b.def.id))
-    const rawStation = myStation?.def.start
+      b.targetId === a.id && (b.def.tankedApart || b.def.tankedStacked)
+      && !submergedUnits.has(b.def.id))
+    const rawStation = (myStation?.def.tankedStacked
+      ? stackedStation(w, myStation)
+      : myStation?.def.start)
       ?? (w.bosses[0].targetId === a.id && !submergedUnits.has(w.bosses[0].def.id)
         ? (hasGroups(w) ? tankStation(w, w.bosses[0]) : altarStation(w))
         : null)
@@ -5321,7 +5895,18 @@ function allyThink(w: World) {
       // half a yard short of a soak whose miss throws the whole raid into the
       // acid. This widens the leash for one body walking to one pool it is
       // required to be in, not for the raid and not for the rest of the pull.
-      const leash = soakTarget ? Math.max(6, dist(station, soakTarget.pos) + 0.5) : 6
+      //
+      // ...and it stretches to a mushroom for the same reason and no further. An
+      // AI tank leashed at six yards cannot reach a Bouncy Mushroom twenty yards
+      // away, so it stood on its mark and was killed by the ring — and a tanked
+      // entity whose tank is dead simply stops moving, which on the Lost
+      // Explorers parked Nama in the north for the rest of the pull and handed
+      // the player thirteen United Defense links they had no way to prevent. The
+      // ordering the leash comment states is never die, THEN hold station; a wave
+      // is the one thing on this floor that cannot be survived from the mark.
+      const leash = soakTarget
+        ? Math.max(6, dist(station, soakTarget.pos) + 0.5)
+        : onMushroomDuty ? Math.max(6, dist(station, a.want) + 0.5) : 6
       if (sd > leash) {
         a.want.x = station.x + (sdx / sd) * leash
         a.want.y = station.y + (sdy / sd) * leash
@@ -7288,9 +7873,29 @@ export function step(w: World, input: Input, dtMs: number) {
       }
     }
     if (ab === 'taunt') {
-      // A taunt takes the nearest entity. Anything else you were holding goes
-      // back to a free tank — you have one target, same as in the game.
-      const u = nearestBoss(w, w.player.pos)
+      /**
+       * A taunt takes the nearest entity ANY TANK IS MEANT TO HOLD. Anything
+       * else you were holding goes back to a free tank — you have one target,
+       * same as in the game.
+       *
+       * The qualifier is the same predicate `makeBosses` seats tanks with, and
+       * without it the Lost Explorers' patroller was tauntable: a tank whose
+       * footwork took them nearer Trader Gebbo than to their own pair pressed
+       * the swap button, took a boss nobody is supposed to hold, and left Nama
+       * untanked and standing still in the north for the rest of the pull.
+       * United Defense then linked every time the lap came round, thirteen times
+       * in a hundred and sixty seconds, for a mistake the player could not see
+       * and had no way to undo. On every other fight in the raid every targetable
+       * entity qualifies, so nothing there changes.
+       */
+      const holdable = w.bosses.filter((b, i) =>
+        !b.def.untargetable && b.alive
+        && (i === 0 || b.def.tankedApart || b.def.tankedStacked))
+      let u = nearestBoss(w, w.player.pos)
+      if (holdable.length) {
+        u = holdable.reduce((x, y) =>
+          dist(y.pos, w.player.pos) < dist(x.pos, w.player.pos) ? y : x)
+      }
       for (const b of w.bosses) {
         if (b === u || b.targetId !== 0) continue
         const free = w.allies.find(x =>
@@ -7334,7 +7939,35 @@ export function step(w: World, input: Input, dtMs: number) {
       if (inst.def.rule.type !== 'press' || inst.def.rule.ability !== ab) continue
       if (!best || inst.timer < best.timer) best = inst
     }
-    if (best) best.answered = true
+    if (best) {
+      best.answered = true
+      /**
+       * A KICK ENDS THE CAST, and everybody has to be able to see that it did.
+       *
+       * Every other press is answered by something visible happening — the boss
+       * turns to the taunt, the debuff comes off the body that was dispelled —
+       * and an interrupt is answered by four seconds of nothing. Left as a bare
+       * `answered` the telegraph carried on filling to the end of its timer and
+       * then quietly resolved for no damage, which on screen is indistinguishable
+       * from a kick that missed and a cast the player got lucky on. Players
+       * finished pulls not knowing whether a single one had landed.
+       *
+       * So the cast is cut off where it stands: the timer is dropped to zero so
+       * it closes on this tick rather than running out the clock, `interrupted`
+       * tells the renderer to draw the break instead of a countdown, and
+       * `interruptFlash` gives the voice layer one thing to say. Nothing about
+       * scoring changes — `answered` was already the whole of that, and
+       * `case 'press'` still declines to record a failure or deal damage.
+       *
+       * Only for `interrupt`. A taunt and a dispel are answers to a cast that is
+       * still going to happen, and breaking their telegraphs would be a lie.
+       */
+      if (ab === 'interrupt') {
+        best.interrupted = true
+        best.timer = 0
+        w.interruptFlash = { id: best.def.id, name: best.def.name, atMs: w.elapsedMs }
+      }
+    }
   }
 
   // ── the raid ──
@@ -7443,6 +8076,16 @@ export function step(w: World, input: Input, dtMs: number) {
     // React late enough that you can see them do it, early enough to be safe.
     if (inst.timer < inst.def.telegraphMs * 0.45 && w.allies.some(a => a.alive && a.role === need)) {
       inst.answered = true
+      // The raid's kick breaks the cast exactly the way yours does — a cast bar
+      // that snaps is what an interrupt looks like whoever pressed it, and a
+      // player watching one they could not have kicked themselves should still
+      // learn what a landed kick reads like. It gets no `interruptFlash`: that
+      // callout is the answer to "did MY kick go through", and firing it for
+      // somebody else's would be the trainer taking credit on your behalf.
+      if (inst.def.rule.ability === 'interrupt') {
+        inst.interrupted = true
+        inst.timer = 0
+      }
     }
   }
 
@@ -7546,6 +8189,12 @@ export function step(w: World, input: Input, dtMs: number) {
       b.pos = clampToArena(w.boss, b.pos, w.boss.arenaRadius * 0.12)
     }
   }
+
+  // Where the stacked pair belongs, recomputed now that every entity has moved.
+  // Null on the seven fights with no stacked pair, which is what the renderer
+  // and the prompt both key off — a fight without the mechanic must not grow a
+  // mark on its floor.
+  w.tankStackMark = w.bosses.some(b => b.def.tankedStacked) ? stackedCentre(w) : null
 
   // ── the fish ──
   //
@@ -7732,13 +8381,34 @@ export function step(w: World, input: Input, dtMs: number) {
     // within 30 yards of each other. The Sentinels are unaffected — with two
     // targetable entities the maximum and the minimum are the same number.
     const held = w.bosses.filter(b => !b.def.untargetable && b.alive)
+    /**
+     * ...and a pair the fight ITSELF told the tanks to stack is not a pair.
+     *
+     * On a fight with `tankedStacked` bodies, holding those two together IS the
+     * instruction — so the distance between them can never be the distance that
+     * links the council, and once the third explorer falls there is nothing left
+     * for United Defense to be about. "All three explorers take 99% reduced
+     * damage while within 30 yds of each other" is a statement about three
+     * bodies; with one dead there are not three, and scoring the survivors as
+     * linked charges the tank for the one thing the fight has been telling them
+     * to do all pull. Measured: twelve links a pull, every one of them in the
+     * last thirty seconds, after the patroller died.
+     *
+     * Fights with no stacked entity are untouched, which is every other one:
+     * the Sentinels have two targetable bodies and neither is stacked, so every
+     * pair still counts and the maximum is still the minimum.
+     */
+    const stacksHere = held.some(b => b.def.tankedStacked)
     let widest = 0
+    let pairs = 0
     for (let i = 0; i < held.length; i++) {
       for (let j = i + 1; j < held.length; j++) {
+        if (stacksHere && held[i].def.tankedStacked && held[j].def.tankedStacked) continue
+        pairs++
         widest = Math.max(widest, dist(held[i].pos, held[j].pos))
       }
     }
-    if (held.length > 1 && widest < apartDef.rule.minYards) {
+    if (pairs > 0 && widest < apartDef.rule.minYards) {
       w.bossesLinked = true
       w.linkedMs += dtMs
       if (w.linkedMs > LINK_GRACE_MS) {
@@ -7982,32 +8652,6 @@ export function step(w: World, input: Input, dtMs: number) {
     w.player.health = Math.min(1, w.player.health + throughput * dt)
   }
 
-  // ── the elements ──
-  //
-  // Every carrier drips a patch of THEIR OWN element under their feet, which is
-  // the half of Frostfire Volley that makes it solvable: your cure is the ground
-  // somebody else is laying, and theirs is yours. Neither of you can fix
-  // yourself, so the mechanic is a trade rather than a dodge.
-  const polarityDef = w.boss.mechanics.find(m => m.rule.type === 'polarity')
-  if (polarityDef && polarityDef.rule.type === 'polarity') {
-    const r = polarityDef.rule
-    w.elementDripMs -= dtMs
-    if (w.elementDripMs <= 0) {
-      w.elementDripMs = ELEMENT_DRIP_MS
-      const poolFor = (el: 'fire' | 'frost') =>
-        w.boss.mechanics.find(m => m.id === (el === 'fire' ? r.firePoolId : r.frostPoolId))
-      if (w.player.element) {
-        const d = poolFor(w.player.element)
-        if (d) spawn(w, d, { ...w.player.pos })
-      }
-      for (const a of w.allies) {
-        if (!a.alive || !a.element) continue
-        const d = poolFor(a.element)
-        if (d) spawn(w, d, { ...a.pos })
-      }
-    }
-  }
-
   // ── instances ──
   //
   // A dead caster's telegraph dies with it.
@@ -8047,6 +8691,52 @@ export function step(w: World, input: Input, dtMs: number) {
      * telegraph and the only readable thing about it is gone.
      */
     if (inst.resolved && inst.spin) inst.angle += inst.spin * dt
+
+    /**
+     * The expanding ring: grow it, then bill whatever the line has just reached.
+     *
+     * All of it lives here rather than in `resolveInstance` because a ripple has
+     * no resolve moment worth judging — the cast finishing is the ring being
+     * BORN, and the thing a raider has to get right happens some seconds later
+     * when the line arrives at their feet. That is the same shape of problem as
+     * a Stir the Depths swell and a Vile Flood sweep, and it gets the same
+     * answer: judged on contact, once per body per wave.
+     *
+     * Being airborne is the ONLY exemption, exactly as it is for a slab-shaped
+     * wave, and it is checked at the moment of contact rather than at any resolve
+     * — which is the entire point of making the wave travel. A player who jumped
+     * too early is back on the floor before the line reaches them and dies; one
+     * who jumps as it passes is carried over it. Timing is now a thing that can
+     * be got wrong, and previously it could not be.
+     *
+     * The line cannot be escaped by running from it, only survived. Outward, the
+     * room ends: `ripple.speed` is under `PLAYER_SPEED` on purpose so a raider
+     * can buy a second to line up a mushroom, but the rim arrives before the ring
+     * gives up. Inward is the crater the bomb left, which is somebody else's
+     * mechanic and is why the middle of the ring is not a hiding place.
+     */
+    const rip = inst.def.ripple
+    if (rip && inst.resolved) {
+      inst.ringRadius = (inst.ringRadius ?? -rip.thickness) + rip.speed * dt
+      if (inst.def.rule.type === 'wave') {
+        if (w.player.alive && w.player.aloft <= 0 && isInside(inst, w.player.pos)
+            && !inst.answered) {
+          // Once per wave, however long the line takes to cross you. A debrief
+          // reading "Blast Wave x40" would be counting frames rather than the one
+          // mistake actually made, which is the distinction the swells and the
+          // melee leash both draw.
+          inst.answered = true
+          if (def_scored(w, inst.def)) recordFailure(w, inst.def)
+          if (inst.def.lethal) killPlayer(w, inst.def.name)
+          else hurt(w, inst.def.damage ?? 0.4, inst.def.name)
+        }
+        for (const a of w.allies) {
+          if (!a.alive || a.aloft > 0 || !isInside(inst, a.pos)) continue
+          a.alive = false
+          w.alliesLost++
+        }
+      }
+    }
     // Hazards that drift, resolved or not. A pool that has landed still moves
     // if the fight set the floor moving: Invoke does exactly that to the Essence
     // Rend puddles, and a permanent pool that also travels is the reason the
@@ -8289,22 +8979,64 @@ export function step(w: World, input: Input, dtMs: number) {
       }
     }
 
-    // A mushroom throws whoever touches it and is consumed. Touching one is
-    // always correct play — the ability data calls the airborne debuff the
-    // success signal in as many words — so this can never `hurt`, never
-    // `recordFailure` and never `killPlayer`.
-    if (inst.def.rule.type === 'launchPad' && !inst.answered && !inst.resolved) {
+    /**
+     * A mushroom throws whoever touches it and is spent. Touching one is always
+     * correct play — the ability data calls the airborne debuff the success
+     * signal in as many words — so this can never `hurt`, never `recordFailure`
+     * and never `killPlayer`.
+     *
+     * It is spent by a GROUP, not by one body, and that half-second is the
+     * difference between a raid that answers a room-crossing ring and one that
+     * dies underneath it. A pad that vanished on the first foot launched exactly
+     * one raider however many were arriving with them, so nine mushrooms carried
+     * nine bodies out of nineteen and the other ten died standing beside spent
+     * ground. Nobody would build a launch pad that threw one person and then
+     * folded up under the crowd behind them.
+     *
+     * The player's lesson is untouched: it is still consumed, still by the first
+     * contact, and jumping early still spends your answer and puts you back on
+     * the floor before the line arrives. `PAD_LAUNCH_HOLD_MS` is shorter than
+     * any reaction — it is a crowd arriving together, not a second chance.
+     */
+    if (inst.def.rule.type === 'launchPad' && !inst.resolved) {
       const rad = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 4
       if (dist(inst.pos, w.player.pos) < rad) {
         w.player.aloft = Math.max(w.player.aloft, inst.def.rule.launchMs)
-        inst.answered = true
-        inst.timer = 0
+        if (!inst.answered) { inst.answered = true; inst.timer = PAD_LAUNCH_HOLD_MS }
       }
-      for (const a of w.allies) {
-        if (!a.alive || dist(inst.pos, a.pos) >= rad) continue
-        a.aloft = Math.max(a.aloft, inst.def.rule.launchMs)
-        inst.answered = true
-        inst.timer = 0
+      /**
+       * The raid spends a mushroom on the wave it was thrown for, and never
+       * before the question has been asked.
+       *
+       * A pad is consumed by whoever touches it, and nineteen raiders crossing a
+       * fifty-yard floor for ten seconds walk over everything on it: measured,
+       * six of ten mushrooms were gone before the ring was born and the raid then
+       * died to it entire. That is not the mechanic being hard, it is the raid
+       * failing to hold a tool for the four seconds between being handed it and
+       * needing it — and this engine models the raid as competent everywhere
+       * else, because a player cannot learn from a raid that beats itself.
+       *
+       * The PLAYER is deliberately exempt. Stepping on one early is the mistake
+       * the mechanic is built around — "spends the only answer and lands you back
+       * on the floor before the line arrives" — and taking that away would delete
+       * the timing the whole ripple exists to teach.
+       *
+       * ...and the one held back for the player is never spent by the raid at
+       * all. See `World.reservedPad`.
+       */
+      const asked = w.instances.some(i => wavePending(w, i))
+      if (asked && inst.uid !== w.reservedPad) {
+        for (const a of w.allies) {
+          // Only the raiders who came here to jump. A raider crossing this pad
+          // on the way to their own does not spend it — see `Ally.padUid`. A pad
+          // already spent still carries whoever is on it, which is the whole
+          // point of the half-second hold, so the `answered` test is on the
+          // COMMITMENT rather than on the pad.
+          if (!a.alive || a.padUid !== inst.uid) continue
+          if (dist(inst.pos, a.pos) >= rad) continue
+          a.aloft = Math.max(a.aloft, inst.def.rule.launchMs)
+          if (!inst.answered) { inst.answered = true; inst.timer = PAD_LAUNCH_HOLD_MS }
+        }
       }
     }
 
@@ -8346,7 +9078,12 @@ export function step(w: World, input: Input, dtMs: number) {
     // — and, with the stack economy below, billed you a counter stack for it too.
     // `elementPool` is the only harmless ground in the raid and no fight that
     // keeps a counter has any, so nothing else changes shape here.
-    if (!isHarmlessGround(inst.def) && inst.resolved
+    // A ripple is exempt for the opposite reason to the cure: it is not
+    // lingering GROUND at all, it is a line passing through, and the block that
+    // grows it a few dozen lines up has already billed the contact once. Left in
+    // this chain it would charge a second, per-tick toll for the same crossing
+    // and the ring would read as a pool the width of the room.
+    if (!isHarmlessGround(inst.def) && !inst.def.ripple && inst.resolved
         && (inst.def.lingerMs || inst.def.permanent) && isInside(inst, w.player.pos)) {
       // The counter stack, charged per HAZARD rather than per tick — `payHit`
       // bills a body once per instance, or once per `applies.everyMs` for
@@ -8420,6 +9157,14 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
   w.instances = w.instances.filter(i =>
+    // A ring that has run off the edge of the world is over, whatever its
+    // `lingerMs` still says. The linger has to be generous enough to cover the
+    // longest crossing the room can ask for — a bomb dropped on one rim, the ring
+    // travelling to the far one — and a wave that spawned near the middle would
+    // otherwise hang around as an invisible band somewhere out past the floor,
+    // still being drawn and still being tested against every body in the raid.
+    !(i.def.ripple && (i.ringRadius ?? 0) > w.boss.arenaRadius * 2 + 4)
+    &&
     // A burst cyst is gone. It is `permanent` so that one glob survives a whole
     // rotation on the floor waiting for the Maelstrom, which also means nothing
     // else would ever take it away — so a glob that has already thrown you

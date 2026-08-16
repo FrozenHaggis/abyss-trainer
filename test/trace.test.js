@@ -1065,3 +1065,61 @@ test('nothing outside the engine writes a venom count', () => {
     }
   }
 })
+
+// ── the counter's cap is the number the fight tells you ──────────────────────
+//
+// This one was live on the panel for the whole of the Twin Fangs'
+// implementation: `venom.what` read "At 9 stacks
+// 1292348 executes the carrier" — the number in data/abilities — above a
+// `counter` that kills at 10, which is the raid leader's number and the one the
+// engine obeys. Nine is what the raider counts to; ten is what kills them.
+//
+// A trainer may absolutely disagree with its source data. What it may not do is
+// disagree with ITSELF on the one number a raider is going to count, so the rule
+// is that every "N stacks" in a countered def's own prose is the cap. Where the
+// data says something else, say so in a comment — comments are stripped before
+// this runs, and recording the contradiction is the house style.
+//
+// The roles half is the same claim from the other end. This def used to be
+// `['healer']`, from when it was nothing but a raid-damage floor and the count
+// was somebody else's arithmetic. A counter is on every body in the room: the
+// tank welded to a serpent who can never shed, the dps paying a stack per
+// globule, the healer watching the bar. All three of them die of it, so all
+// three of them are briefed on it.
+test('a lethal counter is briefed to everyone, at the number that actually kills', () => {
+  let checked = 0
+
+  for (const [key] of present) {
+    for (const m of mechanicDefs(key)) {
+      const counter = literalAfter(m.blk, 'counter')
+      if (!counter) continue
+      checked++
+
+      const cap = Number(/lethalAt:\s*(\d+)/.exec(counter)?.[1])
+      assert.ok(cap > 0, `${key}/${m.id}: counter declares no lethalAt`)
+
+      // `m.blk` is comment-free — see codeOf/stripComments — so this reads the
+      // strings the player is shown and nothing an author wrote to themselves.
+      const quoted = [...m.blk.matchAll(/(\d+)\s*[- ]?stacks?\b/gi)].map(x => Number(x[1]))
+      assert.ok(quoted.length > 0,
+        `${key}/${m.id}: kills at ${cap} stacks and never says so. The cap is the one number ` +
+        'on this fight a raider counts to, and it is not written anywhere they can read it')
+      for (const n of quoted) {
+        assert.equal(n, cap,
+          `${key}/${m.id}: its briefing says "${n} stacks" and the counter kills at ${cap}. ` +
+          'Whichever is right, the panel and the engine cannot both be the authority — fix ' +
+          'the prose and leave a comment recording what the source data claims')
+      }
+
+      const roles = (/roles:\s*\[([^\]]*)\]/.exec(m.blk)?.[1] ?? '')
+        .split(',').map(r => r.trim().replace(/'/g, '')).filter(Boolean)
+      for (const r of ['tank', 'dps', 'healer']) {
+        assert.ok(roles.includes(r),
+          `${key}/${m.id}: a counter that executes at ${cap} is not briefed to a ${r}. ` +
+          'Every body in the raid carries its own count and every one of them can die of it')
+      }
+    }
+  }
+
+  assert.ok(checked > 0, 'no mechanic declares a counter — this check would pass vacuously')
+})

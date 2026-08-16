@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { BossDef, Role, RunResult, Side } from './engine/types'
 import { abilitiesFor } from './engine/sim'
-import { BOSSES } from './bosses/registry'
+import { BOSSES, drillableMechanics } from './bosses/registry'
 import Arena from './ui/Arena'
 import Debrief from './ui/Debrief'
 import RoleIcon from './ui/RoleIcon'
@@ -180,17 +180,15 @@ export default function App() {
           one mechanic on loop, no enrage, and dying just puts you back on your feet.
         </p>
         <div className="drills">
-          {boss.mechanics
-            .filter(m => m.rule.type !== 'raidDamage' && m.shape)
-            .map(m => (
-              <button
-                key={m.id}
-                className="drill"
-                onClick={() => setScreen({ s: 'play', boss, role, side, nonce: Date.now(), drillId: m.id })}
-              >
-                {m.name}
-              </button>
-            ))}
+          {drillableMechanics(boss).map(m => (
+            <button
+              key={m.id}
+              className="drill"
+              onClick={() => setScreen({ s: 'play', boss, role, side, nonce: Date.now(), drillId: m.id })}
+            >
+              {m.name}
+            </button>
+          ))}
         </div>
 
         <p className="credits">

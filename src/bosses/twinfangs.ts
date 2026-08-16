@@ -28,17 +28,40 @@ import type { BossDef } from '../engine/types'
 // Eternal Venom arrives from seven sources continuously ... and is shed only one
 // per player per Ravenous Feast." So it is modelled as one: `venom` declares
 // `counter`, every source that feeds it declares `applies`, and every body in
-// the raid — yours and the nineteen AI ones — carries its own count. Reaching
-// the cap kills. The two soaks, Caustic Globule and Ravenous Feast, carry the
-// "run IN" half of the movement so the loop is not just five flavours of "run
-// out", and they are now the two ends of the economy as well: one buys a stack,
-// the other is the only thing in the fight that sells one back.
+// the raid — yours and the nineteen AI ones — carries its own count. The two
+// soaks, Caustic Globule and Ravenous Feast, carry the "run IN" half of the
+// movement so the loop is not just five flavours of "run out", and they are now
+// the two ends of the economy as well: one buys a stack, the other is the only
+// thing in the fight that sells one back.
+//
+// REACHING TEN IS NOT SYMMETRIC, and the asymmetry is the raid leader's ruling
+// rather than an engine limitation. YOUR tenth stack ends the pull as a wipe.
+// An AI raider's tenth stack kills that raider and the pull carries on — they
+// cost the raid its health bar and their share of the globule rota, which is
+// visible and expensive, but a pull must never end because the soak rota
+// misplayed itself. What you are practising is your own count.
+//
+// A NOTE ON NAMES, because this fight breaks a convention the other seven keep.
+// Four mechanics are split into a parent and its pieces — Caustic Deluge into
+// deluge/splash, Stone Breaker into stonebreaker/slam/pushoff, Stir the Depths
+// into depths/wave, Vile Flood into flood/storm — and in three of those cases
+// the pieces keep the parent's name, because the game calls both by one name and
+// a raider hearing "Caustic Deluge" means the whole thing. So anything that
+// looks a mechanic up on this fight by `name` rather than by `id` will find
+// duplicates. The drill list on the boss picker is the one surface where that
+// mattered, and it filters on ownership rather than on name; see
+// drillableMechanics in bosses/registry.ts.
 
 export const twinfangs: BossDef = {
   key: 'twinfangs',
   name: 'The Twin Prompts',
   realName: 'The Twin Fangs',
-  blurb: 'Nothing to kick, nothing to dispel. Venom never washes off — the soaks are the only relief.',
+  // "The soaks are the only relief" was true of the fight this file used to
+  // describe and is false of the one it describes now: of the two soaks, one
+  // BUYS a stack and only the other sells one back. A raider who reads the
+  // blurb as "soak things and the venom goes away" plays the globule rota as
+  // relief and dies of it at ten.
+  blurb: 'Nothing to kick, nothing to dispel. Venom never washes off, and one bite of Ravenous Feast a cast is the only stack you will ever get back.',
   // Measured from PTR combat logs, not guessed: Rounded/octagonal, low confidence (corner/axis 1.19). Much the smallest floor in the raid.
   // 1 yard = 100 coordinate units.
   //
@@ -137,16 +160,19 @@ export const twinfangs: BossDef = {
   // at 100% recorded accuracy and then killed the raid. Now there is no floor
   // behind them to stand on: the raid is always south of them, shooting north,
   // and the adds are south again in the pocket.
+  //
+  // "They do not move" now has exactly one exception and it is worth naming
+  // here, because this is where anybody looking for a serpent's position will
+  // look first: the Submerge stage relocates both of them for the length of the
+  // intermission — Vexhul into the pocket, Ithraz out past the right leg — and
+  // puts them back on these two points when it ends. That is phase-scoped and
+  // deliberately not an edit to this array; see the `relocate` block on the
+  // submerge phase for where they go and why.
   entities: [
     { id: 'vexhul', name: "Vexhul", npcId: 257361, start: { x: -8, y: -19 }, tankedApart: true, stationary: true },
     { id: 'ithraz', name: "Ithraz", npcId: 257368, start: { x: 8, y: -19 }, tankedApart: true, stationary: true },
   ],
   maxHp: 1,
-  // 9.5, not the 6 this ran at, and the change is bookkeeping rather than a
-  // pacing decision. Deleting Envenomed took eight of the loop's twenty-two
-  // slots out, so at an unchanged interval the whole rotation shortened from
-  // 132 seconds to 84 and every OTHER mechanic in the fight arrived 57% more
-  // often. Measured, that alone moved a competent healer's death from 85
   // THE BEAT BETWEEN STEPS, not the period of a rotation — see PhaseDef.sequential.
   //
   // Nothing on this fight fires on a clock any more. Both stages are scripted:
@@ -270,6 +296,18 @@ export const twinfangs: BossDef = {
   //     than a slot of its own. It used to sit in the rotation twice, which put
   //     red swirlies on the platform at moments when Ithraz was standing on the
   //     ledge being tanked, with nothing to explain where they had come from.
+  //   • `gore` — a Congealed Gore pool is what a Coiling Ichor leaves. Dealt out
+  //     by the script it is a puddle nobody dropped, which is the half of the
+  //     mechanic that costs nothing to learn.
+  //
+  // That list is not only about the loop. Every def on it was also a button on
+  // the boss picker's drill row, which is the same mistake made on a different
+  // surface: a piece of a mechanic, fired on its own, with the mechanic it
+  // belongs to nowhere in sight. The drill row now derives the same set from the
+  // same fields rather than repeating it by hand — see `drillableMechanics` in
+  // bosses/registry.ts — so a def cannot fall off one list and stay on the
+  // other, and the row reads as the six mechanics of the fight plus the adds'
+  // Corrosive Spit.
   phases: [
     {
       id: 'cadence',
@@ -340,7 +378,12 @@ export const twinfangs: BossDef = {
       id: 'uncoiled',
       name: 'Uncoiled Wrath',
       spellId: 1308583,
-      what: "1308583 — when either serpent dies the survivor gains stacking, uncapped +30% damage every 4s.",
+      // The `what:` described the real ability — an uncapped ramp on the
+      // survivor — beside a rule that no longer ramps anything. It ends the
+      // pull. Leaving the ramp on the panel above a five-second hard window
+      // reads as "the survivor gets angry, hurry up", which is a raid that
+      // finishes the second serpent at its own pace and wipes.
+      what: "1308583 — the survivor of the two ramps uncapped the moment its twin dies. Here it is absolute: five seconds with one serpent down and the other alive ends the pull.",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
@@ -365,7 +408,7 @@ export const twinfangs: BossDef = {
       // which is the play the mechanic is asking for rather than the play it
       // requires.
       rule: { type: 'syncKill', withinSec: 5 },
-      good: 'Both serpents die within seconds of each other.',
+      good: 'Both serpents are brought down inside five seconds of each other — held level all pull, then whoever is behind takes the saved burst.',
       failText: 'Killed one serpent far ahead of the other — Uncoiled Wrath',
     },
     {
@@ -438,9 +481,16 @@ export const twinfangs: BossDef = {
       id: 'venom',
       name: 'Eternal Venom',
       spellId: 1290480,
-      what: "Permanent stacking Nature poison , no duration, persists through death, fed by splashes, globule ruptures, Venomous Emergence, Corrosive Spit, waves and every Vile Flood tick. At 10 stacks 1292348 executes the carrier.",
+      what: "Permanent stacking Nature poison, no duration, persists through death, fed by splashes, globule ruptures, Venomous Emergence, Corrosive Spit, waves and every Vile Flood tick. At 10 stacks 1292348 executes the carrier.",
       from: 'vexhul',
-      roles: ['healer'],
+      // ALL THREE, and it used to be `['healer']` back when this def was nothing
+      // but a raid-damage floor — a number on the healing check and somebody
+      // else's problem. It is a counter above every head now. A tank is welded
+      // to a serpent and can never take a Feast bite, so their count only ever
+      // goes up; a dps is in the globule rota and pays a stack for every one
+      // they sweep. Both of them need the briefing more than the healer does,
+      // and both of them are the ones who die of it.
+      roles: ['tank', 'dps', 'healer'],
       telegraphMs: 0,
       origin: 'boss',
       // 1290480 is the periodic tick — "scaling with stack count, 24% of all raid
@@ -458,7 +508,7 @@ export const twinfangs: BossDef = {
       // fight a raider is going to count.
       rule: { type: 'raidDamage', dps: 3.4 },
       counter: { lethalAt: 10 },
-      good: 'Adds die fast, high-stack players take the earliest Feast bite, low-stack players soak globules.',
+      good: 'Adds die fast; take a Ravenous Feast bite whenever you are carrying stacks and stay out of it when you are not; the lowest-stack raiders are the ones on the globules.',
       failText: '',
     },
     {
@@ -579,9 +629,12 @@ export const twinfangs: BossDef = {
       // be standing there. The ten now arrive where the ten splashes were, which
       // is what makes reading the pairs worth anything.
       //
-      // The count survives because a drill still fires this on its own, and
-      // because it is the honest number: one Caustic Deluge puts ten of these on
-      // the floor and the raid has ten seconds to clear all ten.
+      // Nothing fires it bare any more, either: it is off the drill row as well
+      // as out of the loop, because it is a `spawns` child of the splash and the
+      // drill for it is Caustic Deluge, which lays all ten the way the fight
+      // does. The count stays because it is still the honest number — one
+      // Caustic Deluge puts ten of these on the floor and the raid has ten
+      // seconds to clear all ten.
       rule: { type: 'collect', count: 10 },
       // The soak rota's two prices, from one def. Running over one costs the
       // sweeper a single stack; letting one rupture costs EVERY body a stack,
@@ -827,10 +880,12 @@ export const twinfangs: BossDef = {
       // deliberately the busiest part of the room, and deliberately not where
       // the ichor carriers are told to run.
       origin: 'boss',
-      // 2 seconds between bites, so a cast runs 4.25 + 2 + 2 and finishes well
-      // inside one 9.5-second loop slot. The gap also has to be long enough for
-      // a body that has just been fed to physically leave a 14-yard circle
-      // before the next bite lands — at most 28 yards from the far side, two
+      // 2 seconds between bites, so a cast runs 4.25 + 2 + 2 — 8.3 seconds
+      // measured end to end, and nothing else is cast until it closes, because
+      // the re-arm leaves the instance unresolved and a `sequential` stage waits
+      // on it. The gap also has to be long enough for a body that has just been
+      // fed to physically leave a 14-yard circle before the next bite lands —
+      // at most 28 yards from the far side, two
       // seconds at a raider's 12 yd/s, and a good deal less from where the rota
       // actually puts them. Shorter and the second bite is an ambush rather
       // than a decision, which on a mechanic that kills is the difference
@@ -846,7 +901,11 @@ export const twinfangs: BossDef = {
       id: 'ichor',
       name: 'Coiling Ichor',
       spellId: 1290814,
-      what: "3s cast infusing three raiders for 12s; the radius shrinks as the damage rises, and each one drops a lasting slowing pool where it expires. Take yours to the rim, well clear of the other two.",
+      // "the radius shrinks as the damage rises" was in here and is not in the
+      // engine: `shape` is a fixed 8 yards for the whole twelve seconds. A panel
+      // that tells a raider to watch a circle tighten, on a fight where it never
+      // does, spends their attention on the one thing that will not move.
+      what: "Twelve seconds of Coiling Ichor on three raiders at once, you among them whenever it is cast. Walk yours out to the rim and keep it clear of the other two carriers; where it expires, a Congealed Gore pool stays.",
       from: 'ithraz',
       // "Carriers are chosen, never at fault" — but a tank running twenty yards
       // out to the rim has dropped their serpent, and the melee leash on both of
@@ -889,7 +948,11 @@ export const twinfangs: BossDef = {
       // room to be wrong once, which two spots for two carriers was not.
       carriers: 3,
       spawns: { defId: 'gore' },
-      good: 'Carriers spread, close together as it tightens, and dump pools at the room edges.',
+      // The old line was the tactic file's, and half of it — "close together as
+      // it tightens" — belongs to a shrinking radius this fight does not have.
+      // The two clauses also read as contradicting each other on a mechanic
+      // whose entire instruction is "get apart".
+      good: 'All three carriers on three different stretches of rim, twelve yards clear of each other, and the pools land where the raid was never going to walk.',
       failText: 'Kept Coiling Ichor on the raid',
     },
     {
@@ -900,7 +963,7 @@ export const twinfangs: BossDef = {
       // rather than the pool it leaves — two mechanics, one sentence, and the
       // sentence belonged to the other one. It also promised a two-minute pool
       // beside a `lingerMs` that is now 30 seconds.
-      what: "The pool a Coiling Ichor leaves where it expires. Slowing, and it sits on the floor for half a minute — which is why the carriers are sent to the rim rather than dropping them wherever they were standing.",
+      what: "The pool a Coiling Ichor leaves where it expires. It sits on the floor for half a minute and it hurts for every second you are in it — which is why the carriers are sent to the rim rather than dropping them wherever they were standing.",
       from: 'ithraz',
       roles: ['tank', 'dps', 'healer'],
       telegraphMs: 1,                // spawned already active
@@ -916,9 +979,9 @@ export const twinfangs: BossDef = {
       rule: { type: 'avoid' },
       damage: 0.14,                  // per second while stood in it
       // The source says two minutes, and "permanently shrinks the arena". Held
-      // to 30s here: at 44 yards of platform and a 150s pull, honest two-minute
-      // pools stack until there is nowhere left to stand and the fight stops
-      // teaching anything.
+      // to 30s here: on a wedge 46 yards across at the mouth and a 200-second
+      // pull, honest two-minute pools stack until there is nowhere left to stand
+      // and the fight stops teaching anything.
       //
       // The comment above said 30 and the field said 120000, which is 120
       // seconds — the argument had been written and never applied, so a pull
@@ -930,7 +993,12 @@ export const twinfangs: BossDef = {
       // variant (1306925) is the same hazard on a 6s timer and is folded into
       // the glob dodge rather than duplicated as its own def.
       lingerMs: 30000,
-      good: 'Carriers spread, close together as it tightens, and dump pools at the room edges.',
+      // Was a verbatim copy of Coiling Ichor's Good line, the same way the
+      // `what:` above it was — advice about carrying a debuff, printed on the
+      // puddle it leaves. What the pool asks of the raid is the opposite of what
+      // the cast asks of a carrier: three bodies run out, everybody else walks
+      // round what they dropped, for the next half a minute.
+      good: 'Three pools on the rim and nobody in them — walk round the edge, not along it, for the half-minute they last.',
       failText: 'Stood in Congealed Gore',
     },
     {
@@ -1067,11 +1135,15 @@ export const twinfangs: BossDef = {
       // reachability sweep — 2s reaches 23 yards on a 32-yard floor.
       telegraphMs: 2000,
       shape: { kind: 'circle', radius: 3.5 },   // "3 3.5 yard sized pools"
-      // Only ever consulted when something fires this WITHOUT a place, which is
-      // a drill and nothing else: from the channel every beat arrives with its
-      // point on the arc already chosen. 'random' rather than the honest 'boss'
-      // because Ithraz is coiled in the acid, and a boss-origin fire would drop
-      // the pool three yards off the top edge where no tank can reach it.
+      // Never actually consulted, and kept honest rather than deleted. Every
+      // beat off Stone Breaker's channel arrives with its point on the arc
+      // already chosen, and there is no other way to fire this at all — it is a
+      // `channel` child, so the drill row offers Stone Breaker and not its
+      // pools. `origin` is required, though, and it has to be a value
+      // that would work if something ever did fire one bare. 'random' rather
+      // than the honest 'boss' for that reason: Ithraz is coiled in the acid, so
+      // a boss-origin fire drops the pool three yards off the top edge where no
+      // tank can reach it and the soak is unmissable-by-being-impossible.
       origin: 'random',
       rule: { type: 'tankSoak', missFires: 'pushoff' },
       damage: 0.2,

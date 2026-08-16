@@ -19,8 +19,10 @@ async function engine() {
     buildSync({ entryPoints: [src], bundle: true, format: 'esm', outfile: out, logLevel: 'error' })
   }
   const sim = await import(`../${OUT}/sim.mjs`)
-  const { BOSSES } = await import(`../${OUT}/registry.mjs`)
-  return { ...sim, BOSSES }
+  // Named rather than spread, so a helper added to the registry can never
+  // silently shadow one of sim.ts's exports.
+  const { BOSSES, drillableMechanics } = await import(`../${OUT}/registry.mjs`)
+  return { ...sim, BOSSES, drillableMechanics }
 }
 
 // A cyst burst used to end exactly on the boss however hard it hit, because the
@@ -2631,4 +2633,97 @@ test('Vile Flood always leaves a lane, whichever way it turns', async () => {
   assert.ok(runs[0].turned * runs[1].turned < 0,
     `both casts swept the same way (${runs[0].turned.toFixed(2)} and ` +
     `${runs[1].turned.toFixed(2)} radians), so a raid learns one answer and never has to read it`)
+})
+
+// ── the drill row is one button per mechanic ─────────────────────────────────
+//
+// The defect this pins was live for the whole of the Twin Fangs'
+// implementation. Splitting a mechanic into a parent and its pieces — Caustic
+// Deluge into deluge/splash/globule, Stone Breaker into stonebreaker/slam/
+// pushoff, Stir the Depths into depths/wave, Vile Flood into flood/storm — was
+// right, and every one of those pieces then appeared on the boss picker as a
+// drill button of its own. Three of them read "Stone Breaker"; two read "Caustic
+// Deluge"; one of them, `pushoff`, threw the raid off the platform and killed
+// the player on every rep with nothing whatsoever to practise, because the
+// mistake it answers is made in a mechanic that a `pushoff` drill never casts.
+//
+// The rule is ownership, not naming: a def named by another def's `channel`,
+// `spawns` or `missFires` is a PIECE, and its parent is the drill. The exception
+// runs the other way — a shapeless raidDamage parent that channels something you
+// dodge IS the mechanic, and without it Caustic Deluge and Stir the Depths have
+// no button at all.
+//
+// Both halves are asserted here rather than in a source grep because the rule is
+// now a function over the boss data (`drillableMechanics`), and a grep would
+// only prove the text of it, not the result.
+test('no drill button is a piece of a mechanic, and every mechanic keeps one', async () => {
+  const { BOSSES, drillableMechanics } = await engine()
+
+  for (const boss of BOSSES) {
+    const owned = new Map()
+    for (const m of boss.mechanics) {
+      if (m.channel) owned.set(m.channel.defId, `${m.id}.channel`)
+      if (m.spawns) owned.set(m.spawns.defId, `${m.id}.spawns`)
+      if (m.rule.type === 'tankSoak') owned.set(m.rule.missFires, `${m.id}.missFires`)
+    }
+
+    const drills = drillableMechanics(boss)
+    assert.ok(drills.length >= 5,
+      `${boss.key} offers only ${drills.length} drills — the filter has eaten the fight`)
+
+    for (const m of drills) {
+      assert.ok(!owned.has(m.id),
+        `${boss.key}: "${m.name}" (${m.id}) is a drill button, but ${owned.get(m.id)} already ` +
+        'owns it. A piece of a mechanic fired on its own is not the mechanic — it arrives out ' +
+        'of nothing, with the cast that produces it nowhere on screen')
+      assert.ok(m.shape || m.channel,
+        `${boss.key}: "${m.name}" (${m.id}) has neither a shape nor a channel, so a drill of it ` +
+        'is a rep with nothing to do')
+    }
+
+    // And the row must read as a list of mechanics, not as the same name three
+    // times. This is the symptom a player actually sees.
+    const names = drills.map(m => m.name)
+    const dup = names.filter((n, i) => names.indexOf(n) !== i)
+    assert.equal(dup.length, 0,
+      `${boss.key}: the drill row shows ${[...new Set(dup)].join(', ')} more than once`)
+  }
+
+  // The Twin Fangs, exactly, because it is the fight that forced the rule and
+  // the only one where getting it wrong loses a whole mechanic in either
+  // direction. Six mechanics and the adds' Corrosive Spit — no orphans, no
+  // pieces, and nothing that kills you for free.
+  const tf = BOSSES.find(b => b.key === 'twinfangs')
+  assert.deepEqual(
+    drillableMechanics(tf).map(m => m.id).sort(),
+    ['deluge', 'depths', 'feast', 'flood', 'ichor', 'spit', 'stonebreaker'],
+    'the Twin Fangs drill row is not its seven mechanics. Either a piece has come back ' +
+    '(splash, globule, slam, pushoff, wave, gore, storm) or a parent has dropped out')
+})
+
+// The half of the rule that is easy to lose: a shapeless `raidDamage` parent
+// looks exactly like a healing check, and the first clause of the filter throws
+// healing checks away. Caustic Deluge IS the drill for Caustic Deluge, and this
+// proves the button does something — one press has to put circles on the floor
+// and leave globules behind them, which is the entire mechanic.
+test('drilling Caustic Deluge runs the whole chain, not just a cast bar', async () => {
+  const { createDrill, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+
+  seedRng(11)
+  const w = createDrill(boss, 'dps', 'deluge')
+  const seen = new Set()
+  // One cast is 1s of telegraph plus five beats, and each splash fuses for 2.5s
+  // into a globule that lives 10s. Twelve seconds covers the chain end to end
+  // without needing a second rep.
+  for (let i = 0; i < 12000 / TICK_MS; i++) {
+    step(w, NO_INPUT(), TICK_MS)
+    for (const inst of w.instances) seen.add(inst.def.id)
+  }
+
+  for (const id of ['deluge', 'splash', 'globule']) {
+    assert.ok(seen.has(id),
+      `a Caustic Deluge drill never produced a ${id}. The parent is shapeless, so if the ` +
+      'channel does not run there is nothing on the floor and the button is a cast bar')
+  }
 })

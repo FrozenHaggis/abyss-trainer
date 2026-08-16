@@ -315,6 +315,7 @@ test('sweep: every summons names a real add, and takes it off the wave timer', (
     ['set-piece adds (the Echoes of Jawae as Stage One trash)', 'phaseOnly'],
     ['summoned adds (Venomous Emergence and the trash timer both delivering Spawn of Vexhul)', 'summonedIds'],
     ['split children (a Clotting Venom half arriving off the rim with no parent)', 'splitIds'],
+    ['fountain adds (a Shrouded Venom off a ring instead of out of the purple plinth)', 'altarIds'],
   ]) {
     assert.ok(filter.includes(needle),
       `the wave scheduler still deals out ${what} — only one of the two sources is a mechanic`)

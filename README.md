@@ -157,9 +157,16 @@ mechanic in the raid deleted.
 
 It is a real careless player now: shoots constantly, wanders, dodges nothing,
 presses nothing, and avoids only the two things that are suicide rather than
-carelessness — the platform edge and a hole in the floor. It clears **5 of 27**.
-All three Ula'tek roles hand a player who dodged nothing a KILL screen with ten
-to thirteen recorded failures.
+carelessness — the platform edge and a hole in the floor. It clears **8 of 27**.
+All three Ula'tek roles, and all three Vashnik roles, hand a player who dodged
+nothing a KILL screen with five to thirteen recorded failures against them.
+
+Vashnik joined that list the moment its adds were fixed to spawn only from their
+own fountain, which halved the add load — the fight had been leaning on a
+scheduler bug for its difficulty, and correcting the mechanic exposed that it
+has no teeth without it. That is a tuning conversation, and a good example of
+why the two halves of this bar have to be watched together: the change was
+unambiguously correct and it made the trainer worse at teaching.
 
 That is a worse number than the competent one, and it is the half that carries
 the teaching. It is recorded rather than asserted, because what the target

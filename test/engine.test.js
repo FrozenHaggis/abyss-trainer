@@ -156,6 +156,55 @@ test('split children only ever arrive from their parent dying', async () => {
     'The wave timer is dealing out the pieces of an add as though they were trash')
 })
 
+// Red adds come from the red fountain. Orange from orange, purple from purple.
+//
+// That is the fight's whole vocabulary — the raid calls "orange and purple are
+// up" and knows from that alone what is walking at the Cavity and from where —
+// and the wave timer was quietly breaking it, dealing the same three venoms out
+// on a 26-second cadence from the generic spawn ring. Venoms from nowhere in
+// particular, attached to no drink, in a colour nobody had called.
+test('a fountain add only ever arrives out of its own fountain', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'vashnik')
+  assert.ok(boss.altars?.length, 'vashnik no longer declares altars — check is vacuous')
+  const home = Object.fromEntries(boss.altars.map(a => [a.addId, a]))
+
+  seedRng(1337)
+  const w = createWorld(boss, 'dps', 'green')
+  const input = {
+    up: false, down: false, left: false, right: false, pressed: [], aim: null, firing: true,
+  }
+
+  const seen = new Set()
+  let atPlinth = 0
+  const strays = []
+  for (let i = 0; i < 60 * 200; i++) {
+    // Testing the SCHEDULER. A stationary player dies to Vashnik in about a
+    // minute, long before the wave timer has cycled far enough to show this.
+    w.player.alive = true
+    w.player.health = 1
+    w.raidHealth = 1
+    step(w, input, TICK_MS)
+    for (const a of w.adds) {
+      if (seen.has(a.uid)) continue
+      seen.add(a.uid)
+      const altar = home[a.def.id]
+      if (!altar) continue
+      // Spawned in a tight fan around the plinth it came out of.
+      const d = Math.hypot(a.pos.x - altar.pos.x, a.pos.y - altar.pos.y)
+      if (d < 12) atPlinth++
+      else strays.push(`${a.def.name} (${altar.colour}) ${d.toFixed(0)}yd from its plinth`)
+    }
+  }
+
+  assert.ok(atPlinth + strays.length > 0,
+    'no fountain add spawned in a whole pull — the check would measure nothing')
+  assert.equal(strays.length, 0,
+    `${strays.length} fountain adds arrived from somewhere other than their own plinth ` +
+    `(${atPlinth} correctly): ${strays.slice(0, 3).join('; ')}. The colour is how the raid ` +
+    'calls this fight, and an add that ignores it is a call nobody can make')
+})
+
 // The wind partner used to hold a spot measured from the PLAYER — thirty yards
 // along their bearing from wherever they happened to be standing. So it moved
 // every time the player did: they walked at it, it walked away by exactly as

@@ -3533,6 +3533,30 @@ export function summonedIds(boss: BossDef): Set<string> {
  * still appear at the corpse, which is the whole lesson of "kill it early and
  * far from the pool".
  */
+/**
+ * Adds that belong to an ALTAR, and arrive only when it is drained.
+ *
+ * The red fountain sends the Clotting Venom, the orange one the Burning Venom,
+ * the purple one the Shrouded Venom — each out of its own plinth, which is why
+ * `drainAltars` spawns them at `a.def.pos` rather than on a ring. The colour is
+ * the fight's whole vocabulary: the raid calls "orange and purple are up" and
+ * knows from that alone what is walking at the Cavity and from where.
+ *
+ * The wave timer was dealing the same three out on a 26-second cadence from the
+ * generic spawn ring as well, so venoms arrived from nowhere in particular,
+ * attached to no drink, in a colour nobody had called. Two sources for one add
+ * and only one of them a mechanic — the same defect `summonedIds` and `splitIds`
+ * exist to prevent, in its third variation.
+ *
+ * Derived from the altar list rather than flagged on the add, so wiring up a
+ * fourth fountain cannot forget to switch its wave off.
+ */
+export function altarIds(boss: BossDef): Set<string> {
+  const out = new Set<string>()
+  for (const a of boss.altars ?? []) out.add(a.addId)
+  return out
+}
+
 export function splitIds(boss: BossDef): Set<string> {
   const out = new Set<string>()
   for (const a of boss.adds ?? []) if (a.splits) out.add(a.splits.intoId)
@@ -3875,9 +3899,12 @@ function stepAdds(w: World, dtMs: number, dt: number) {
     // three more would put fixate frontals on the raid with no cast to read
     // them off. Derived from the mechanic list rather than flagged on the add,
     // so wiring up a summon cannot forget to switch the wave off.
-    // Nor are the pieces of another add — see splitIds.
+    // Nor the pieces of another add, nor anything a fountain sends — see
+    // splitIds and altarIds. What is left is trash the room throws on a timer,
+    // which is the only thing this scheduler was ever for.
     const list = w.boss.adds.filter(a =>
-      !a.phaseOnly && !summonedIds(w.boss).has(a.id) && !splitIds(w.boss).has(a.id))
+      !a.phaseOnly && !summonedIds(w.boss).has(a.id)
+      && !splitIds(w.boss).has(a.id) && !altarIds(w.boss).has(a.id))
     // Never more than a handful on the field. A wave landing on top of a wave
     // you have not cleared is a wipe you cannot play out of, and it teaches
     // nothing except that the trainer is unfair.

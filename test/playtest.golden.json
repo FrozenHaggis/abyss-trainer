@@ -96,41 +96,43 @@
     }
   },
   "careless/vashnik/tank": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
       "Burning Venom": 2,
-      "Clotting Venom": 1,
       "Deadly Venom": 1,
-      "Dripping Fangs": 1,
+      "Dripping Fangs": 2,
       "Shrouded Venom": 1,
       "Stygian Burst": 2
     }
   },
   "careless/vashnik/healer": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
-      "Burning Venom": 1,
+      "Burning Venom": 2,
       "Clotting Blood": 1,
-      "Clotting Venom": 1,
+      "Clotting Venom": 2,
+      "Congealing Bolt": 1,
       "Deadly Venom": 1,
       "Exploding Infection": 1,
       "Plague Wave": 1,
+      "Shrouded Venom": 1,
       "Stygian Burst": 1
     }
   },
   "careless/vashnik/dps": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "Raid wiped — healing could not keep up",
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
-      "Burning Venom": 1,
-      "Clotting Venom": 2,
+      "Burning Venom": 2,
+      "Clotting Venom": 1,
       "Deadly Venom": 1,
       "Exploding Infection": 1,
+      "Plague Wave": 1,
       "Stygian Burst": 1
     }
   },
@@ -404,22 +406,19 @@
     "outcome": "KILL",
     "failures": {
       "Burning Venom": 1,
-      "Caustic Explosion": 1,
-      "Clotting Venom": 1,
-      "Deadly Venom": 1
+      "Deadly Venom": 1,
+      "Stygian Burst": 2
     }
   },
   "competent/vashnik/healer": {
-    "wins": 0,
-    "cleared": false,
-    "outcome": "enrage",
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
       "Burning Venom": 1,
-      "Caustic Explosion": 1,
       "Clotting Blood": 1,
-      "Congealing Bolt": 1,
       "Deadly Venom": 1,
-      "Umbral Ejection": 1
+      "Stygian Burst": 2
     }
   },
   "competent/vashnik/dps": {
@@ -428,7 +427,8 @@
     "outcome": "KILL",
     "failures": {
       "Burning Venom": 1,
-      "Deadly Venom": 1
+      "Deadly Venom": 1,
+      "Stygian Burst": 2
     }
   },
   "competent/explorers/tank": {

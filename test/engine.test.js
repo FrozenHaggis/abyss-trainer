@@ -1185,6 +1185,53 @@ test('the tanks may cross to the other serpent without the raid paying for it', 
     `the raid bar fell to ${w.raidHealthLow} during a tank swap both tanks performed correctly`)
 })
 
+// A tank resting ON the line, which is where a tank ends up whenever the pull
+// toward their serpent and whatever is shoving them the other way happen to
+// cancel. The playtest harness found exactly that at seed 1337: the bot came to
+// rest 12.0 yards from Ithraz and oscillated a fifth of a yard across the
+// boundary at one tick each, and because every tick back inside cleared the
+// clock, every tick back outside was a fresh departure. The debrief read Clotted
+// Bolt x156 for one continuous mistake.
+//
+// The claim being pinned is the one the engine already made in a comment and did
+// not keep: the BLAME is once per departure. The cost is not what is under test
+// and is deliberately left alone — a tank sitting on their own leash line should
+// still be paying for it.
+test('a tank hovering on the leash line is blamed once, not once a frame', async () => {
+  const { w, vexhul, max, gap, stationOf, step, TICK_MS } = await leashBench('vexhul')
+  assert.equal(vexhul.targetId, 0, 'a tanking player no longer opens holding Vexhul')
+
+  // Straight out from the serpent through the station the AI parks on, so the
+  // two hover points are over real floor rather than out in the acid the
+  // serpents are coiled in.
+  const st = stationOf(vexhul)
+  const ux = (st.x - vexhul.pos.x) / Math.hypot(st.x - vexhul.pos.x, st.y - vexhul.pos.y)
+  const uy = (st.y - vexhul.pos.y) / Math.hypot(st.x - vexhul.pos.x, st.y - vexhul.pos.y)
+  const at = yards => ({ x: vexhul.pos.x + ux * yards, y: vexhul.pos.y + uy * yards })
+
+  // Settle inside first, so the pull's opening grace is spent and nothing below
+  // is that window expiring.
+  Object.assign(w.player.pos, at(max - 4))
+  for (let ms = 0; ms < 8000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  assert.deepEqual([...w.failures.keys()], [], 'the tank was scored before the hover began')
+
+  // A fifth of a yard either side of the line, alternating every tick — a
+  // hundredth of the drift a real body produces, and the smallest movement that
+  // can straddle a single threshold.
+  let flips = 0
+  for (let ms = 0; ms < 6000; ms += TICK_MS) {
+    Object.assign(w.player.pos, at(flips++ % 2 ? max + 0.1 : max - 0.1))
+    step(w, NO_INPUT(), TICK_MS)
+    if (!w.player.alive) break
+  }
+  assert.ok(flips > 100, 'the hover ended early — the tank died before the count could be read')
+  assert.ok(gap(vexhul) > 0, 'the hover points collapsed onto the serpent')
+  assert.equal(w.failures.get('spittle')?.count, 1,
+    `Concentrated Spittle was recorded ${w.failures.get('spittle')?.count} times for a tank who ` +
+    'left melee once and then sat on the line. A leash with one threshold is a leash a body ' +
+    'straddles, and the debrief ends up counting frames instead of failures')
+})
+
 // The other half of the rule, and the half nobody watches: the AI tanks hold
 // their own leashes. They are pulled at by every dodge in `allyThink` — flee the
 // splash, relocate off the pool, pre-position for the knock — and any one of

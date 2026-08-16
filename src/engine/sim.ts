@@ -3122,6 +3122,32 @@ const TANK_LEASH_KNOCK_MS = 3000
  * walking out of range unsurvivable rather than expensive.
  */
 const TANK_LEASH_DPS = 0.3
+/**
+ * How far back INSIDE the line a tank has to come before the leash counts as
+ * held again. A Schmitt trigger, and it is not a nicety.
+ *
+ * The leash breaks at `maxYards` and clears at `maxYards - 1`, because a single
+ * threshold judged every tick is a threshold a body can straddle. Measured on
+ * the playtest harness at seed 1337: a tank came to rest where the pull toward
+ * their serpent and the shove away from Stone Breaker's landing zone cancelled,
+ * which happened to be 12.0 yards from Ithraz, and then oscillated 11.91/12.10
+ * across the line at one tick each. Every tick back inside zeroed `leashOutMs`,
+ * so every tick back outside was a fresh rising edge: 156 recorded Clotted Bolt
+ * failures in 57 seconds, off ONE departure, on the debrief line whose own
+ * comment three lines below promised it would never count frames.
+ *
+ * A yard, and the same yard the ally AI already keeps: the hard clamp in
+ * `allyThink` bounds an AI tank's destination at `maxYards - 1` for exactly this
+ * reason, and its comment says so. The scoring side simply never got the
+ * matching deadband.
+ *
+ * Note what this deliberately does NOT do: it does not soften the cost. A tank
+ * hovering in the band after walking out is still out — still draining, still
+ * barked at — until they come properly back. Making the drain flicker with the
+ * boundary would be the same bug wearing a smaller number, and "half a leash
+ * break" is not a state this fight has.
+ */
+const TANK_LEASH_CLEAR_MARGIN = 1
 
 /**
  * Ally AI. Deliberately assignment-based rather than emergent: when a mechanic
@@ -5688,14 +5714,19 @@ export function step(w: World, input: Input, dtMs: number) {
     if (grace > 0) { w.leashGraceMs[id] = Math.max(0, grace - dtMs); w.leashOutMs[id] = 0; continue }
 
     const holder = currentTank(w, unit)
+    const wasOut = (w.leashOutMs[id] ?? 0) > 0
     // Measured to the ENTITY THEY HOLD, never to the nearest one. `isInMelee`
     // takes the nearest, which on a two-serpent fight would let the Ithraz tank
     // satisfy their range check by standing on Vexhul — the one arrangement the
     // fight forbids outright.
-    if (dist(holder.pos, unit.pos) <= maxYards) { w.leashOutMs[id] = 0; continue }
+    //
+    // Two thresholds rather than one: it breaks at `maxYards` and clears a yard
+    // further in, so a tank resting exactly on the line cannot straddle it. See
+    // TANK_LEASH_CLEAR_MARGIN for the measurement that made this necessary.
+    const clearAt = wasOut ? maxYards - TANK_LEASH_CLEAR_MARGIN : maxYards
+    if (dist(holder.pos, unit.pos) <= clearAt) { w.leashOutMs[id] = 0; continue }
 
     w.leashBroken = true
-    const wasOut = (w.leashOutMs[id] ?? 0) > 0
     w.leashOutMs[id] = (w.leashOutMs[id] ?? 0) + dtMs
     // The cost is immediate and has no threshold clock in front of it. A leash is
     // not a stack count and there is nothing to read: the instant the tank is

@@ -208,6 +208,26 @@ export function briefFor(def: MechanicDef, role: Role, boss?: BossDef): RoleBrie
           yours: mine,
         }
       }
+      // Ground that is ALREADY DOWN, left behind by something that has already
+      // happened. Same defect as the `permanent` branch at the top of this case
+      // and the same fix: "before it lands" describes a circle that appears,
+      // waits and goes off, and there is no such moment here. A telegraph
+      // measured in single milliseconds against a linger measured in seconds is
+      // a leftover — Concussive Blast's burning crater, Mighty Thud's quake —
+      // and it is live from the instant you can see it. Told to step out before
+      // it lands, a raider waits for a beat that has already been and gone.
+      //
+      // Deliberately NOT keyed on fire, and not on any id: the shape of the lie
+      // is the timing, and every leftover in the raid tells it.
+      if (def.lingerMs && def.telegraphMs <= 1000) {
+        return {
+          verb: 'GET OFF IT',
+          line: def.lethal
+            ? 'This is already live — it was left behind by the cast that just resolved, and there is no moment it "lands". It kills outright, so treat it as a hole in the floor until it burns out, and never cut through it to get somewhere.'
+            : `This is already live — it was left behind by the cast that just resolved, and there is no moment it "lands". It ticks on anything standing in it for about ${Math.round(def.lingerMs / 1000)} seconds, so leave the moment it appears and route around it rather than through it.`,
+          yours: mine,
+        }
+      }
       return {
         verb: 'MOVE OUT',
         line: def.lethal
@@ -576,11 +596,16 @@ export function briefFor(def: MechanicDef, role: Role, boss?: BossDef): RoleBrie
       // honest tank instruction is "stay off both" rather than any version of
       // dodge. Everyone else gets the trade, because the trade is the mechanic.
       if (role === 'tank') {
-        return notYours('Tanks are never given an element. Stay out of both pools — standing in the wrong one does nothing for you and takes the cure off the raider who needed it.')
+        return notYours('Tanks are never given an element, so you can neither use a patch nor spend one — only the raider carrying the opposite element can take it, and it goes with them when they do. Keep off both anyway and hold your boss where the two carriers can reach the ground they need.')
       }
       return {
         verb: 'OPPOSITE POOL',
-        line: 'You are given Fire or Frost and you drip a pool of your OWN element wherever you walk. The only thing that takes it off you is standing in a pool of the OTHER one, so find the raider carrying the opposite and trade ground. Still carrying it when the next volley lands detonates on you, and that one kills.',
+        // The vocabulary is the mechanic here, so the line uses both halves of it
+        // exactly as the ability data does: BURNING FLAMES and PIERCING FROST are
+        // the minute-long markers a raider wears, and a FIRE PATCH or FROST PATCH
+        // is the ground left behind. Saying "a fire pool" for both is what taught
+        // players the cure and the affliction were the same object.
+        line: 'You are handed Burning Flames or Piercing Frost, and you set down ONE patch of your own element where you are standing — a Fire Patch or a Frost Patch, and that is the ground, not the debuff. The only thing that takes the marker off you is walking into the OTHER patch, which is spent the moment it cures you and vanishes. There is exactly one of each on the floor and exactly one customer for each, so nobody can beat you to yours. Still carrying it when the next volley lands detonates on you, and that one kills.',
         // Same call as `beInside`: `collective` means "never name an individual
         // in the debrief", not "not your job". The volley is disclaimed; being
         // told it is not yours directly above an instruction to trade pools would
@@ -590,11 +615,20 @@ export function briefFor(def: MechanicDef, role: Role, boss?: BossDef): RoleBrie
 
     case 'elementPool':
       if (role === 'tank') {
-        return notYours('Tanks are never given an element, so neither pool has anything to say to you. Keep out of both and hold your boss where the carriers can meet.')
+        return notYours('Tanks are never given an element, so neither patch has anything to say to you — you cannot be cured by one and you cannot spend one. Keep out of both and hold your boss where the carriers can meet.')
       }
       return {
         verb: 'OPPOSITE POOL',
-        line: `This is a pool of ${def.rule.element === 'fire' ? 'Fire' : 'Frost'}. It cures the raider carrying ${def.rule.element === 'fire' ? 'Frost' : 'Fire'} and does nothing whatever for anybody else — your cure is the pool of the element you are NOT carrying, and standing in your own is a wasted run.`,
+        // Named as the GROUND it is — `def.name` is Fire Patch or Frost Patch —
+        // and never as the debuff, which is Burning Flames or Piercing Frost and
+        // is a different object with a different id. Both vocabularies are right
+        // and using either one for both is what this pass is undoing.
+        //
+        // It also has to say the patch is CONSUMED, because that reversed this
+        // week and the old ruling is the intuition a returning player has: a
+        // cure that is spent is a cure you cannot walk back into, and finding
+        // that out by walking back into nothing is a bad way to learn it.
+        line: `${def.name} is the GROUND, not the debuff you are carrying. It cures the raider marked with ${def.rule.element === 'fire' ? 'Piercing Frost' : 'Burning Flames'} and does nothing whatever for anybody else — and it is spent doing it: one patch, one cure, and it is gone. Your cure is the patch of the element you are NOT carrying; standing in your own is a wasted run, and it cannot be used up by anybody who does not need it.`,
         yours: def.roles.includes(role),
       }
 

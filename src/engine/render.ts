@@ -1,4 +1,4 @@
-import type { BossDef, Instance, Role, Side, Vec } from './types'
+import type { BossDef, Instance, MechanicDef, Role, Side, Vec } from './types'
 import { COMPASS, OPPOSITE } from './types'
 import type { AltarState, BossUnit, World } from './sim'
 import { VENOM_FLASH_MS, WIND_TOUCH_YARDS, bossUnitFor, inArena } from './sim'
@@ -46,10 +46,54 @@ const BONE = '226, 219, 196'
 const FIRE = '255, 138, 62'
 const FROST = '126, 196, 255'
 const elementColour = (e: 'fire' | 'frost') => (e === 'fire' ? FIRE : FROST)
-/** What the debuff is called on the raider carrying it, for the label. */
+/**
+ * TWO VOCABULARIES, BOTH CORRECT, AND THEY ARE NOT THE SAME WORDS.
+ *
+ * The ability data separates the marker a raider WEARS from the ground it puts
+ * down, and so does this file:
+ *
+ *   carried debuff   BURNING FLAMES (1295928) / PIERCING FROST (1295954)
+ *   ground           FIRE PATCH     (1297649) / FROST PATCH   (1297648)
+ *
+ * `ELEMENT_NAME` is the FIRST column and is only ever drawn on a body — the
+ * player's own carry readout at the bottom of this file. Ground is named from
+ * `MechanicDef.name`, which is the second column, and never from this table.
+ * Labelling a patch with the debuff's name said the cure and the affliction were
+ * the same object, on a mechanic whose entire lesson is that they are opposites.
+ */
 const ELEMENT_NAME: Record<'fire' | 'frost', string> = {
   fire: 'BURNING FLAMES',
   frost: 'PIERCING FROST',
+}
+/**
+ * Burnt floor, for the dead centre of a fire hazard.
+ *
+ * Nearly black on purpose. It is the value inversion that keeps a crater apart
+ * from a cure — see the burning-ground pass below for the whole argument.
+ */
+const CHAR = '24, 8, 6'
+
+/**
+ * Is this a lingering patch of FIRE that hurts — as opposed to the polarity
+ * cure, which is also a patch of fire and does the exact opposite?
+ *
+ * Read off the mechanic's own words and its own rule, never off an id and never
+ * off `boss.key`. Concussive Blast says "12s Fire DoT" and Vashnik's Caustic
+ * Explosion and Caustic Surge both say "Fire", so all three get the treatment
+ * from one test; Aftershock is a quake and Shell Spin is a shell, so neither
+ * does. A cure can never reach here twice over: `elementPool` is not `avoid`,
+ * and the passes that draw ground skip element pools before this is ever asked.
+ *
+ * "burns" is deliberately NOT in the word list. Vashnik's Stygian Burst is a
+ * Shadow eruption that "burns anyone standing in it", and the word there is a
+ * verb about damage rather than a school of magic. The list is substances.
+ */
+const BURNING_WORDS = /\b(fire|flame|flames|scorch|cinder|ember|magma|lava|inferno|blaze|pyro)/i
+function isBurningGround(def: MechanicDef): boolean {
+  if (def.rule.type !== 'avoid') return false
+  if (!def.lingerMs || !def.damage) return false
+  if (def.shape?.kind !== 'circle') return false
+  return BURNING_WORDS.test(`${def.name} ${def.what ?? ''}`)
 }
 /** An empowered explorer. Gold, the file's existing "do not misread this" hue. */
 const GOLD = '210, 153, 34'
@@ -63,6 +107,102 @@ const GOLD = '210, 153, 34'
  * when you pressed it, short enough that two kicks in a row are two events.
  */
 const KICK_FLASH_MS = 1400
+
+/**
+ * A CURE THAT HAS JUST BEEN SPENT, and why the renderer has to remember it.
+ *
+ * A Fire Patch or a Frost Patch now vanishes the instant it cures somebody: the
+ * sim marks it answered, throws its timer far past its linger, and the sweep at
+ * the bottom of the same tick drops it out of `w.instances`. So by the time any
+ * frame is drawn the pool is simply GONE — no flag, no corpse, nothing to read.
+ *
+ * Left like that the mechanic's best moment is invisible. A carrier runs at the
+ * only ground that saves them, and between one frame and the next the ground is
+ * not there; a player who did not already know the rule reads that as the pool
+ * having expired underneath them, or as a bug. The cure working has to be an
+ * EVENT, the same argument that made an interrupt draw a broken cast bar.
+ *
+ * So this file keeps one frame of memory of every element pool and lights a
+ * flash where one disappeared EARLY. Early is the whole test: a pool that runs
+ * out of linger fades over its last second and is expected, and a pool that had
+ * most of a lifetime left and is suddenly not there was taken by a body. The
+ * slack is generous enough that no fade is ever mistaken for a cure.
+ *
+ * Deliberately not RNG and not a mutation of the world: the renderer must be
+ * able to draw the same frame twice and must never move a seeded playtest.
+ */
+const CURE_SPENT_MS = 620
+const CURE_SPENT_SLACK_MS = 900
+
+interface PoolMemo {
+  pos: Vec
+  /** Pixels are a camera away, so the memo holds yards and converts on draw. */
+  radiusYards: number
+  element: 'fire' | 'frost'
+  name: string
+  /** Milliseconds of linger it still had when it was last seen. */
+  left: number
+}
+interface SpentCure extends PoolMemo {
+  atMs: number
+  /** It took the element off YOU, rather than off somebody across the room. */
+  mine: boolean
+}
+/** uid → what that pool looked like on the last frame it existed. */
+const poolMemory = new Map<number, PoolMemo>()
+let spentCures: SpentCure[] = []
+/** Guards against a new pull inheriting the last one's ghosts. */
+let poolClockMs = -1
+let lastPlayerElement: 'fire' | 'frost' | null = null
+
+/**
+ * Diff this frame's element pools against the last one, and light a flash for
+ * every pool that left the floor before its time was up.
+ *
+ * Called once per frame from `render`, before anything is drawn.
+ */
+function trackSpentCures(w: World): void {
+  // A drill restarted, or a different world entirely. `elapsedMs` only ever
+  // climbs inside one pull, so it going backwards is the only signal needed —
+  // and uids restart with the world, so stale memory would light flashes on
+  // ground that belongs to the new pull.
+  if (w.elapsedMs < poolClockMs) {
+    poolMemory.clear()
+    spentCures = []
+    lastPlayerElement = null
+  }
+  poolClockMs = w.elapsedMs
+
+  const seen = new Set<number>()
+  for (const inst of w.instances) {
+    if (inst.def.rule.type !== 'elementPool') continue
+    seen.add(inst.uid)
+    poolMemory.set(inst.uid, {
+      pos: { ...inst.pos },
+      radiusYards: inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 6,
+      element: inst.def.rule.element,
+      name: inst.def.name,
+      left: (inst.def.lingerMs ?? 0) + inst.timer,
+    })
+  }
+  for (const [uid, memo] of poolMemory) {
+    if (seen.has(uid)) continue
+    poolMemory.delete(uid)
+    if (memo.left <= CURE_SPENT_SLACK_MS) continue      // it simply ran out
+    // Whose cure it was. The player losing an element on the same frame a patch
+    // of the OPPOSITE one disappeared is the player having taken it — which is
+    // worth saying, because "the pool is gone" and "the pool is gone because it
+    // is now off you" are different pieces of news.
+    const mine = lastPlayerElement !== null
+      && w.player.element === null
+      && lastPlayerElement !== memo.element
+    spentCures.push({ ...memo, atMs: w.elapsedMs, mine })
+  }
+  lastPlayerElement = w.player.element
+  if (spentCures.length) {
+    spentCures = spentCures.filter(f => w.elapsedMs - f.atMs < CURE_SPENT_MS)
+  }
+}
 
 /**
  * Daylight beyond the link radius before the pair is called "closing".
@@ -754,6 +894,11 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
 
   ctx.clearRect(-20, -20, width + 40, height + 40)
   const pulse = 0.5 + 0.5 * Math.sin(w.elapsedMs / 260)
+  // Before anything is drawn: notice which cures left the floor since the last
+  // frame, because by now the sim has already swept them away. See the note on
+  // `trackSpentCures` — a pool that vanishes silently is a mechanic the player
+  // has to be told about instead of shown.
+  trackSpentCures(w)
 
   // ── arena floor and edge ──
   // The floor is whatever shape the boss declares. Six of these rooms are round
@@ -1085,11 +1230,18 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   for (const inst of w.instances) {
     if (!inst.resolved || !inst.def.shape) continue
     if (inst.def.rule.type === 'lethalGround') continue   // drawn above as a hole
-    // An element pool lingers for twenty seconds and would be caught by this
-    // pass, which paints everything red. It is a CURE, and the one thing this
-    // file must never do is tell a carrier to walk out of the only ground that
-    // saves them. Drawn in its own colours immediately below.
+    // An element pool lingers for twenty-two seconds — or until the one body it
+    // can cure walks into it, whichever comes first — and would be caught by
+    // this pass, which paints everything red. It is a CURE, and the one thing
+    // this file must never do is tell a carrier to walk out of the only ground
+    // that saves them. Drawn in its own colours two passes below.
     if (inst.def.rule.type === 'elementPool') continue
+    // Fire that HURTS gets its own pass immediately below, and the whole reason
+    // it does is the pool skipped on the line above. Left here, a crater was one
+    // more flat red disc — indistinguishable at a glance from the amber disc
+    // that saves you, which is the confusion this raid has already paid for
+    // once. See the burning-ground pass for the six channels they differ on.
+    if (isBurningGround(inst.def)) continue
     // A ripple is a travelling RING and its declared `annulus` shape is only
     // there so the guards that skip shapeless instances still see one. Drawn
     // here it would be a fixed disc sitting on the bomb site for the whole
@@ -1150,6 +1302,133 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
   }
 
+  // ── burning ground ──
+  //
+  // Fire on the floor that HURTS, drawn so it can never be read as the fire on
+  // the floor that saves you.
+  //
+  // THE CONFUSION THIS PASS EXISTS TO KILL. Explosive Surprise leaves Concussive
+  // Blast in the crater the ring came out of: twelve yards of fire that ticks for
+  // fourteen seconds. The polarity CURE is called Fire Patch, is amber, is
+  // harmless to everybody, and is the only ground in this raid you are supposed
+  // to run into. Two orange discs meaning opposite things is exactly the bug the
+  // vocabulary pass has just finished removing, and a player must be able to
+  // answer "which orange saves me" without reading a word — so the two are
+  // separated on every channel there is, not merely on hue:
+  //
+  //                cure — FIRE PATCH            hazard — CONCUSSIVE BLAST
+  //   hue          amber, one flat family       red, over a black char core
+  //   value        BRIGHTEST in the middle      DARKEST in the middle
+  //   texture      smooth wash                  hard diagonal hatching
+  //   rim          one thin solid ring          thick licking tongues of flame
+  //   motion       slow spokes, steady          embers rising off it
+  //   label        YOUR CURE · FIRE PATCH       CONCUSSIVE BLAST · BURNS
+  //
+  // Four of those six survive total colour blindness, and the value inversion is
+  // the load-bearing one: a cure glows out of its centre and a crater is burnt
+  // out at its centre, so the two are still opposites in a greyscale screenshot.
+  // Hatching does the same job — it is the one texture in this file, used
+  // nowhere else, and it means keep off.
+  //
+  // NAMED, and named as itself. The hard constraint on this pass is that it must
+  // never say "Fire Patch": that id is the cure now, and a damaging pool wearing
+  // the cure's name would rebuild the confusion in words after the drawing had
+  // taken it apart. It says what it is and what it does to you.
+  //
+  // Selected by `isBurningGround`, off the mechanic's own words — so Vashnik's
+  // two Fire pools get the same treatment from the same test, and nothing here
+  // knows which boss it is drawing.
+  for (const inst of w.instances) {
+    if (!inst.resolved || inst.def.shape?.kind !== 'circle') continue
+    if (!isBurningGround(inst.def) || inst.def.ripple) continue
+    const p = toPx(cam, inst.pos)
+    const rr = inst.def.shape.radius * cam.scale
+    const permanent = !!inst.def.permanent
+    const left = (inst.def.lingerMs ?? 0) + inst.timer
+    const dying = permanent ? 1 : Math.max(0.25, Math.min(1, left / 1200))
+    // Flicker, on its own clock per crater so two of them never pulse together.
+    const flick = 0.5 + 0.5 * Math.sin(w.elapsedMs / 150 + inst.uid * 1.7)
+
+    // 1. THE CHAR. Black in the middle, hot at the rim — the exact inverse of a
+    //    cure pool's radial wash, and the one cue that needs no colour vision.
+    const burn = ctx.createRadialGradient(p.x, p.y, rr * 0.05, p.x, p.y, rr)
+    burn.addColorStop(0, `rgba(${CHAR}, ${0.88 * dying})`)
+    burn.addColorStop(0.55, `rgba(126, 26, 18, ${0.62 * dying})`)
+    burn.addColorStop(1, `rgba(${RED}, ${(0.34 + 0.10 * flick) * dying})`)
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2)
+    ctx.fillStyle = burn; ctx.fill()
+
+    // 2. THE HATCHING. Diagonal bars clipped to the disc. Nothing else in this
+    //    renderer is hatched, so the texture alone identifies a hazard, and it
+    //    survives being printed in black and white.
+    ctx.save()
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2)
+    ctx.clip()
+    ctx.strokeStyle = `rgba(${RED}, ${0.45 * dying})`
+    ctx.lineWidth = 2
+    const gap = 9
+    // Drifting slowly along its own diagonal so the ground looks alive without
+    // ever looking like it is moving somewhere — a crater does not travel.
+    const slide = (w.elapsedMs / 900) % gap
+    ctx.beginPath()
+    for (let o = -rr * 2; o <= rr * 2; o += gap) {
+      const k = o + slide
+      ctx.moveTo(p.x - rr * 1.5 + k, p.y - rr * 1.5)
+      ctx.lineTo(p.x + rr * 1.5 + k, p.y + rr * 1.5)
+    }
+    ctx.stroke()
+    ctx.restore()
+    ctx.lineWidth = 1
+
+    // 3. TONGUES OF FLAME on the rim, instead of the cure's single smooth ring.
+    //    A scalloped, breathing edge is what makes the thing read as burning
+    //    rather than as a circle somebody filled in red.
+    ctx.beginPath()
+    const tongues = 18
+    for (let i = 0; i <= tongues * 4; i++) {
+      const a = (i / (tongues * 4)) * Math.PI * 2
+      const lick = 0.5 + 0.5 * Math.sin(a * tongues + w.elapsedMs / 260 + inst.uid)
+      const r = rr * (0.97 + 0.10 * lick)
+      const x = p.x + Math.cos(a) * r
+      const y = p.y + Math.sin(a) * r
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    ctx.strokeStyle = `rgba(${RED}, ${(0.85 + 0.15 * flick) * dying})`
+    ctx.lineWidth = 3.5
+    ctx.stroke()
+    ctx.strokeStyle = `rgba(255, 214, 150, ${0.45 * dying})`
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+    ctx.lineWidth = 1
+
+    // 4. EMBERS lifting off it. Deterministic — position, size and phase are
+    //    hashed off the index and the instance's uid — because a renderer that
+    //    drew random numbers would make a seeded playtest depend on how many
+    //    frames had been painted. The same discipline as the acid.
+    for (let i = 0; i < 9; i++) {
+      const seed = i * 37 + inst.uid * 11
+      const period = 1100 + (seed % 700)
+      const t = ((w.elapsedMs + seed * 53) % period) / period
+      const a = ((seed * 2.399963) % (Math.PI * 2))
+      const rad = rr * (0.25 + ((seed % 11) / 11) * 0.6)
+      const ex = p.x + Math.cos(a) * rad
+      const ey = p.y + Math.sin(a) * rad - t * rr * 0.55
+      ctx.beginPath()
+      ctx.arc(ex, ey, (1.4 + 1.6 * (1 - t)) * Math.min(1, cam.scale / 8), 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255, ${Math.round(150 + 70 * (1 - t))}, 70, ${(0.75 * (1 - t) * dying).toFixed(3)})`
+      ctx.fill()
+    }
+
+    // 5. AND IT SAYS SO. A crater sitting anonymously on the floor was something
+    //    you learned by taking a tick of it; the verb is on the label so the
+    //    reading is finished before anybody has to test it.
+    drawLabel(
+      ctx, `${inst.def.name.toUpperCase()} · BURNS`, p.x, p.y + rr + 12, RED, 11,
+      (0.85 + 0.15 * flick) * dying,
+    )
+  }
+
   // ── element pools ──
   //
   // The ground half of Frostfire Volley, and the only ground in the raid you are
@@ -1164,6 +1443,12 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   //
   // Filled low and rimmed solid, deliberately unlike a telegraph: nothing here
   // is landing, the pool simply is, and it does no damage to anybody at all.
+  //
+  // A cure is now SPENT WHEN IT WORKS — one pool, one cure, gone — so this pass
+  // also lights the moment it goes. That flash is drawn after the pools, below.
+  // It is not decoration: the sim retires a used patch inside the same tick, so
+  // without it the best moment in the mechanic is a disc that was there on one
+  // frame and absent on the next.
   for (const inst of w.instances) {
     if (inst.def.rule.type !== 'elementPool' || !inst.def.shape) continue
     const el = inst.def.rule.element
@@ -1172,6 +1457,11 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     const rr = (inst.def.shape.kind === 'circle' ? inst.def.shape.radius : 6) * cam.scale
     // Fades over its last second the way every other timed pool does, so a
     // carrier can tell a cure that is about to go out from one that is not.
+    //
+    // That fade is also what tells the two ENDINGS apart. A patch that runs out
+    // of linger dims for a second first; a patch that is spent curing somebody
+    // is at full brightness one frame and gone the next, and the flash below
+    // fires on exactly that difference.
     const left = (inst.def.lingerMs ?? 0) + inst.timer
     const dying = Math.max(0.3, Math.min(1, left / 1200))
     const wash = ctx.createRadialGradient(p.x, p.y, rr * 0.2, p.x, p.y, rr)
@@ -1216,14 +1506,26 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // YOUR cure. The green ring is the whole reason the pools are not green:
     // it appears on exactly one of the two, and it means "this one, run at it".
     //
-    // Both are named in full rather than abbreviated to FIRE and FROST, because
-    // the full names are the ones a carrier is wearing and the ones the HUD chip
-    // and the body rim use. One vocabulary for one mechanic.
+    // The GROUND is named after the ground, not after the debuff. These used to
+    // share one name, and this comment used to argue for that on the grounds of
+    // "one vocabulary for one mechanic" — but the ability data separates them
+    // and so does the fight: Burning Flames is the marker a raider wears for a
+    // minute, Fire Patch is the floor it drips. Labelling the patch with the
+    // debuff's name said the cure and the affliction were the same object, on a
+    // mechanic whose entire lesson is that they are opposites.
+    //
+    // The element still reads off the COLOUR, which is what anybody actually
+    // uses at speed. The name is there for the moment you stop and check.
     if (w.player.element && w.player.element !== el) {
       ctx.beginPath(); ctx.arc(p.x, p.y, rr + 5 + 3 * pulse, 0, Math.PI * 2)
       ctx.strokeStyle = `rgba(${GREEN}, ${0.55 + 0.4 * pulse})`
       ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
-      drawLabel(ctx, `YOUR CURE · ${ELEMENT_NAME[el]}`, p.x, p.y - rr - 14, GREEN, 11, 0.95)
+      drawLabel(ctx, `YOUR CURE · ${inst.def.name.toUpperCase()}`, p.x, p.y - rr - 14, GREEN, 11, 0.95)
+      // And that it is a ONE-USE patch, said before it happens rather than
+      // discovered afterwards. There is exactly one customer for this ground —
+      // you — so nobody can beat you to it, but the patch still leaves with your
+      // element and a raider who expected it to sit there is owed the warning.
+      drawLabel(ctx, 'ONE USE — IT LEAVES WITH YOU', p.x, p.y + rr + 12, GREEN, 10, 0.72)
       // And a line to it, while you are carrying something. There is exactly one
       // of these on the floor, it does not move, and the entire decision is
       // getting to it before the next volley — which is the same argument that
@@ -1241,7 +1543,7 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
       }
     } else {
       drawLabel(
-        ctx, ELEMENT_NAME[el], p.x, p.y - rr - 12, col, 10,
+        ctx, inst.def.name.toUpperCase(), p.x, p.y - rr - 12, col, 10,
         (w.player.element ? 0.8 : 0.6) * dying,
       )
       // The pool of your OWN element. It looks exactly like the one that saves
@@ -1251,6 +1553,57 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
         drawLabel(ctx, 'YOUR OWN — NO CURE', p.x, p.y + rr + 12, col, 10, 0.75 * dying)
       }
     }
+  }
+
+  // ── a cure being spent ──
+  //
+  // The pool is already gone from the world by the time this draws — see
+  // `trackSpentCures` — so this is the only place the moment exists at all.
+  //
+  // It COLLAPSES INWARD, and that is the whole grammar of it. Everything else
+  // this file throws off a body or a plinth expands: an altar's drink ring, an
+  // impact bloom, a corpse burning. Expansion means something has been released.
+  // A cure is the opposite — the ground gives its element up to whoever stood in
+  // it — so the ring shrinks onto the spot, the spokes point in, and the white
+  // core snaps out at the end. A player who sees it once knows the patch went
+  // somewhere rather than merely stopped.
+  for (const flash of spentCures) {
+    const f = 1 - (w.elapsedMs - flash.atMs) / CURE_SPENT_MS
+    if (f <= 0 || f > 1) continue
+    const p = toPx(cam, flash.pos)
+    const rr = flash.radiusYards * cam.scale
+    const col = elementColour(flash.element)
+    // The ring, drawn in the element's own colour so it is unmistakably THAT
+    // patch that went and not some other event on the same square of floor.
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr * f, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${col}, ${0.95 * f})`
+    ctx.lineWidth = 2 + 5 * (1 - f)
+    ctx.stroke()
+    // Six spokes falling inward.
+    ctx.strokeStyle = `rgba(${col}, ${0.7 * f})`
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2
+      ctx.moveTo(p.x + Math.cos(a) * rr * (0.35 + 0.75 * f), p.y + Math.sin(a) * rr * (0.35 + 0.75 * f))
+      ctx.lineTo(p.x + Math.cos(a) * rr * 0.2 * f, p.y + Math.sin(a) * rr * 0.2 * f)
+    }
+    ctx.stroke()
+    ctx.lineWidth = 1
+    // The core, brightest at the end of the collapse rather than at the start:
+    // the pool arriving somewhere, not the pool leaving.
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3 + 9 * (1 - f) * f * 4, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(255, 250, 240, ${0.85 * f})`
+    ctx.fill()
+    // Said in words as well, and in GREEN, because a cure being spent is the
+    // mechanic going right — the same call the broken cast bar makes. `mine`
+    // separates "your element just came off you" from a trade you watched
+    // somebody else make across the room.
+    drawLabel(
+      ctx,
+      flash.mine ? `CURED · ${flash.name.toUpperCase()} SPENT` : `${flash.name.toUpperCase()} SPENT`,
+      p.x, p.y - rr - 12, GREEN, flash.mine ? 12 : 10, Math.min(1, f * 1.6),
+    )
   }
 
   // ── corpses ──
@@ -1867,8 +2220,14 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (!inst.resolved || !inst.def.shape) continue
     // A hole in the floor did not "land"; it was always there.
     if (inst.def.rule.type === 'lethalGround') continue
-    // An element pool did not land either — it is dripped under a carrier every
-    // second or so, and a white bloom on each one would strobe the whole trade.
+    // An element pool did not land either. It is SET DOWN — one patch per
+    // carrier, at the moment the volley deals the element — and a white bloom in
+    // the shape of a telegraph landing would say a hazard had just arrived on
+    // the one piece of ground in this raid that is purely good news.
+    //
+    // Its own two moments are drawn where they belong: the pool appearing is the
+    // element pass above, and the pool being spent curing somebody is the
+    // collapse flash beside it. Neither is an impact.
     if (inst.def.rule.type === 'elementPool') continue
     // A ripple does not land either — it is the moment it STARTS travelling, and
     // a bloom in the shape of its unused annulus would be a flash over the wrong
@@ -2565,13 +2924,28 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // The element you are carrying, in the element's own colour, and named. Which
   // one you have decides which pool cures you and there is no second chance to
   // work it out — the next volley kills a carrier who still has one.
+  //
+  // BOTH VOCABULARIES, in one line, which is the only place they meet on your
+  // own body: the marker is BURNING FLAMES or PIERCING FROST and the answer is a
+  // PATCH, which is a different object with a different spell id. It said "RUN
+  // INTO FROST" before, which is the debuff's word used for the ground — the
+  // exact conflation the patch ids were separated to end.
+  //
+  // The ground's name is LOOKED UP rather than spelled here: whichever mechanic
+  // on this boss is an `elementPool` of the element you are not carrying is, by
+  // definition, your cure, and it carries its own name. A fight that renamed its
+  // patches, or added a third element, is drawn correctly without this file
+  // being touched — and no name in this renderer can drift out of step with the
+  // ability data the boss file was authored from.
   if (w.player.element) {
     const col = elementColour(w.player.element)
+    const cureName = w.boss.mechanics.find(m =>
+      m.rule.type === 'elementPool' && m.rule.element !== w.player.element)?.name
     ctx.beginPath(); ctx.arc(pp.x, pp.y, 19, 0, Math.PI * 2)
     ctx.strokeStyle = `rgba(${col}, ${0.8 + 0.2 * pulse})`
     ctx.lineWidth = 4; ctx.stroke(); ctx.lineWidth = 1
     drawLabel(
-      ctx, `${ELEMENT_NAME[w.player.element]} — RUN INTO ${w.player.element === 'fire' ? 'FROST' : 'FIRE'}`,
+      ctx, `${ELEMENT_NAME[w.player.element]} — RUN INTO THE ${(cureName ?? (w.player.element === 'fire' ? 'frost' : 'fire')).toUpperCase()}`,
       pp.x, pp.y + (w.fishCarried ? 44 : 30), col, 12, 0.95,
     )
   }

@@ -52,13 +52,27 @@ import type { BossDef } from '../engine/types'
 // crates → fish → feed → empowered cast → crates. If the player never delivers a
 // fish, Throw Junk #2 never arms and the bar simply fills. That is the fight.
 //
+// AND THE CHAIN IS ONLY AS FAST AS THE EMPOWERED ABILITY'S TURN. That link used
+// to be the slowest thing in the fight and it is what the pacing pass fixed:
+// every Throw Junk after the first waits for the previous fish's empowered
+// ability to RESOLVE, and with two turns each in an eighteen-entry array that
+// wait could run to fifty seconds. The engine now keeps an appointment for a
+// gate the instant it opens and spends a beat that would have been silence on
+// whichever open gate is overdue, and this file pays for both by giving each
+// empowered entry three turns in a twenty-entry array — so the wait between
+// buying an ability and seeing it is a single beat, and the fish economy runs at
+// the speed the player is paying for rather than at the speed of a round-robin.
+// See `loop`.
+//
 // ── ASSUMPTIONS, made because the directive is silent ────────────────────────
 //
 // These are the places the source does not say, so a decision had to be taken.
 // Each one is marked so it is easy to overturn later without re-reading the
 // whole file. A–G are the original set; H–N were added when the fight was
-// reconciled against the second and third rounds of decisions, and O–Q when the
-// tank job, the wave and the volley were rebuilt after the first play session.
+// reconciled against the second and third rounds of decisions, O–Q when the
+// tank job, the wave and the volley were rebuilt after the first play session,
+// and R when the pacing pass made the empowered half of the rotation actually
+// arrive. J and Q were both REVERSED by that pass and say so in place.
 //
 //   ASSUMPTION A — Every Throw Junk hides exactly one Disgusting Fish until
 //     three have been found; afterwards Throw Junk still fires and hides none.
@@ -77,9 +91,30 @@ import type { BossDef } from '../engine/types'
 //   ASSUMPTION C — energyPerSec, pullLengthSec, maxHp and chipLag are not in the
 //     directive. The values below are a starting point and were settled with
 //     `npm run playtest`, not by eye. The bar to hold is the repo's: all three
-//     careless cells die, all three competent cells kill. `maxHp` is the kill
-//     -pacing lever now that it is live — the target is that the THIRD empowered
-//     mechanic lands with roughly 10% left on each explorer.
+//     careless cells die, all three competent cells kill.
+//
+//     THE PACING TARGET, restated after the pacing pass, because it used to be
+//     "the third empowered mechanic lands with roughly 10% left on each
+//     explorer" and that was a target about the KILL rather than about practice.
+//     What the user asked for is reps, so what the numbers are now aimed at is:
+//     all three empowerments bought while there is still real pull left, and
+//     every empowered ability cast several times rather than once. Measured
+//     across six seeds and all three roles — eighteen pulls — every single one
+//     buys all three empowerments, the third of them landing between 76.6s and
+//     124.4s of pulls that run 123-180s. Seventeen of the eighteen then have
+//     36-77s of pull left to spend on it and the eighteenth has 6.6s.
+//     Fifty-one of the fifty-four abilities bought are cast between two and eight
+//     times; Mighty Thud, the ability the report was about, is cast two to eight
+//     times on every row in the sweep. The three cast once are the ability bought
+//     LAST on a dps pull, which is the shortest pull there is — that is the
+//     residual, and it is recorded rather than hidden.
+//
+//     `maxHp` is the kill-pacing lever and is bounded from ABOVE by the healer's
+//     enrage. The lower bound it used to carry — "a shallower pool starves the
+//     fish economy, because a body that dies before it eats can never be
+//     empowered" — is gone, and it was never a property of this dial: the bodies
+//     were dying because the playtest bot burned an unfed mouth to the bone. It
+//     no longer does. See `maxHp`.
 //
 //   ASSUMPTION D — Relentless Escalation, Cataclysmic Invocation and Smashing
 //     Shovel RAMP toward a wipe rather than ending the pull on the spot. They
@@ -136,19 +171,30 @@ import type { BossDef } from '../engine/types'
 //     modelled as a stun — the engine has no stun — so `damage` carries the cost
 //     of being clipped, and `popsOnContact` carries "one shell, one hit".
 //
-//   ASSUMPTION J — The player finds the fish ROUGHLY 75% of the time; the rest
-//     of the time an ally takes it and feeds it on a fixed priority, Iku > Gebbo
-//     > Nama, skipping any explorer that has already eaten. The directive says
-//     "a strong chance the non-tank player character finds the fish" without a
-//     number. What a missed fish costs you is the CHOICE of which explorer gets
-//     empowered next — never the pull.
+//   ASSUMPTION J — REVERSED IN THE PACING PASS. The player finds the fish
+//     ROUGHLY 75% of the time; the rest of the time an ally takes it and feeds it
+//     to a mouth chosen from `feedPriority`, skipping any explorer that has
+//     already eaten. The directive says "a strong chance the non-tank player
+//     character finds the fish" without a number. What a missed fish costs you is
+//     the CHOICE of which explorer gets empowered next — never the pull.
+//
+//     THE ORDER IS NOW SHUFFLED ONCE PER PULL and it used to be the fixed list
+//     Iku > Gebbo > Nama. That fixed list is what the user's report was actually
+//     describing: read strictly in order it makes Nama third on every pull ever
+//     played, so Mighty Thud is always the empowerment the pull runs out of time
+//     for, and no amount of loop tuning can rescue an ability whose lateness is
+//     an INPUT to the schedule rather than an output of it. The engine now draws
+//     a Fisher-Yates over the list from the world seed (`feedOrderFor`), so a
+//     fixed seed still reproduces a pull exactly and a session practises all
+//     three empowerments instead of two. The list itself no longer claims an
+//     order and nothing may read it as though it did.
 //
 //     HOW IT IS ACTUALLY BUILT, because it is not the 75% dice roll the number
 //     above implies. The fish is still planted uniformly across the six crates,
 //     and the player gets SIX SECONDS of first refusal on whichever one it fell
 //     out of before the raid will touch it (`FISH_FIRST_REFUSAL_MS`); after that
-//     the nearest non-tank raider carries it to `feedPriority`. On a dps or
-//     healer pull the player is standing among the crates and takes it nearly
+//     the nearest non-tank raider carries it to this pull's feed order. On a dps
+//     or healer pull the player is standing among the crates and takes it nearly
 //     every time, which is where the "roughly three in four" comes from — it is
 //     emergent from where the player is standing rather than rolled. On a TANK
 //     pull the player is walking the stacked pair away from Gebbo and never
@@ -166,25 +212,26 @@ import type { BossDef } from '../engine/types'
 //     consequence; a second clock on top of Mor'zahi's is pressure the directive
 //     never asked for.
 //
-//   ASSUMPTION L — Mighty Thud marks the player on most casts but not all, per
-//     the engine's `origin: 'targeted'` convention — the point of a trainer is
-//     that you get the reps. Frostfire Volley always pairs the player with
-//     exactly one cooperating ally carrying the opposite element, because a bot
-//     that ignored the trade would make the player's half unplayable through no
-//     fault of theirs. Neither pool ever hurts anybody: an element pool is the
-//     only purely-good ground in this raid, it cures the opposite element and
-//     does nothing whatsoever to anyone else, including the carrier standing in
-//     their own.
+//   ASSUMPTION L — Mighty Thud's landing zones fall on the raid rather than on
+//     one nominated body (`origin: 'random'`), so who has to move is read off the
+//     floor every cast. Frostfire Volley always pairs the player with exactly one
+//     cooperating ally carrying the opposite element, because a bot that ignored
+//     the trade would make the player's half unplayable through no fault of
+//     theirs. Neither pool ever hurts anybody: an element pool is the only
+//     purely-good ground in this raid, it cures the opposite element and does
+//     nothing whatsoever to anyone else, including the carrier standing in their
+//     own — it simply goes out once it has done its one job. See assumption Q.
 //
 //   ASSUMPTION M — Throw Junk re-arms 6 SECONDS after the empowered cast that
 //     armed it (`rearmOn.delaySec`). Two reasons, and the second is load-bearing:
 //     it gives the raid a beat to clear the craters or the pools the empowered
 //     ability just left, AND it is longer than the span over which one Mighty
-//     Thud resolves. Thud leaps three times 2.2s apart on a 4s telegraph, so its
-//     three resolves land 4.0s, 6.2s and 8.4s after the cast; the engine only
-//     arms a DORMANT entry, so a delay shorter than that span would let leaps two
-//     and three each arm another crate window and drop three of them in five
-//     seconds.
+//     Thud resolves. Thud leaps twice 2.2s apart on a 4s telegraph, so its
+//     resolves land 4.0s and 6.2s after the cast; the engine only arms a DORMANT
+//     entry, so a delay shorter than that span would let the second leap arm
+//     another crate window and drop two of them inside six seconds. THE TWO
+//     NUMBERS ARE COUPLED: raise `leaps.gapMs` or `leaps.count` and this has to
+//     move with them, or the crate windows start doubling up.
 //
 //   ASSUMPTION N — Steady Strikes is DECLARED but never scheduled. It is the
 //     other tank's job on a body the player does not hold (see "the tank job"
@@ -209,14 +256,57 @@ import type { BossDef } from '../engine/types'
 //     at the LAST moment the ring can reach anybody. See the note on `mushrooms`
 //     for the sum.
 //
-//   ASSUMPTION Q — one pool per carrier, and pools are not consumed. The
-//     directive says a hit carrier "will leave either a fire pool or ice pool",
-//     singular, and says nothing about the pool being used up. Exactly two
-//     patches of ground exist per volley, one of each element, and each carrier
-//     walks into the other's — a single decision with a single destination. A
-//     drip would smear the answer across the floor and solve the trade by
-//     accident; a pool consumed on first use would make whoever arrived second
-//     the loser of a race the fight never called.
+//   ASSUMPTION Q — REVERSED IN THE PACING PASS. One pool per carrier, and A
+//     POOL IS CONSUMED THE MOMENT IT CURES SOMEBODY. The directive says a hit
+//     carrier "will leave either a fire pool or ice pool", singular, and says
+//     nothing either way about the pool being used up. Exactly two patches of
+//     ground exist per volley, one of each element, and each carrier walks into
+//     the other's — a single decision with a single destination. A drip would
+//     smear the answer across the floor and solve the trade by accident.
+//
+//     THIS FILE USED TO ARGUE THE OPPOSITE, on the grounds that a cure spent on
+//     first use would make whoever arrived second the loser of a race. That fear
+//     does not apply to this mechanic and the reason is structural rather than
+//     lucky: `polarity` deals exactly one fire carrier and one frost carrier, so
+//     each patch has exactly one customer and there is no second arrival to lose
+//     a race. One pool, one cure, gone. The gain is that the floor stops lying —
+//     a spent cure that keeps drawing for another twenty seconds is a circle that
+//     looks like an answer and is not one, sitting next to the one that still is.
+//
+//     THE INVARIANT THIS RESTS ON, stated so it cannot be broken by accident: if
+//     a `polarity` ever deals two carriers of one element it must lay two patches
+//     of the opposite ground with them. The same sentence is in the engine's
+//     `elementPool` doc and on both pool entries below.
+//
+//   ASSUMPTION R — Mighty Thud leaps TWICE, not three times. The directive says
+//     three non-tank targets and this is a deliberate departure from it, forced
+//     by arithmetic that is worth writing down because it constrains anyone who
+//     tries to put the third leap back.
+//
+//     The engine charges the raid a flat 0.3 of its one-and-only bar for every
+//     Deadly `beInside` instance the PLAYER is not standing in, whatever the raid
+//     does about it — allies fill the soak's other slots but the last slot is
+//     always the player's and the resolve is measured at the player's feet. A
+//     player tank is anchored to a stack mark that walks a 22-yard ring and this
+//     mechanic explicitly does not mark tanks, so on a tank pull every leap is a
+//     guaranteed miss. Three leaps is therefore 0.9 of the raid bar per cast,
+//     with nothing anybody in the room can do about it.
+//
+//     That was survivable only while the ability barely fired. Once the pacing
+//     pass made it arrive promptly and repeatedly it stopped being survivable at
+//     all: an opened gate takes the next beat WITHOUT advancing the loop index,
+//     so the beat after an empowerment is an ordinary turn that can be the same
+//     id, and two Mighty Thuds one interval apart is 1.8 of a bar that starts at
+//     1.0. Measured: the tank cell wiped on two seeds in three, at 82 seconds,
+//     with five recorded failures — a wipe with no mistake in it. Two leaps
+//     halves the cast to 0.6 and the double to 1.2 spread over twelve seconds,
+//     which the raid's own regeneration covers, and the tank cell clears 3/3.
+//
+//     The rota survives the cut: closest first, then the next, still read off the
+//     floor and still sequential. What is lost is the third beat of it. If the
+//     engine ever learns that allies can satisfy a soak on the player's behalf —
+//     which is the same lesson `reservePickups` already learned for collects —
+//     this becomes three again on the same day.
 //
 // ── THE TANK JOB ─────────────────────────────────────────────────────────────
 //
@@ -281,6 +371,11 @@ import type { BossDef } from '../engine/types'
 // made on purpose. Do not "fix" it back to one, and do not re-add the bleed.
 //
 // ── HONEST DEVIATIONS ────────────────────────────────────────────────────────
+//
+//   • Mighty Thud leaps TWICE where the directive says three targets. It is the
+//     one place in this file where an engine constant overrode the source, and
+//     the arithmetic that forced it is assumption R. Do not put the third leap
+//     back without reading it.
 //
 //   • The mushrooms scatter across the FLOOR rather than around Gebbo. The
 //     directive says he throws them around himself, and he now laps the middle
@@ -419,17 +514,52 @@ export const explorers: BossDef = {
   // It is not a smooth dial, because health and difficulty are coupled through
   // the council — kill one explorer early and the survivors are handed
   // Relentless Escalation and Cataclysmic Invocation, so a SHORTER fight is not
-  // automatically an easier one. Measured across six seeds at 0.66: fifteen of
-  // eighteen competent cells clear and all eighteen careless cells die. Move it
-  // against the sweep, one step at a time, and never by eye.
+  // automatically an easier one. Move it against the sweep, one step at a time,
+  // and never by eye.
   //
   // The pool it multiplies is derived from `pullLengthSec`, so the two are not
   // independent: raising the backstop from 160 to 200 raised the health pool by
   // a quarter until this came down to match. Change one, check the other.
-  maxHp: 0.66,
-  loopIntervalSec: 5.5,
+  //
+  // 0.66 → 0.76 IN THE PACING PASS, and it moved UP even though the fight got
+  // busier. The reason was the fish economy rather than survivability: a body
+  // that dies before it has eaten can never be empowered, its ability can never
+  // fire again (a corpse casts nothing), and the encounter's third fish then has
+  // no mouth left to go into — so Mor'zahi's bar becomes unresettable and the
+  // pull ends on an enrage it did nothing to earn. The dps seeds showed exactly
+  // that: Iku burned to 4% by seventy seconds and the Frostfire Volley the
+  // player had paid for never happened at all. A deeper pool was a longer pull,
+  // and a longer pull was what the third fish needed.
+  //
+  // 0.76 → 0.62 IN THE VERIFICATION PASS, and it is that argument being RETIRED
+  // rather than reversed. The body dying unfed was never a health problem: it
+  // was a target-discipline problem in the simulated raid, which opened on
+  // whichever explorer sat first in the array and drove it to the bone before
+  // the first crate window had closed. The bot now levels the council until
+  // somebody has eaten and only ever burns a body that already has (see the
+  // council-evening block in playtest.mjs), so no mouth is lost on any seed in
+  // any role — which takes the floor out from under this dial and leaves it free
+  // to do the only job it was ever for.
+  //
+  // WHICH IS KILL PACING, and the pacing fix made every pull longer: the raid is
+  // now standing on mushrooms and running out of Mighty Thuds for the whole
+  // second half instead of the last twenty seconds of it. At 0.76 the tank cell
+  // dropped to 2/3 and the healer ran into the enrage in every seed; 0.62 puts
+  // all three back. It is still bounded above rather than free — 0.66 already
+  // costs the tank a seed — and the bound below is now only the health pool
+  // being deep enough to be a fight at all.
+  //
+  // Measured at 0.62 with `energyPerSec: 1.30`: tank kills 3/3 at 132s, healer
+  // 2/3 at 167s, dps 3/3 at 138s, every careless cell dies, and all three
+  // empowerments land on every seed in every role with 36-77s of pull to spend
+  // on them.
+  maxHp: 0.62,
+  // 5.5 → 6.0 WITH THE TWENTY-ENTRY LOOP. This is the fight's cast density and
+  // nothing else, and the two numbers are chosen together: see `loop` for why
+  // the array grew and why the beat had to slow to pay for it.
+  loopIntervalSec: 6.0,
   introEverySec: 5,
-  // 56s per bar. Feeding a fish is the only thing that empties it, so the pull
+  // 69s per bar. Feeding a fish is the only thing that empties it, so the pull
   // is one bar plus whatever three well-timed resets buy — and "well-timed" is
   // the whole of it: a fish spent at 20 energy throws four fifths of the reset
   // away, and the sweep showed that habit alone costing about eighty seconds of
@@ -437,25 +567,17 @@ export const explorers: BossDef = {
   // `npm run playtest`, not by eye.
   //
   // KNOWN CONSEQUENCE of one constant rate: the windows between feeds are not
-  // equal. Pull → first feed is shorter than feed → empowered cast → Throw Junk
-  // → feed, so a rate tuned to read ~70% at the first feed reads higher at the
-  // later ones. That is accepted rather than fixed; a per-fish step-down is a
-  // decision nobody has asked for yet.
+  // equal. Pull → first feed is the bar climbing on its own, and every feed after
+  // that is a hold the raid chooses to end. That is accepted rather than fixed;
+  // a per-fish step-down is a decision nobody has asked for yet.
   //
-  // WHAT THE SWEEP ACTUALLY MEASURES at 1.8, and why it is not 2.1. The target
-  // is "roughly 70% at the moment of a feed". The bar reads 67-79% at the first
-  // feed on the pulls where the fish takes a normal amount of time to reach a
-  // mouth, and 58-64% on the ones where the player happens to be standing on the
-  // crate that hid it — so the target is met by the fight and undershot by luck,
-  // which is the right way round.
-  //
-  // It cannot simply be raised to hit 70 on the fastest pulls, and the ceiling is
-  // arithmetic rather than taste. The LONGEST gap between feeds is not the first
-  // one: it is feed → empowered ability's turn in the loop → Throw Junk → fish →
-  // feed, which the sweep measures at 47-50 seconds. At 1.8 that gap reads 85-90%
-  // and survives; at 1.9 it enrages one seed in three and at 2.0 it reads 99% and
-  // takes the pull. So the rate is pinned by the longest window, not the shortest
-  // one, and the number the directive asks about is the one that has to give.
+  // THE "ROUGHLY 70% AT A FEED" TARGET THIS BLOCK USED TO CARRY IS RETIRED. It
+  // was a proxy for "the bar is frightening by the time the reset lands", and as
+  // a target it had one fatal property: it made the bar's rate the schedule for
+  // the whole fight, because a raid holding for 70% of a 69-second bar is a raid
+  // standing still for forty-eight seconds three times a pull. The bar level at
+  // a feed is now an OUTPUT — roughly 40-70% depending on how long the walk to
+  // the mouth took — and the thing being tuned here is the clock.
   //
   // 1.8 → 1.75 WHEN origin/main's ALLY AI ARRIVED, and it is the second half of
   // that retune rather than a number moved on its own — see the `loop` note
@@ -474,18 +596,43 @@ export const explorers: BossDef = {
   // half of every bomb cycle, so the pull is longer and the bar has to be
   // correspondingly slower or the fish economy simply cannot keep up with it.
   //
-  // This one is a CLIFF rather than a plateau and that is worth saying out loud:
-  // 1.5 clears 3/3 competent with 0/3 careless, 1.45 and 1.40 both drop the tank
-  // to 1/3, and 1.30 comes back to 3/3. The fight's length is emergent from the
-  // fish gates, so a slower bar does not simply buy time — it changes WHICH
-  // empowered ability re-arms the next crate window and therefore the whole
-  // downstream schedule. Do not interpolate between the samples; re-run the
-  // sweep. Measured over six seeds at 1.5: fifteen of eighteen competent cells
-  // clear, and every careless cell dies.
+  // 1.5 → 1.45 IN THE PACING PASS, and it is a SMALL move on purpose. This dial
+  // is a cliff rather than a plateau and the pacing pass re-measured the cliff
+  // rather than assuming the old samples still held. The mechanism behind the
+  // cliff was the one thing worth remembering — a competent raid does not spend
+  // a fish the instant it finds one, it holds until the bar is nearly full, so
+  // the bar's RATE set how long each fish was carried and therefore when the
+  // next empowerment landed. A slower bar did not buy time; it postponed the
+  // empowerment that arms the next crate window, and every beat downstream moved
+  // with it.
   //
-  // The longest-window ceiling above is unharmed: it bounds this number from
-  // ABOVE, and this moves down.
-  energyPerSec: 1.5,
+  // 1.45 → 1.30 IN THE VERIFICATION PASS, AND THE CLIFF IS GONE — that coupling
+  // was the cliff, and it has been cut at the other end. The simulated raid now
+  // holds a carried fish for at most `FISH_HOLD_CAP_MS` (playtest.mjs), a figure
+  // in SECONDS, so the empowerment schedule no longer rides on this number and
+  // this number is free to be what it always claimed to be: the enrage clock,
+  // and nothing else. Sampled rather than interpolated, as ever, at
+  // `maxHp: 0.62` and against the finished loop:
+  //
+  //     1.15  healer clears with 189s of pull, but the bar is so slow that a
+  //           fish spent on the cap is spent at a third of a reset and one row
+  //           in six never buys its third empowerment
+  //     1.20  same, and the dps cell drops to 2/3
+  //     1.26  every cell clears; one row in eighteen lands its third empowerment
+  //           with under twenty seconds left
+  //     1.30  every cell clears, every row lands all three, 36-77s to spend
+  //     1.35  the healer runs into the enrage on two seeds in three
+  //     1.45  the healer runs into the enrage, boss at 7%
+  //
+  // The two ends fail for opposite reasons and neither is survivability: below,
+  // the resets are too small to be worth the hold; above, the clock is simply
+  // shorter than the healer's kill. Re-run the sweep rather than reading between
+  // those rows.
+  //
+  // The longest-window ceiling above is superseded by the hold cap, which now
+  // bounds the gap between feeds directly instead of leaving it to be inferred
+  // from a percentage of a bar.
+  energyPerSec: 1.30,
   // atFullEnergy deliberately UNSET. The bar IS the enrage, and naming a
   // full-energy mechanic would make it empty itself.
   enrageName: "Final Ascension — Mor'zahi ascended",
@@ -521,54 +668,91 @@ export const explorers: BossDef = {
   // gated by the engine: they simply do not fire until an explorer has eaten or
   // an explorer has died. Authoring them into a second loop would have hidden
   // half the fight behind a stage change this council does not have.
-  // Each empowered entry appears TWICE, and the second copy is in the back half.
-  // That is not padding, it is the fish economy: Throw Junk #2 and #3 are armed
-  // by an empowered ability actually RESOLVING, so the wait for the next crate
-  // window is the wait for that ability's turn in this array. With one turn each
-  // the second fish arrived around ninety seconds into a pull that has to fit
-  // three of them in, and the third never arrived at all. The duplicates are
-  // late rather than early on purpose: the opening beats are already spoken for
-  // by the timeline, and a gated entry that has not been bought yet spends its
-  // beat in silence.
   //
-  // SPLINTERS HELD SLOTS 2 AND 10 AND IS GONE; ITS SLOTS WERE REFILLED, NOT
-  // REMOVED. Every entry fires at (index + 1) * 5.5 seconds, so deleting two
-  // entries would drag every later beat 5.5s earlier apiece — and the two volley
-  // beats below are placed to the tenth of a second against measured fish
-  // delivery times. Slot 2 became a third `flames` and slot 10 a second
-  // `patches`, which are the two cheapest fills in the array, and nothing else
-  // in the list moved a place.
+  // ── THE ONE NUMBER THIS ARRAY IS NOW CHOSEN FOR ──────────────────────────
   //
-  // FROSTFIRE VOLLEY GETS A THIRD TURN, AT INDEX 9, AND IT IS THE ONE CHANGE
-  // THIS FIGHT NEEDED WHEN origin/main's ALLY AI ARRIVED.
+  // THE COUNT OF EACH ID IS THE CADENCE OF THAT ID, and on this fight that is
+  // the whole of the tuning. The engine reads an id appearing k times in a loop
+  // of n at interval T as "due every n·T/k" (`designedGapMs`), and that figure
+  // does two jobs at once:
   //
-  // The re-arm chain is fish → feed → that explorer's empowered ability RESOLVES
-  // → six seconds → next crate window. `feedPriority` puts Iku first, so the
-  // FIRST fish of every pull empowers Iku and the whole rest of the fight hangs
-  // on Frostfire Volley getting a turn shortly after that feed lands. Miss it
-  // and the next one is a third of a rotation away.
+  //   • it is the ordinary round-robin spacing, as it always was; and
+  //   • it is the CEILING on how often a beat that would otherwise have been
+  //     silence may be converted into a cast of that id. A gated mechanic can
+  //     never arrive faster than the array says it should — the promptness rules
+  //     recover the gap between "late" and "not until next rotation", and
+  //     nothing more.
   //
-  // What made that fatal rather than merely slow: origin/main measures the ally
-  // deadzone in yards on the floor rather than against the eased step, so the
-  // raider carrying a refused fish now walks a real distance instead of stopping
-  // short. Measured across the three seeds, the first feed landed at 42.8s,
-  // 47.6s and 50.4s — a 7.6-second spread where the old AI delivered in about
-  // two. With volley's only early turn at index 7 (t=44.0s) two of those three
-  // seeds missed it, and the next volley at index 13 (t=77.0s) was 33 seconds
-  // later, by which time the raid had killed Iku and the ability could never
-  // fire again at all. One fish was delivered in the whole pull, Mor'zahi's bar
-  // was never emptied a second time, and the row read as a fight that cannot be
-  // played rather than as a beat the raid kept arriving just behind.
+  // So an empowered ability's rep rate is set HERE and nowhere else. Twenty
+  // entries at `loopIntervalSec: 6.0` is a two-minute rotation, and three turns
+  // apiece buys forty seconds:
   //
-  // MOVING the beat does not fix this and was tried first: at index 8 (t=49.5s)
-  // seed 90210's feed landed at 50.4s and missed it by nine tenths of a second.
-  // A single beat is a cliff wherever it is put, because delivery time is a
-  // distribution and the beat is a point. Two early turns are a WINDOW — 44.0s
-  // and 55.0s — and all three seeds fall inside it.
+  //     thud  x3   volley  x3   gebbospree  x3   → 40.0s each
+  //     flames x4  shards  x4                    → 30.0s each
+  //     escalation / cataclysm / shovel x1       → 120.0s each, and all three
+  //                                                are shut on a clean pull
+  //
+  // TWO TURNS EACH IN AN EIGHTEEN-ENTRY ARRAY WAS THE BUG THE USER REPORTED.
+  // At x2 in 18 x 5.5 the designed gap is 49.5 seconds, so even with the
+  // empowerment bought at forty seconds Mighty Thud got two casts in a whole
+  // pull and Mushroom Toss two — "it comes in right before the enrage so it's
+  // not able to practise", exactly.
+  //
+  // FOUR TURNS EACH WAS TRIED AND IS WORSE, which is the counter-intuitive
+  // result worth writing down before somebody reaches for it again. A
+  // twenty-one entry array at x4 is a 31.5s cadence instead of 40s, and it made
+  // every measurement in this file go backwards: more heavy casts means the raid
+  // spends more of the pull on mushrooms and in craters rather than shooting, so
+  // the pull runs longer, so every feed lands later, so the LAST empowerment is
+  // squeezed harder than it was before. Measured, it took the count of empowered
+  // abilities firing only once from thirteen in fifty-four to fifteen. The rep
+  // rate of an empowered ability is bounded by the fight's total length far more
+  // tightly than by its slot count, and this array is not the lever it looks
+  // like.
+  //
+  // Measured at x3 in twenty, across six seeds and three roles: every one of the
+  // eighteen pulls buys all three empowerments, seventeen of them with 36-77
+  // seconds of pull left for the last one (the eighteenth has 6.6s), and
+  // fifty-one of the fifty-four abilities bought fire two to eight times. The
+  // three that fire once are all the ability bought LAST on a dps pull, which is
+  // the shortest pull in the sweep — unavoidable when the fight sells them one
+  // at a time, and the reason `feedPriority` had to stop making the same one
+  // last every pull.
+  //
+  // WHAT THE EXTRA TWO SLOTS COST, and why the interval moved with them. Going
+  // from x2 to x3 on three ids is six more heavy casts per rotation, and these
+  // are not cheap entries: one Mighty Thud is two leaps plus two Aftershock
+  // craters, and one Mushroom Toss is ten pads, a bomb, a travelling ring and a
+  // Concussive Blast pool. Holding the array at eighteen and the interval at 5.5
+  // put all of that on the floor at the old cast density and every cell of the
+  // sweep died inside a hundred seconds — the crate window in particular is ten
+  // seconds long and answered with your feet, and it cannot also be a Mighty
+  // Thud soak. So the array is TWENTY entries at 6.0s rather than eighteen at
+  // 5.5s: total density falls from one cast per 5.5s to one per 6.0s, `flames`
+  // and `shards` keep four turns each (the kick is the one button this fight
+  // asks a dps for, and the tank swap is the tank's only decision), and the
+  // empowered half still arrives every forty seconds.
+  //
+  // EVERY GATED ID HAS A TURN IN THE FIRST THIRD (thud 1, volley 3,
+  // gebbospree 5) and that placement is load-bearing rather than tidy. The
+  // engine only keeps an appointment for a gate inside the INTRODUCED stretch of
+  // the array, and `introEverySec: 5` means 2 + t/5 entries are live — so an
+  // empowerment bought at t=30 can only be honoured promptly by a turn at index
+  // 7 or below. A first turn parked in the back half would be an appointment the
+  // staging quietly refused to keep.
+  //
+  // AND EACH ID'S THREE TURNS SIT SIX OR SEVEN APART, which is not tidiness
+  // either. An appointment does NOT advance `loopIndex` — it is inserted, not
+  // substituted — so the beat after an empowerment lands is an ordinary turn,
+  // and if that turn is the same id you have just bought you get the same
+  // mechanic twice in one interval. Spreading the turns is what keeps that to
+  // one beat's worth of bad luck instead of a cluster of them; the reason it
+  // matters is spelled out on `thud`'s `leaps`.
   loop: [
-    'flames', 'shards', 'flames', 'patches', 'thud', 'flames',
-    'shards', 'volley', 'gebbospree', 'volley', 'patches', 'thud',
-    'escalation', 'volley', 'cataclysm', 'shards', 'gebbospree', 'shovel',
+    'flames', 'thud', 'shards', 'volley', 'escalation',
+    'gebbospree', 'flames', 'shards', 'thud', 'cataclysm',
+    'volley', 'flames', 'gebbospree', 'shards', 'thud',
+    'shovel', 'volley', 'flames', 'gebbospree', 'shards',
   ],
 
   // The three casts the encounter gives real intervals for. See the block at the
@@ -591,10 +775,41 @@ export const explorers: BossDef = {
     { id: 'throwjunk', startSec: 30, rearmOn: { anyOf: ['thud', 'volley', 'bomb'], delaySec: 6 } },
   ],
 
-  // The order an ALLY feeds a fish in when the player did not take it, skipping
-  // any explorer that has already eaten. Iku first because Frostfire Volley is
-  // the empowerment that most changes the pull; Nama last because Mighty Thud is
-  // the one the raid can cover for. Assumption J.
+  // WHICH MOUTHS EXIST, not which one comes first. The engine shuffles this
+  // once per pull out of the world seed and feeds in THAT order, skipping any
+  // explorer that has already eaten — see `World.feedOrder` and `feedOrderFor`.
+  // Assumption J.
+  //
+  // IT USED TO BE A RANKING AND THE RANKING WAS THE BUG. Read strictly in order,
+  // ['iku','gebbo','nama'] made Nama third on every pull anybody had ever
+  // played, which made Mighty Thud the empowerment the pull always ran out of
+  // time for — the user's report, in as many words: "First Mate Nama's empowered
+  // ability comes in right before the enrage so it's not able to practise". No
+  // amount of loop tuning fixes a body that is structurally last, because being
+  // last is not a consequence of the schedule, it is an input to it. A trainer
+  // that can only ever teach two of the three abilities it contains is not
+  // teaching the fight.
+  //
+  // The old ranking's argument — Iku first because Frostfire Volley most changes
+  // the pull, Nama last because the raid can cover Mighty Thud — was a real
+  // argument about a single pull and the wrong one for a SESSION. Over three
+  // pulls the shuffle gives every explorer the first fish about as often as the
+  // others, so all three empowerments get practised and none of them is ever the
+  // one you only read about. Measured over six seeds: every one of the three is
+  // the last mouth on at least one of them, and the order differs again by role
+  // because the roll happens on the same seeded stream the rest of the pull draws
+  // from. A fixed seed still gives a fixed order, so the playtest remains an
+  // instrument. That is exactly what `the feed order varies between pulls and is
+  // fixed by the seed` in engine.test.js holds this to.
+  //
+  // The list ITSELF is therefore no longer ordered on purpose, and nothing
+  // downstream may read it as though it were. Left in entity order.
+  //
+  // The playtest bot read this raw list as a ranking for a whole pass after it
+  // stopped being one, which put the player and the raid on two different orders
+  // in the same pull and quietly restored the structural last place the shuffle
+  // exists to remove. It reads `World.feedOrder` now. If anything else ever
+  // needs "which mouth first", that is the field it wants.
   //
   // The player gets six seconds of first refusal on every fish before the raid
   // touches it, so this is a backstop rather than the normal path — on a dps or
@@ -603,7 +818,7 @@ export const explorers: BossDef = {
   // stacked pair away from Gebbo and never stops, so without this the fish lay
   // where it fell, Mor'zahi's bar could not be emptied at all, and the enrage was
   // scenery in a role that had no decision available to it.
-  feedPriority: ['iku', 'gebbo', 'nama'],
+  feedPriority: ['iku', 'nama', 'gebbo'],
 
   mechanics: [
     {
@@ -695,11 +910,11 @@ export const explorers: BossDef = {
       id: 'thud',
       name: 'Mighty Thud',
       spellId: 1300237,
-      what: "Nama marks three non-tanks and leaps at each in turn, closest first; impact damage splits among everyone in the landing zone, and the crater then quakes.",
+      what: "Nama marks non-tanks and leaps at each in turn, closest first; impact damage splits among everyone in the landing zone, and the crater then quakes.",
       lethal: true,
       from: 'nama',
       // DPS AND HEALER ONLY, for the same reason Throw Junk is, and the
-      // mechanic's own description already says so: "Nama marks three NON-TANKS".
+      // directive already says so: "targets 3 NONE TANK players".
       // A tank on this fight is walking a stacked pair away from a patroller and
       // cannot stop — a soak scored against them is a failure with no action
       // available, which is the one defect this project keeps having to re-fix.
@@ -714,13 +929,28 @@ export const explorers: BossDef = {
       // player, and blaming one person for a collective miss is the defect this
       // project keeps refixing.
       rule: { type: 'beInside' },
-      // Closest, then next closest, then last. Three simultaneous soaks would be
-      // a choice of which to stand in; three sequential ones ordered by
-      // proximity is a rota you have to read, and the rota is the mechanic.
+      // Closest, then the next one. Simultaneous soaks would be a choice of
+      // which to stand in; sequential ones ordered by proximity are a rota you
+      // have to read, and the rota is the mechanic.
       //
-      // Also the reason Throw Junk's re-arm carries a delay: three leaps on a 4s
-      // telegraph resolve 4.0s, 6.2s and 8.4s after the cast. See assumption M.
-      leaps: { count: 3, gapMs: 2200 },
+      // THREE LEAPS → TWO, AND IT IS ARITHMETIC RATHER THAN TASTE. Assumption R
+      // has the sum; the short version is that the engine charges the RAID a
+      // flat 0.3 of its one-and-only bar for every Deadly `beInside` the player
+      // is not standing in, and a player tank — whom this mechanic explicitly
+      // does not mark — cannot be standing in any of them. Three leaps is
+      // therefore a guaranteed 0.9 of the raid bar per cast on a tank pull, and
+      // two casts inside one rotation is 1.8, which is a wipe from full health
+      // with no play available to anybody. The pacing pass made two casts inside
+      // one rotation a routine event rather than a rare one — an opened gate
+      // takes the next beat and does not advance the loop index, so the beat
+      // after it is an ordinary turn that can be the same id — and the tank cell
+      // died on two seeds in three to exactly that. At two leaps the same double
+      // costs 1.2 spread over twelve seconds, which the raid's own regeneration
+      // covers, and the tank cell clears 3/3.
+      //
+      // Also the reason Throw Junk's re-arm carries a delay: the leaps on a 4s
+      // telegraph resolve 4.0s and 6.2s after the cast. See assumption M.
+      leaps: { count: 2, gapMs: 2200 },
       // No source states a required count; the file only says deaths mean "too
       // few bodies in the marker", so 5 is a placeholder to confirm with the RL.
       soakers: 5,
@@ -835,27 +1065,16 @@ export const explorers: BossDef = {
       // a marked player to run away from a body that is about to teleport to
       // them, which is advice about nothing. The falloff contradicts the 300 yd
       // note on this id; see the header.
-      rule: { type: 'raidDamage', dps: 26, falloff: { nearYards: 8, farYards: 38, farMultiplier: 0.25 } },
+      //
+      // 26 → 18 with `presence` and `feedback`. This is a lump on the raid bar
+      // every thirty seconds off the timeline — the most frequent raid-damage
+      // event in the fight — so it competes directly with the raid's ability to
+      // pay for an unsoaked Mighty Thud. The falloff is untouched: the DIAL the
+      // marked player holds is the point of this mechanic, and it is still worth
+      // four times the damage between standing in the raid and running out.
+      rule: { type: 'raidDamage', dps: 18, falloff: { nearYards: 8, farYards: 38, farMultiplier: 0.25 } },
       good: 'The marked player runs clear of the raid before it lands, and the raid barely feels it.',
       failText: '',
-    },
-    {
-      id: 'patches',
-      name: 'Fire Patch',
-      spellId: 1297649,
-      what: "Persistent ground hazards left where the volley landed.",
-      from: 'iku',
-      roles: ['tank', 'dps', 'healer'],
-      telegraphMs: 2500,
-      shape: { kind: 'circle', radius: 7 },
-      // Frost Patch (1297648) and Spreading Flames (1297650) are the same rule
-      // on the same section of the tactic file, so they are one entry.
-      origin: 'random',
-      rule: { type: 'avoid' },
-      damage: 0.15,
-      lingerMs: 25000,
-      good: 'Dropped at the arena edge and never re-entered.',
-      failText: 'Stood in a Frostfire patch',
     },
     {
       id: 'volley',
@@ -879,6 +1098,14 @@ export const explorers: BossDef = {
       // decision about one destination. It used to drip a fresh pool every nine
       // tenths of a second, which painted two converging stripes and solved the
       // trade by accident somewhere in the middle.
+      //
+      // ONE CARRIER OF EACH ELEMENT, AND EXACTLY ONE PATCH OF EACH, IS AN
+      // INVARIANT AND NOT A DETAIL. The patches are now consumed when they cure
+      // (assumption Q), which is only safe because each patch has exactly one
+      // customer: a fire patch cures frost carriers and there is one, a frost
+      // patch cures fire carriers and there is one. Deal two carriers of the same
+      // element here and you owe them two patches of the opposite ground, or the
+      // second one is racing the first for a cure that goes out on contact.
       rule: { type: 'polarity', firePoolId: 'firepool', frostPoolId: 'frostpool', deathId: 'explosion' },
       collective: true,
       good: 'Two pools on the floor, two carriers, and both walk into the other one before the next volley.',
@@ -887,9 +1114,9 @@ export const explorers: BossDef = {
     },
     {
       id: 'firepool',
-      name: 'Burning Flames',
-      spellId: 1295928,
-      what: "Fire element marker, 1 min, no dispel type — the single pool a Burning Flames carrier drops, and the cure for Piercing Frost.",
+      name: 'Fire Patch',
+      spellId: 1297649,
+      what: "Fire ground left by Frostfire Volley — the single patch a Burning Flames carrier drops. It cures Piercing Frost and is spent doing it.",
       from: 'iku',
       roles: ['dps', 'healer'],
       telegraphMs: 1,
@@ -898,28 +1125,58 @@ export const explorers: BossDef = {
       // Standing in it does nothing at all unless you carry the opposite
       // element. It is never damage and never a failure, which is why it is not
       // an avoid with the harm switched off — the verb palette would paint the
-      // cure red. It is also NOT consumed by curing somebody: the patch does not
-      // know how many people have walked through it, and a cure that vanished on
-      // first use would make whoever arrived second the loser of a race the
-      // fight never called.
+      // cure red.
+      //
+      // AND IT IS CONSUMED THE MOMENT IT CURES SOMEBODY. This file used to argue
+      // the exact opposite — "the patch does not know how many people have walked
+      // through it, and a cure that vanished on first use would make whoever
+      // arrived second the loser of a race the fight never called" — and that
+      // argument is now withdrawn, because the race it feared cannot happen here.
+      // One pool, one cure, gone:
+      //
+      //   `polarity` deals exactly ONE fire carrier and ONE frost carrier and
+      //   lays exactly one patch of each. A fire patch cures frost carriers and
+      //   there is exactly one alive to want it; a frost patch cures fire
+      //   carriers, likewise. Each pool has exactly one customer, so no two
+      //   bodies are ever queuing for the same ground.
+      //
+      // That is a dependency, not a coincidence, and it points both ways: IF A
+      // FUTURE POLARITY EVER DEALS TWO CARRIERS OF ONE ELEMENT IT MUST LAY TWO
+      // PATCHES OF THE OPPOSITE GROUND WITH THEM, or the second carrier really
+      // does lose a race. The same sentence is written into the engine's
+      // `elementPool` doc for the same reason.
+      //
+      // What consuming it buys is that the floor tells the truth. A cure that
+      // lingered for twenty-two seconds after it had already been used was a
+      // patch of ground that looked like an answer and was not one, sitting next
+      // to the one that still was — and on a fight whose whole polarity lesson is
+      // "read the floor and pick the right circle", a spent cure that still draws
+      // is the worst thing that can be on it.
       rule: { type: 'elementPool', element: 'fire' },
+      // Still long, because the volley is on a forty-second cadence and the
+      // trade has to survive a Blast Wave passing over the top of it. This is now
+      // the pool's LONGEST possible life rather than its actual one: two carriers
+      // who do their job retire both patches within a few seconds of each other.
       lingerMs: 22000,
-      good: 'The Piercing Frost carrier walks through it and comes out clean.',
+      good: 'The Piercing Frost carrier walks through it, comes out clean, and the patch goes out with them.',
       failText: '',
     },
     {
       id: 'frostpool',
-      name: 'Piercing Frost',
-      spellId: 1295954,
-      what: "Frost element marker, 1 min, carries a movement slow — the single pool a Piercing Frost carrier drops, and the cure for Burning Flames.",
+      name: 'Frost Patch',
+      spellId: 1297648,
+      what: "Frost ground left by Frostfire Volley — the single patch a Piercing Frost carrier drops. It cures Burning Flames and is spent doing it.",
       from: 'iku',
       roles: ['dps', 'healer'],
       telegraphMs: 1,
       shape: { kind: 'circle', radius: 6 },
       origin: 'random',
+      // Every word of the Fire Patch note above applies here with the elements
+      // swapped, including the consumed-on-use rule and the invariant it rests
+      // on. The two entries are deliberately identical apart from the element.
       rule: { type: 'elementPool', element: 'frost' },
       lingerMs: 22000,
-      good: 'The Burning Flames carrier walks through it and comes out clean.',
+      good: 'The Burning Flames carrier walks through it, comes out clean, and the patch goes out with them.',
       failText: '',
     },
     {
@@ -963,13 +1220,14 @@ export const explorers: BossDef = {
       spellId: 1291935,
       what: "Gebbo hurls crates around his lap; every one of them must be off the floor inside 10s or the raid wipes, and one of them is hiding a Disgusting Fish.",
       from: 'gebbo',
-      // DPS AND HEALER ONLY, and it is forced rather than chosen. One missed
-      // crate is a literal wipe (see `missCost`), and the player tank is walking
+      // DPS AND HEALER ONLY, and it is forced rather than chosen. A failed crate
+      // window is a wipe (see `missCost`), and the player tank is walking
       // the stacked pair away from Gebbo and cannot stop — so a scored tank would
       // be handed a guaranteed failure at t=30 with no action available to them.
       // The allies claim every crate on a tank pull and the tank keeps walking
       // instead. The tank still sees the fish found, still sees a bot feed it on
-      // the `feedPriority`, and still plays every empowered mechanic that follows.
+      // this pull's shuffled feed order, and still plays every empowered mechanic
+      // that follows.
       roles: ['dps', 'healer'],
       telegraphMs: 10000,
       shape: { kind: 'circle', radius: 3 },
@@ -984,13 +1242,48 @@ export const explorers: BossDef = {
       // nor the bleed is modelled.
       rule: { type: 'collect', count: 6 },
       soakers: 3,
-      // A LITERAL WIPE, per the directive: "all boxes must be picked up within 10
-      // seconds otherwise the raid wipes". The raid bar is 0..1, so 1 is one
-      // uncollected crate ending the pull. This overrules the earlier 0.34, which
-      // was chosen so that three misses wiped and one did not — a softer fight,
-      // but not the one the encounter describes. Picking one up is still never a
-      // failure; only leaving one is.
-      missCost: 1,
+      // THE FAILED WINDOW IS THE WIPE, NOT THE SINGLE CRATE — and that is a
+      // reversal of what this file said last, so here is the whole argument.
+      //
+      // The directive says "all boxes must be picked up within 10 seconds
+      // otherwise the raid wipes". This entry used to read that as `missCost: 1`
+      // — a full raid bar per crate — on the grounds that anything softer was not
+      // the fight the encounter describes. But the engine charges this PER
+      // UNCOLLECTED CRATE, and there are six of them, so 1 does not model "the
+      // window was failed": it models "the window was failed six times over". The
+      // literal sentence is about the WINDOW, and this is the reading that makes
+      // failing the WINDOW fatal rather than failing a crate.
+      //
+      // What forced the re-reading was the pacing pass rather than a wish for an
+      // easier fight. The empowered half of the rotation now actually arrives, so
+      // a ten-second crate window frequently opens on top of a Mighty Thud rota
+      // or a bomb chain, and at `missCost: 1` a single crate slipping in that
+      // overlap ended the pull outright. That is a cliff, not a difficulty: it is
+      // unrecoverable, it is often unreachable, and it made every other number in
+      // this file untunable because one unlucky collision dominated the result.
+      // Measured at 1: competent healer and dps both wiped on a single missed
+      // crate around 68-100 seconds on every seed.
+      //
+      // 0.34 → 0.20 IN THE VERIFICATION PASS, for the same reason once more and
+      // one step further along. With every empowerment now landing rather than
+      // most of them being squeezed out, the crate windows come faster (each one
+      // is re-armed by an empowered ability resolving) and collide with the
+      // rotation more often — so the tail of the distribution matters more than
+      // the median does. This was the single largest lever in the whole pass and
+      // it was not a difficulty lever: at 0.34 the sweep lost a third of its
+      // pulls to a crate-window wipe somewhere between sixty and a hundred
+      // seconds, and those pulls ended BEFORE the third fish, so eleven of
+      // fifty-four measured empowered abilities never fired twice. At 0.20 the
+      // same measurement is three of fifty-four and every row buys all three
+      // empowerments. Nothing else moved by anything like as much.
+      //
+      // WHAT DOES NOT CHANGE, and it is the half the directive cares most about:
+      // a careless player collects nothing, so a careless pull leaves all six and
+      // takes 1.2 — the first crate window is still a guaranteed wipe in every
+      // role, at forty seconds, exactly as before. Four crates left standing is
+      // still 0.8 of the raid's bar and effectively the pull. Picking a crate up
+      // is still never a failure; only leaving one is.
+      missCost: 0.20,
       // Assumption A. One box in the set is hiding a fish until the encounter's
       // three have been found, and after that the crates keep coming and hide
       // nothing — which is the moment the bar stops being resettable.
@@ -1234,7 +1527,27 @@ export const explorers: BossDef = {
       roles: ['healer'],
       telegraphMs: 0,
       origin: 'boss',
-      rule: { type: 'raidDamage', dps: 3.0 },
+      // 3.0 → 1.2 IN THE PACING PASS, and it is the number that paid for the
+      // empowered half of the rotation arriving. This is a constant drain on the
+      // same raid bar Mighty Thud takes 0.3 out of per unsoaked leap, and a
+      // player TANK cannot soak — so the raid's ability to recover between two
+      // Mighty Thuds is exactly `regen − this`, and `regen` is 0.046/s and not
+      // ours to move. At 3.0 the tank's raid bar recovered 0.016/s, needed
+      // fifty-six seconds to pay off one Mighty Thud, and got forty; the fight
+      // could not deliver the ability the user asked to practise and stay
+      // survivable at the same time. At 1.2 the recovery is 0.034/s and forty
+      // seconds buys 1.35 against a cost of 0.6.
+      //
+      // Re-measured either side of it in the verification pass, against a fight
+      // that now delivers the whole of its empowered half: 1.6 costs the tank
+      // AND the dps a seed apiece and takes one row's third empowerment with
+      // them, while 1.0 changes nothing at all. So this is still the binding
+      // constraint on the fight's raid-damage budget rather than a knob with
+      // slack in it, and it is binding from one side only. What the
+      // healer loses in baseline they get back in lumps — see `feedback`, the
+      // Blink Nova falloff, and Cataclysmic Invocation, all of which are still
+      // theirs to cover.
+      rule: { type: 'raidDamage', dps: 1.2 },
       good: 'Healers stay ahead of the baseline and hold cooldowns for each fish window.',
       failText: '',
     },
@@ -1249,7 +1562,14 @@ export const explorers: BossDef = {
       origin: 'boss',
       // Fired by the feed itself, never by the loop or the timeline. Emptying the
       // bar is not free, and this is the bill.
-      rule: { type: 'raidDamage', dps: 16 },
+      //
+      // 16 → 11 with `presence`, and for the same reason: a lump landing on the
+      // raid bar at the exact moment an empowerment goes live is a lump landing
+      // just before that empowerment's first cast. Three fish per pull, so this
+      // is 0.33 of the raid bar over a pull rather than 0.48 — still the most
+      // expensive single event a healer plans a cooldown around, and no longer
+      // the thing that decides whether the first Mighty Thud is survivable.
+      rule: { type: 'raidDamage', dps: 11 },
       good: 'A raid cooldown lands on every fish, because every fish is planned.',
       failText: '',
     },

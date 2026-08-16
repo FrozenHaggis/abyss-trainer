@@ -635,22 +635,62 @@ test('a Frostfire Volley leaves exactly one pool per carrier', async () => {
     `one volley put ${peakFrost} Piercing Frost pools on the floor — see above, and the two ` +
     'halves of a trade have to be symmetrical or one carrier is playing a different mechanic')
 
-  // And the pool is NOT consumed by curing somebody. Whoever arrives second must
-  // not be the loser of a race the fight never called.
-  const pool = w.instances.find(i => i.def.id === ids[0])
-  assert.ok(pool, 'the fire pool expired before the cure could be measured')
-  w.player.element = 'frost'
-  w.player.elementMs = 60000
+  // ONE POOL, ONE CURE, GONE — and the reason that is safe rather than a race.
+  //
+  // This replaces the opposite ruling, which asserted the patch survived its own
+  // cure so "whoever arrives second" could not lose a race. The fear was real and
+  // the answer to it is not a lingering patch, it is the dealer above: `polarity`
+  // deals exactly one fire carrier and exactly one frost carrier and lays exactly
+  // one patch of each. A fire patch cures frost carriers and there is exactly one
+  // alive. Each patch therefore has exactly one customer and NOBODY ever arrives
+  // second, so the two halves below are one claim, not two:
+  //
+  //   1. the patch that cured is gone the instant it worked, and
+  //   2. the OTHER carrier's patch is still standing while it happened.
+  //
+  // The old assertion could only make half of the claim. Asserting both is what
+  // turns "it does not vanish" into "it vanishes and cannot strand anyone" — and
+  // (2) is the guard that fails loudly if a future polarity ever deals two
+  // carriers of one element without laying two of the opposite ground with them.
+  // A FRESH pull for this half. The eight seconds above are long enough for the
+  // bot carriers to walk to their own patches and spend them, which is correct
+  // play and exactly what the raid is supposed to do — but it means the floor is
+  // no longer the floor the volley laid, and a claim about consumption measured
+  // on ground somebody else already consumed proves nothing either way.
+  seedRng(1337)
+  const w2 = createWorld(boss, 'dps', 'green')
+  w2.bosses.find(b => b.def.id === pol.empoweredOnly).empowered = true
+  fire(w2, pol.id)
+  const count2 = (id) => w2.instances.filter(i => i.def.id === id).length
+  // The volley telegraphs before it deals, so step until the ground is down —
+  // but no further, so the bots have not had time to go and spend it.
+  for (let i = 0; i < 60 * 8 && !count2(ids[0]); i++) step(w2, IDLE(), TICK_MS)
+  const pool = w2.instances.find(i => i.def.id === ids[0])
+  assert.ok(pool, 'the fire pool was never laid — the cure could not be measured')
+  assert.equal(count2(ids[1]), 1,
+    'the volley laid no frost patch, so "the other carrier still has one" is unmeasurable here')
+  const poolPos = { ...pool.pos }
+  w2.player.element = 'frost'
+  w2.player.elementMs = 60000
   let cleaned = false
-  for (let i = 0; i < 60 * 6 && !cleaned; i++) {
-    w.player.pos = { ...pool.pos }
-    step(w, IDLE(), TICK_MS)
-    if (!w.player.element) cleaned = true
+  // Two seconds is far longer than the player needs standing ON the patch, and
+  // far shorter than a bot needs to cross the floor to the other one — so the
+  // frost patch below is still standing because nothing has spent it, not
+  // because the clock ran out.
+  for (let i = 0; i < 60 * 2 && !cleaned; i++) {
+    w2.player.pos = { ...poolPos }
+    step(w2, IDLE(), TICK_MS)
+    if (!w2.player.element) cleaned = true
   }
   assert.ok(cleaned, 'standing in the opposite pool did not cure — the trade has no other answer')
-  assert.equal(count(ids[0]), 1,
-    'the pool vanished when it cured somebody. Two carriers walk into two pools and neither ' +
-    'of them is racing the other')
+  assert.equal(count2(ids[0]), 0,
+    'the fire patch cured somebody and then stayed on the floor. A cure is spent by working: ' +
+    'one patch, one cure, gone. A patch still standing after it worked is a second cure the ' +
+    'volley never dealt, and it teaches the player that the ground is free')
+  assert.equal(count2(ids[1]), 1,
+    'curing the frost carrier also took the FIRE carrier\'s patch off the floor. Each patch has ' +
+    'exactly one customer — the opposite element — so spending one can never strand the other. ' +
+    'If this fails, the polarity dealt carriers and ground that no longer pair up one to one')
 })
 
 // A cyst burst used to end exactly on the boss however hard it hit, because the
@@ -3935,4 +3975,204 @@ test('maxHp actually moves the health pool', async () => {
     `doubling maxHp changed the damage taken by a factor of ${ratio.toFixed(2)}, not ~2. ` +
     'The field is the fight’s kill-pacing lever and it has already shipped once as a ' +
     'number that looked tuned and was read by nothing at all')
+})
+
+// ── the pacing of an ability you have paid for ───────────────────────────────
+//
+// The user's report, in as many words: "the bosses are hard to kill before the
+// enrage. First Mate Nama's empowered ability comes in right before the enrage
+// so it's not able to practice and there is plenty time to see this."
+//
+// The cause was the scheduler rather than the boss file. A gated entry sat in a
+// round robin and simply waited its turn, so the wait between paying for an
+// ability and seeing it was up to a whole rotation — measured at roughly fifty
+// seconds — and the third empowerment of a pull had no pull left to spend. Two
+// rules fixed it, both in sim.ts: `takeOpenedGate` (a gate that has just opened
+// takes the next beat, and does NOT advance the index, so the appointment is
+// inserted rather than substituted) and `starvedGate` (a beat that would have
+// been silence goes to an open gate its own array says is already late).
+//
+// Both tests below measure the SCHEDULER and not the bot: the empowerments are
+// handed over directly, so nothing here can be rescued or ruined by how well a
+// simulated player happens to play. The bot's half of the same question is the
+// competent sweep in playtest.mjs.
+test('a bought ability arrives promptly, not a rotation later', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+
+  // Every fight with a gated rotation entry, rather than the one that reported
+  // the bug. The rules under test are derived from `empoweredOnly` alone, so a
+  // second council would inherit them in silence — and would have to be held to
+  // the same bar from the day it lands.
+  const gated = BOSSES.filter(b => (b.loop ?? []).some(id =>
+    b.mechanics.find(m => m.id === id)?.empoweredOnly))
+  assert.ok(gated.length, 'no boss has an empowered rotation entry — this check would be vacuous')
+
+  for (const boss of gated) {
+    for (const id of new Set(boss.loop)) {
+      const def = boss.mechanics.find(m => m.id === id)
+      if (!def?.empoweredOnly) continue
+
+      seedRng(1337)
+      const w = createWorld(boss, 'dps', 'green')
+      // Let the fight introduce its rotation first, so this measures the wait
+      // for a TURN rather than the wait for staging. Buying an ability before
+      // its slot has been introduced is a different question, and the engine
+      // deliberately refuses to jump staging to honour an appointment.
+      for (let i = 0; i < Math.round(40000 / TICK_MS); i++) step(w, IDLE(), TICK_MS)
+
+      const unit = w.bosses.find(b => b.def.id === def.empoweredOnly)
+      assert.ok(unit && unit.alive,
+        `${boss.key}: ${def.empoweredOnly} is not alive at forty seconds, so there is nothing ` +
+        'to buy an ability from')
+      const boughtAt = w.elapsedMs
+      unit.empowered = true
+
+      let firstAt = -1
+      for (let i = 0; i < Math.round(60000 / TICK_MS) && firstAt < 0; i++) {
+        step(w, IDLE(), TICK_MS)
+        if (w.instances.some(x => x.def.id === id)) firstAt = w.elapsedMs
+      }
+      const waited = (firstAt - boughtAt) / 1000
+      // Two beats. One is the appointment itself; the second is slack for a beat
+      // that had already been claimed on the tick the gate opened.
+      const bar = (boss.loopIntervalSec ?? 5) * 2
+      assert.ok(firstAt >= 0 && waited <= bar,
+        `${boss.key}/${id}: ${firstAt < 0 ? 'never fired at all' : `waited ${waited.toFixed(1)}s`} ` +
+        `after the empowerment was bought, against a bar of ${bar.toFixed(1)}s. An opening in a ` +
+        'gate is an appointment and the next beat is owed to it — if this has regressed then the ' +
+        'ability is back to waiting out a whole rotation for a slot, which is the defect the ' +
+        'user reported by name')
+    }
+  }
+})
+
+test('every empowered ability gets several casts, not one', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+  const empowered = [...new Set(boss.loop)]
+    .map(id => boss.mechanics.find(m => m.id === id))
+    .filter(d => d?.empoweredOnly)
+  assert.ok(empowered.length >= 3,
+    `only ${empowered.length} empowered rotation entries — the Lost Explorers sell three`)
+
+  // Bought at forty seconds, which is about when the first fish actually lands,
+  // and all three at once so this measures the ROTATION's capacity rather than
+  // the fish economy. What a pull can afford to deliver is the bot's problem and
+  // the boss file's; whether the array can deliver it at all is this file's, and
+  // the two failures look nothing alike from the outside.
+  for (const seed of [1337, 2024, 90210]) {
+    seedRng(seed)
+    const w = createWorld(boss, 'dps', 'green')
+    const counts = Object.fromEntries(empowered.map(d => [d.id, 0]))
+    const seen = new Set()
+    const ticks = Math.round((boss.pullLengthSec * 1000) / TICK_MS)
+    for (let i = 0; i < ticks; i++) {
+      // NOBODY IS PLAYING THE PLAYER, so the pull is held open by hand. This
+      // probe asks one question — can the array deliver an ability it has been
+      // told is available — and every way a real pull ENDS is a different
+      // question that would silently truncate the answer:
+      //
+      //   • the raid bar is the enrage and nothing empties it here, so it fills
+      //     in about seventy seconds and takes the pull;
+      //   • an idle body standing in a Mighty Thud is killed outright, which is
+      //     `alive = false` rather than a health total, so topping health up is
+      //     not enough on its own;
+      //   • and a dead caster casts nothing, so a council that fell over would
+      //     stop the rotation for a reason that has nothing to do with pacing.
+      //
+      // Measured with all of that left alone, the probe died at sixty-eight
+      // seconds and Frostfire Volley had had exactly one turn — which reads
+      // identically to the defect being tested for and is not it.
+      w.player.health = 1
+      w.player.alive = true
+      w.raidHealth = 1
+      w.bossEnergy = 0
+      if (w.elapsedMs >= 40000) for (const b of w.bosses) b.empowered = true
+      step(w, IDLE(), TICK_MS)
+      for (const inst of w.instances) {
+        if (seen.has(inst.uid)) continue
+        seen.add(inst.uid)
+        if (inst.def.id in counts) counts[inst.def.id]++
+      }
+      if (w.over) break
+    }
+    for (const d of empowered) {
+      assert.ok(counts[d.id] > 1,
+        `seed ${seed}: ${d.name} fired ${counts[d.id]} time(s) in a ${boss.pullLengthSec}s pull ` +
+        'after being bought at forty seconds. Once is a cutscene — a trainer has to let you ' +
+        'practise the thing you paid a whole crate window to find, so the bar is more than one')
+    }
+  }
+})
+
+// ── the feed order ───────────────────────────────────────────────────────────
+//
+// `feedPriority` used to be read strictly in order, which made the last name in
+// it structurally last on every pull anybody had ever played — so one of the
+// three empowerments was always the one the pull ran out of time for, and it was
+// always the SAME one. It is a pool now, shuffled once per pull out of the world
+// seed.
+//
+// Both halves matter and they pull against each other. Varying is the point;
+// varying REPRODUCIBLY is what keeps the playtest an instrument rather than a
+// mood, and a shuffle drawn from anything but the seeded stream would quietly
+// turn every golden cell in the sweep into noise.
+test('the feed order varies between pulls and is fixed by the seed', async () => {
+  const { createWorld, seedRng, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'explorers')
+  assert.ok((boss.feedPriority ?? []).length >= 3,
+    'the Lost Explorers no longer declare three mouths — this check would be vacuous')
+
+  const orderFor = (seed) => {
+    seedRng(seed)
+    return createWorld(boss, 'dps', 'green').feedOrder.join(',')
+  }
+
+  const seeds = [1337, 2024, 90210, 55, 7, 314159]
+  const orders = seeds.map(orderFor)
+  assert.ok(new Set(orders).size > 1,
+    `every one of ${seeds.length} seeds produced the feed order ${orders[0]}. The list is a pool ` +
+    'and not a ranking — if it never varies then one explorer is last for ever and its empowered ' +
+    'ability is the one nobody ever gets to practise')
+
+  // No mouth is structurally last. Weaker than "every permutation appears",
+  // which is a claim about the shuffle's distribution rather than about the
+  // fight, and stronger than "it varies" — which a shuffle that only ever
+  // swapped the first two would satisfy while leaving the same body last every
+  // single pull, which is the exact bug this replaced.
+  const last = new Set(orders.map(o => o.split(',').pop()))
+  assert.ok(last.size > 1,
+    `${[...last][0]} was fed last on all ${seeds.length} seeds. Being last is an INPUT to the ` +
+    'schedule rather than a consequence of it, so no amount of loop tuning can rescue a body ' +
+    'that is always there')
+
+  for (let i = 0; i < seeds.length; i++) {
+    assert.equal(orderFor(seeds[i]), orders[i],
+      `seed ${seeds[i]} gave two different feed orders on two builds of the same world. The ` +
+      'shuffle has to be drawn from the stream `seedRng` fixes, or a seeded playtest stops ' +
+      'being reproducible and the golden file stops meaning anything')
+  }
+
+  // A permutation, not a re-roll: the same mouths, each exactly once.
+  for (const o of orders) {
+    assert.deepEqual([...o.split(',')].sort(), [...boss.feedPriority].sort(),
+      `the feed order ${o} is not a permutation of ${boss.feedPriority.join(',')} — a shuffle ` +
+      'that dropped or duplicated a mouth would strand a fish with nowhere to go')
+  }
+
+  // And the other seven bosses draw NOTHING from the stream, which is the whole
+  // reason this change did not have to re-record the rest of the tier.
+  for (const other of BOSSES) {
+    if (other.key === boss.key) continue
+    seedRng(1337)
+    const a = createWorld(other, 'dps', 'green')
+    seedRng(1337)
+    const b = createWorld(other, 'dps', 'green')
+    assert.deepEqual(a.feedOrder, b.feedOrder,
+      `${other.key}: two worlds built off the same seed disagree about the feed order`)
+    assert.ok(a.feedOrder.length <= 1,
+      `${other.key} grew a feed order of ${a.feedOrder.length} entries without a feed mechanic. ` +
+      'A shuffle of two or more draws from `rnd()`, which would move every seeded roll on that ' +
+      'fight and re-record its cells for no reason')
+  }
 })

@@ -1,38 +1,36 @@
 {
   "careless/nekzali/tank": {
-    "wins": 1,
-    "cleared": false,
-    "outcome": "enrage",
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
     "failures": {
       "Echo of Jawae": 2,
       "Hollowing Strikes": 2,
-      "Hungering Pyre": 3,
-      "Possession Barrage": 1,
+      "Hungering Pyre": 6,
+      "Possession Barrage": 2,
       "Restless Amani": 7
     }
   },
   "careless/nekzali/healer": {
     "wins": 0,
     "cleared": false,
-    "outcome": "enrage",
+    "outcome": "Slithering Flame",
     "failures": {
-      "Echo of Jawae": 1,
-      "Essence Rend": 1,
-      "Hungering Pyre": 2,
+      "Hungering Pyre": 4,
       "Latent Cultist": 1,
-      "Restless Amani": 8
+      "Restless Amani": 6,
+      "Slithering Flame": 1
     }
   },
   "careless/nekzali/dps": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
+    "wins": 0,
+    "cleared": false,
+    "outcome": "Slithering Flame",
     "failures": {
-      "Echo of Jawae": 2,
-      "Essence Rend": 2,
-      "Hungering Pyre": 4,
+      "Hungering Pyre": 3,
       "Latent Cultist": 1,
-      "Restless Amani": 6
+      "Restless Amani": 4,
+      "Slithering Flame": 1
     }
   },
   "careless/sentinels/green/tank": {
@@ -319,22 +317,23 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Cremation": 2,
       "Echo of Jawae": 1,
       "Hollowing Strikes": 1,
-      "Hungering Pyre": 2,
-      "Possession Barrage": 4,
-      "Restless Amani": 3
+      "Hungering Pyre": 1,
+      "Possession Barrage": 3,
+      "Restless Amani": 5
     }
   },
   "competent/nekzali/healer": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Latent Cultist",
+    "outcome": "enrage",
     "failures": {
+      "Cremation": 1,
+      "Echo of Jawae": 1,
       "Essence Rend": 1,
-      "Hungering Pyre": 1,
-      "Latent Cultist": 1
+      "Hungering Pyre": 3,
+      "Restless Amani": 4
     }
   },
   "competent/nekzali/dps": {
@@ -342,10 +341,8 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Cremation": 2,
       "Echo of Jawae": 1,
-      "Hungering Pyre": 2,
-      "Restless Amani": 1
+      "Hungering Pyre": 4
     }
   },
   "competent/sentinels/green/tank": {

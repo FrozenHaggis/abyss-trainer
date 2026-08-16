@@ -1777,8 +1777,14 @@ function burstCyst(w: World, inst: Instance, toBoss = false) {
  */
 function burnsCorpses(w: World, def: MechanicDef): boolean {
   if (!activePhase(w)?.resurrectCorpsesAs) return false
-  if (def.rule.type === 'carryOut') return true
-  return w.boss.mechanics.some(m => m.spawns?.defId === def.id && m.rule.type === 'carryOut')
+  // The torch says it is one. Inferring it from "is a carryOut" was wrong on the
+  // only fight that has corpses: Nek'zali carries TWO things, and Essence Rend
+  // is not a torch — so a player holding one was told to BURN A CORPSE with
+  // something incapable of burning anything, for ten seconds at a time.
+  if (def.burnsCorpses) return true
+  // ...and so does whatever it drops. The flame is the fuel; the blast it
+  // becomes is what actually does the incinerating.
+  return w.boss.mechanics.some(m => m.burnsCorpses && m.spawns?.defId === def.id)
 }
 
 /** Burn every corpse this blast covers, or that a body is standing on. */
@@ -1984,10 +1990,32 @@ function resolveInstance(w: World, inst: Instance) {
     case 'beInside':
       if (!inside) {
         if (scored) recordFailure(w, def)
+        // Missing the soak is not merely a miss — on Hungering Pyre it hands you
+        // the flame, which is the fight's only torch. "Anyone who misses it gets
+        // Slithering Flame", and the corpse pile has to be burned by somebody.
+        if (def.onMiss) {
+          const got = w.boss.mechanics.find(m => m.id === def.onMiss!.defId)
+          if (got) spawn(w, got, { ...w.player.pos })
+        }
         // Missing a shared soak hurts the RAID, not you — even when the ability
         // is Deadly. An unsoaked hit lands on the group; killing the player for
         // being late to it would blame one person for a collective miss.
         w.raidHealth -= def.lethal ? 0.3 : 0.12
+      }
+      // And the raid gets what it earned too. A couple of them, not all of them:
+      // the pile needs more than one torch or the intermission is a job for one
+      // person, and nineteen flames at once is a floor nobody can cross.
+      if (def.onMiss) {
+        const got = w.boss.mechanics.find(m => m.id === def.onMiss!.defId)
+        if (got) {
+          let handed = 0
+          for (const a of sideAllies(w, def.side)) {
+            if (handed >= 2) break
+            if (isInside(inst, a.pos)) continue
+            spawn(w, got, { ...a.pos })
+            handed++
+          }
+        }
       }
       break
 
@@ -3290,7 +3318,7 @@ function computePrompt(w: World): Prompt | null {
       consider({ verb: 'BLOCK IT', mechanic: d.name, urgency: t }, 1)
     } else if (d.job === 'kill') {
       const t = 1 - add.fuse / Math.max(1, d.fuseSec * 1000)
-      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL IT', mechanic: d.name, urgency: t }, 2)
+      if (t > 0.4) consider({ verb: add.shield > 0 ? 'BREAK THE SHIELD' : 'KILL ADDS', mechanic: d.name, urgency: t }, 2)
     } else if (d.job === 'leave') {
       if (dist(add.pos, w.player.pos) < 9) {
         consider({ verb: 'DO NOT TOUCH', mechanic: d.name, urgency: 0.5 }, 2)
@@ -3392,7 +3420,7 @@ function computePrompt(w: World): Prompt | null {
           // While the pile is up, a flame is a tool rather than a liability:
           // the intermission wants it walked onto a corpse, not to the wall.
           if (burnsCorpses(w, def) && w.corpses.some(c => !c.burned)) {
-            consider({ verb: 'BURN A CORPSE', mechanic: def.name, urgency: t }, 1)
+            consider({ verb: 'BURN THE CORPSE', mechanic: def.name, urgency: t }, 1)
             break
           }
           const d = Math.hypot(w.player.pos.x, w.player.pos.y)
@@ -3453,7 +3481,7 @@ function computePrompt(w: World): Prompt | null {
           // Your group already has a Gash. A second one kills you, so being in
           // this cone is the failure — the exact inverse of the instruction the
           // other half of the raid is reading off the same telegraph.
-          consider({ verb: 'GET OUT — YOU HAVE A GASH', mechanic: def.name, urgency: t }, 0)
+          consider({ verb: 'GET OUT — GASH ON YOU', mechanic: def.name, urgency: t }, 0)
         }
         break
       }

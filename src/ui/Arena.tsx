@@ -5,11 +5,11 @@ import type {
 } from '../engine/types'
 import { COOLDOWN_MS, TICK_MS, abilitiesFor, buildResult, createDrill, createWorld, currentTank, primaryBoss, step, upcoming } from '../engine/sim'
 import type { Input, World } from '../engine/sim'
-import { makeCamera, render } from '../engine/render'
+import { makeCamera, render, stackGap } from '../engine/render'
 import { briefFor, briefForAdd } from '../engine/brief'
 import RoleIcon from './RoleIcon'
 import { startMusic, stopMusic } from '../engine/audio'
-import { initVoice, isTeaching, sayMechanic, sayVerb, setVoiceEnabled, stopVoice, voiceEnabled, voiceSupported } from '../engine/voice'
+import { initVoice, isTeaching, sayInterrupt, sayMechanic, sayVerb, setVoiceEnabled, stopVoice, voiceEnabled, voiceSupported } from '../engine/voice'
 
 // The arena. React owns the HUD; the canvas and the simulation live outside
 // React entirely (in a ref + rAF loop) so a HUD re-render can never perturb the
@@ -232,6 +232,20 @@ interface HudSample {
   /** The separation the fight demands, from its own `keepApart` rule. */
   minApart: number
   /**
+   * The stacked pair's live gap to the body they must stay clear of.
+   *
+   * Replaces the generic separation row on a fight where the tanks hold two
+   * entities TOGETHER, and it replaces it rather than sitting beside it: the
+   * generic row reads the widest pair, and a raider shown both would be looking
+   * at two numbers for one rule. Read straight off `stackGap()` in render.ts —
+   * the same call the canvas draws from, so the line across the floor and the
+   * number in the HUD cannot come apart.
+   *
+   * Null on all seven other fights, which keeps the generic row exactly as it
+   * was for the Sentinels.
+   */
+  stack: { threat: string; yards: number; minYards: number; closing: boolean } | null
+  /**
    * The melee leash on the entity the player is holding: what it is called, how
    * far out they are, and how far they may go.
    *
@@ -424,7 +438,7 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
     health: 1, raid: 1, bossHp: 1, energy: 0, elapsed: 0, cooldowns: {},
     alive: true, stacks: 0, tanking: false, raidAlive: 0,
     prompt: null, next: [], waiting: [], drillReps: 0, drillClean: 0,
-    units: [], separation: null, minApart: 0, leash: null, marks: [],
+    units: [], separation: null, minApart: 0, stack: null, leash: null, marks: [],
     marked: false, green: 0, pairTarget: ORB_COUNT, phase: null,
     altars: [], enrage: [], inbound: null, venom: 0, venomRaid: 0,
     fishFound: 0, fishSpent: 0, fishCarried: false,
@@ -437,6 +451,16 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
   const venomCap = counterDef?.counter?.lethalAt ?? 0
   const venomName = counterDef?.name ?? ''
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
+  /**
+   * The kick that just landed.
+   *
+   * The only positive toast in the app, and the reason it exists is that an
+   * interrupt is the one thing a player does right that produces nothing to look
+   * at — the proof is a hit that never arrives. Deliberately not the `fail-toast`
+   * class: that one is red and reads as an accusation, and this is the opposite
+   * event.
+   */
+  const [kick, setKick] = useState<{ name: string; id: number } | null>(null)
   // A phase announcement, held for a few seconds and then dropped.
   const [banner, setBanner] = useState<PhaseDef | null>(null)
   const [voiceOn, setVoiceOn] = useState(voiceEnabled())
@@ -533,6 +557,11 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
     let ended = false
     let paused = false
     let lastFailAt = -1
+    // The engine stamps `interruptFlash.atMs` and never clears it, so the
+    // consumer ages it. Keyed on the timestamp for exactly the reason the
+    // failure toast is: a kick landing twice in one pull is two events, and a
+    // flag would announce the first one every frame until the second replaced it.
+    let lastKickAt = -1
 
     function frame(now: number) {
       const realDt = Math.min(250, now - last)
@@ -567,7 +596,7 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           // whatever pace the player wants.
           const b = world.announceAdd
             ? briefForAdd(world.announceAdd, role)
-            : briefFor(world.announce, role)
+            : briefFor(world.announce, role, boss)
           setCallout(world.announce)
           setCalloutAdd(world.announceAdd)
           paused = true
@@ -579,6 +608,16 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
         if (world.lastFailure && world.lastFailure.atMs !== lastFailAt) {
           lastFailAt = world.lastFailure.atMs
           setToast({ text: world.lastFailure.failText, id: lastFailAt })
+        }
+        // A landed kick, said out loud and put on screen. The canvas already
+        // breaks the cast bar over the caster; this is the half a player finds
+        // when they were looking at their own feet as they pressed it, and
+        // between the three of them there is no version of "did that go through"
+        // left unanswered.
+        if (world.interruptFlash && world.interruptFlash.atMs !== lastKickAt) {
+          lastKickAt = world.interruptFlash.atMs
+          setKick({ name: world.interruptFlash.name, id: lastKickAt })
+          sayInterrupt(world.interruptFlash.name)
         }
 
         const over = !world.player.alive || world.killed
@@ -619,6 +658,17 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           })),
           separation: separationOf(world),
           minApart,
+          // Flattened to plain data rather than passed through as the BossUnit
+          // it comes back with: everything else in this sample is a number or a
+          // string, and holding a live simulation object in React state would
+          // hand the HUD a handle it could read a stale frame off.
+          stack: (() => {
+            const sg = stackGap(world)
+            return sg && {
+              threat: sg.threat.def.name, yards: sg.yards,
+              minYards: sg.minYards, closing: sg.closing,
+            }
+          })(),
           leash: leashOf(world),
           // Floored, because a mark is a whole stack — a fractional one would
           // read as a bug rather than as the aura ticking.
@@ -680,6 +730,15 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
     const t = window.setTimeout(() => setToast(null), 2600)
     return () => window.clearTimeout(t)
   }, [toast])
+
+  // Shorter than the failure toast on purpose. A mistake is worth reading twice;
+  // a confirmation only has to arrive, and one that lingered would still be on
+  // screen when the next cast started winding up.
+  useEffect(() => {
+    if (!kick) return
+    const t = window.setTimeout(() => setKick(null), 1500)
+    return () => window.clearTimeout(t)
+  }, [kick])
 
   // A stage change is the one event that rewrites what everything else on this
   // HUD means, so it gets announced. Keyed on the PhaseDef itself, which the
@@ -930,10 +989,39 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             </div>
           )}
 
+          {/* The stacked pair, and the only distance that can lose the pull.
+              The pair standing on top of each other is CORRECT — the link needs
+              all of them inside the radius at once — so there is no gap between
+              them worth showing, and the row that used to show one was teaching
+              the tanks to undo their own job. What is here instead is the pair's
+              live distance to the body nobody holds, which is the number the
+              engine scores and the number the canvas draws. */}
+          {hud.stack && (
+            <>
+              <div className={`separation${hud.stack.yards < hud.stack.minYards ? ' hot' : ''}`}>
+                <span className="sep-lab">Pair → {hud.stack.threat}</span>
+                <span className="sep-num">{Math.round(hud.stack.yards)}<em>yd</em></span>
+                <span className="sep-need">hold {hud.stack.minYards}+</span>
+              </div>
+              {/* Drifting in, caught before it is a link. By the time all three
+                  are inside the radius the damage has already stopped counting,
+                  and the walk takes a couple of seconds to fix. */}
+              {hud.stack.closing && hud.stack.yards >= hud.stack.minYards && (
+                <div style={S.row}>
+                  <span style={S.warn}>
+                    closing on {hud.stack.threat} — walk the pair round to the far side
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
           {/* Live separation. The tanks own this number and nobody could see it
               before — a pair sliding into their own damage reduction looked
-              exactly like a pull where the damage had stopped working. */}
-          {hud.separation !== null && hud.minApart > 0 && (
+              exactly like a pull where the damage had stopped working. Stood
+              down on a fight with a stacked pair, which reads the row above
+              instead: two numbers for one rule is a HUD arguing with itself. */}
+          {!hud.stack && hud.separation !== null && hud.minApart > 0 && (
             <div className={`separation${hud.separation < hud.minApart ? ' hot' : ''}`}>
               <span className="sep-lab">Apart</span>
               <span className="sep-num">{Math.round(hud.separation)}<em>yd</em></span>
@@ -1035,6 +1123,26 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
         <div className="fail-toast" key={toast.id}>{toast.text}</div>
       )}
 
+      {/* The kick landed. Sat above the failure toast's slot so the two never
+          collide, and styled inline for the same reason the fountain chips are:
+          it is the only green toast in the app and a rule for it in styles.css
+          would sit unused on every fight but one. */}
+      {kick && (
+        <div
+          key={kick.id}
+          role="status"
+          style={{
+            position: 'absolute', left: '50%', bottom: '40%', transform: 'translateX(-50%)',
+            padding: '8px 18px', borderRadius: 8, pointerEvents: 'none',
+            fontFamily: 'var(--font-display)', fontSize: 16, letterSpacing: '.08em',
+            textTransform: 'uppercase', textAlign: 'center', whiteSpace: 'nowrap',
+            background: 'rgba(10, 44, 34, .92)', border: '1px solid #2fe3a0', color: '#9dffd8',
+          }}
+        >
+          Kicked — {kick.name}
+        </div>
+      )}
+
       {banner && (
         <div className="phase-banner" key={banner.id} role="status">
           <span className="phase-name">{banner.name}</span>
@@ -1094,7 +1202,7 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           away from the raid" are the same mechanic seen from two jobs. */}
       {callout && <div className="teaching-veil" />}
       {callout && (() => {
-        const b = calloutAdd ? briefForAdd(calloutAdd, role) : briefFor(callout, role)
+        const b = calloutAdd ? briefForAdd(calloutAdd, role) : briefFor(callout, role, boss)
         return (
           <aside className="brief" role="dialog" aria-label={`${callout.name} briefing`}>
             <div className="brief-tag">{calloutAdd ? 'New add — paused' : 'New mechanic — paused'}</div>

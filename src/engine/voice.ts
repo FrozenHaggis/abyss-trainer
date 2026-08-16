@@ -128,6 +128,26 @@ export function sayVerb(verb: string): void {
   say(verb, { urgent: true, cooldownMs: 2600, rate: 1.18, pitch: 1.1 })
 }
 
+/**
+ * A kick that landed, confirmed out loud.
+ *
+ * The one thing this trainer ever says because something went RIGHT, and it
+ * earns the exception: an interrupt is proved by a hit that never arrives, so
+ * unlike every other success in the raid there is nothing to look at. Players
+ * were finishing pulls unsure whether any of their kicks had gone through, and
+ * a trainer that cannot tell you whether you pressed it in time has not taught
+ * you the one thing the mechanic is for.
+ *
+ * `urgent`, which is rule 1 in this file working exactly as intended — this is
+ * two words, it is about the button the player just pressed, and it is worth
+ * more than whatever leisurely line it cuts off. Pitched up and quick so it
+ * reads as a confirmation rather than as another instruction; the short
+ * cooldown is per-line, so back-to-back kicks are each announced.
+ */
+export function sayInterrupt(name: string): void {
+  say(`${name} kicked.`, { urgent: true, cooldownMs: 1200, rate: 1.2, pitch: 1.25 })
+}
+
 export function stopVoice(): void {
   if (voiceSupported()) window.speechSynthesis.cancel()
   speaking = 0

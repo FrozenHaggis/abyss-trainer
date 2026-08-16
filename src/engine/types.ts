@@ -469,6 +469,12 @@ export type Rule =
    * play. `PlayerState.aloft` is the exemption, and it is the ONLY exemption —
    * a blanket "airborne beats ground AoE" rule would let a Crosswinds knock
    * dodge arbitrary telegraphs.
+   *
+   * A wave that declares `MechanicDef.ripple` is the expanding-ring form: the
+   * danger is a travelling LINE rather than a slab, it is judged on contact
+   * instead of at a resolve moment, and everything else about the rule — the
+   * airborne exemption, the lethality, the fact that the raid has to be seen
+   * answering it — is unchanged.
    */
   | { type: 'wave' }
 
@@ -520,6 +526,34 @@ export interface BossEntityDef {
    */
   tankedApart?: boolean
   /**
+   * Held TOGETHER with the fight's other stacked entities, and walked as one.
+   *
+   * The opposite reading of the same link rule, and the Lost Explorers is the
+   * case. United Defense only fires when ALL THREE explorers are inside 30 yards
+   * of each other, so Nama and Iku standing on top of one another is perfectly
+   * legal — what must never happen is the pair also being inside 30 of Gebbo,
+   * who laps the room on his own and cannot be moved by anybody. Holding those
+   * two apart, which is what `tankedApart` does, spends both tanks on a
+   * separation the mechanic never asked for and leaves neither of them watching
+   * the body that actually closes the link.
+   *
+   * So the two stacked tanks have ONE job between them and it is a walk: keep
+   * the pair on the far side of the room from the patroller, continuously, as he
+   * goes round. There is no station to park on — the arena centre is inside his
+   * lap and therefore inside the link radius — which is exactly why this is a
+   * different flag rather than `tankedApart` with different numbers.
+   *
+   * Emphatically NOT a replacement for `tankedApart`. The Twin Fangs genuinely
+   * are tanked apart, at fixed corners, and that machinery is untouched: a fight
+   * declares one or the other per entity and gets the behaviour it asked for.
+   *
+   * The engine derives the whole walk from data already on the fight — the link
+   * radius from the `keepApart` rule, the threat's circle from its `patrol` —
+   * so another encounter with a patrolling third body and two stacked tanks gets
+   * this for nothing. `BossDef.tankStackKite` is the tuning override.
+   */
+  tankedStacked?: boolean
+  /**
    * Never moves. It is not tanked TO anywhere — it sits where it starts, all
    * pull, and the raid comes to it.
    *
@@ -551,11 +585,13 @@ export interface BossEntityDef {
    * never moved, which made "no boss is static" false and made his Throw Junk
    * land in the same place every cast.
    *
-   * The circle's centre and radius are load-bearing, not decoration: United
-   * Defense links the council when the widest pair is inside 30 yards, and the
-   * design contract is that a link is caused by a TANK dragging Nama or Iku into
-   * his path, never by Gebbo wandering into a station he could not avoid. The
-   * boss file states the arithmetic that guarantees it.
+   * `centre` is wherever the fight says, and saying "the middle of the room"
+   * is the interesting case rather than a degenerate one: a lap around the arena
+   * centre reads as a patrol, and a small circle parked off in one corner reads
+   * as a body milling about. It also decides the whole tank job on a fight with
+   * `tankedStacked` entities — the lap sweeps the centre out of the safe set, so
+   * the stacked pair has nowhere to park and has to keep walking. See
+   * `BossDef.tankStackKite` for the arithmetic the engine derives from it.
    */
   patrol?: { centre: Vec; radius: number; degPerSec: number; startDeg?: number }
   /**
@@ -1255,6 +1291,42 @@ export interface MechanicDef {
    * replaces it in the linger tick.
    */
   sweep?: { startDeg: number; degPerSec: number; mirror?: boolean }
+  /**
+   * A ring that grows out of where this spawned. The LINE is the danger; the
+   * floor inside it and the floor outside it are both safe.
+   *
+   * Blast Wave, and the reason it needed a shape nothing else in the raid has.
+   * It used to be a 120x34 slab — deliberately too wide to sidestep, so that the
+   * mushroom was the only answer — and a slab that big is not a wave, it is a
+   * weather event: there is no moment at which it arrives, so there is nothing
+   * to time a jump against. The real thing comes off the bomb as a ring and
+   * travels, and TIMING THE JUMP is the mechanic. You can see the line coming,
+   * you can count it in, and you have to leave the floor exactly as it reaches
+   * you.
+   *
+   *   • `speed`     — how fast the line travels outward, yards a second. Under
+   *                   `PLAYER_SPEED` on purpose, so a raider can back away and
+   *                   buy themselves a second to line the mushroom up. That is
+   *                   not an escape: the room has a rim, so running outward only
+   *                   ever postpones the meeting, and running inward puts you in
+   *                   the crater the bomb left. Slow enough to read is the
+   *                   requirement; too slow to matter is not a risk here,
+   *                   because the wave has to cross the room inside `lingerMs`.
+   *   • `thickness` — how wide the band is, in yards. A line with no width is a
+   *                   line nothing can ever be judged against at 60fps; this is
+   *                   what makes the danger a real stripe of floor.
+   *
+   * The band is born with its OUTER edge on the spawn point and grows outward
+   * from there, so at the instant it appears it covers nothing at all and
+   * `Instance.ringRadius` climbs from negative `thickness`. That is what keeps
+   * the raid's own rule — a contact hazard cannot kill on the frame it spawns —
+   * true for a hazard whose whole existence is contact.
+   *
+   * Declare `shape` as an `annulus` alongside it so the guards that skip
+   * shapeless instances still see one; the engine reads THIS for the geometry
+   * and the shape's own radii are ignored while the ring is live.
+   */
+  ripple?: { speed: number; thickness: number }
 }
 
 /**
@@ -1566,6 +1638,27 @@ export interface BossDef {
    * cycles while energy fills; `atFullEnergy` fires and resets it.
    */
   loop: string[]
+  /**
+   * Tuning for the walk the `tankedStacked` tanks do, when the derived one is
+   * wrong for a room.
+   *
+   * Everything here has a derivation and a fight that omits the field gets it.
+   * The engine reads the link radius off the `keepApart` rule and the threat's
+   * circle off its `patrol`, and puts the stacked pair diametrically opposite
+   * the patroller at whatever radius makes the gap `minYards + marginYards` —
+   * which on the Lost Explorers is 30 + 8 - 16 = 22 yards out, a comfortable
+   * walk on a 50-yard floor. Two ways that can come out wrong:
+   *
+   *   • `marginYards` — how much daylight to leave beyond the link radius. Too
+   *     little and the pair link every time a tank is a step late; too much and
+   *     the derived ring is outside the room. Defaults to 8, which is pinned by
+   *     the AI tank's six-yard leash — see STACK_KITE_MARGIN in sim.ts.
+   *   • `ringYards` — pins the ring instead of deriving it, for a room where the
+   *     arithmetic lands off the floor or on top of something else. Stating it
+   *     does NOT switch the safety check off: the walk still refuses to stand
+   *     inside the link radius, it simply starts from this radius instead.
+   */
+  tankStackKite?: { marginYards?: number; ringYards?: number }
   /** Seconds between loop entries. */
   loopIntervalSec: number
   /**
@@ -1785,6 +1878,38 @@ export interface Instance {
    * pointing, which is what the renderer and `isInside` both read.
    */
   spin?: number
+  /**
+   * `ripple` only: the INNER edge of the travelling band, in yards from `pos`.
+   *
+   * The band is `[ringRadius, ringRadius + thickness]`, and it starts at minus
+   * the thickness so the ring's outer edge begins on the spawn point and the
+   * frame it appears touches nobody. Stored as the inner edge rather than as a
+   * mid-line radius because both the hit test and the renderer want the two
+   * edges, and deriving them from a centre means both of them have to remember
+   * to halve the same number.
+   *
+   * Grown in the linger tick rather than by `drift`, because a ripple does not
+   * travel anywhere — its ANCHOR never moves, only its radius does, and a drift
+   * vector would walk the whole ring across the floor.
+   */
+  ringRadius?: number
+  /**
+   * The cast was KICKED, and the telegraph is a broken cast bar rather than a
+   * countdown.
+   *
+   * `answered` already says a `press` was satisfied, and it is not enough. It is
+   * set for taunts and dispels too, it is set by the raid's AI on casts that are
+   * not the player's job, and nothing about it says the shape on the floor
+   * should stop meaning "this is about to land". A kick is the one press in the
+   * fight where the reward IS the cast not happening, and a player who cannot
+   * tell whether their interrupt went through has been taught nothing.
+   *
+   * So the renderer reads this to draw the break, and `World.interruptFlash`
+   * carries the callout for the voice layer. Both, because the two answer
+   * different questions: this one is "which telegraph broke", that one is "say
+   * so, once".
+   */
+  interrupted?: boolean
 }
 
 /** A simulated raid member. Nineteen of them, so group mechanics are real. */
@@ -1858,6 +1983,21 @@ export interface Ally {
    * through is an instruction the player has only been told, never shown.
    */
   aloft: number
+  /**
+   * The Bouncy Mushroom this raider is stepping onto THIS tick, by uid, or -1.
+   *
+   * A pad is spent by whoever touches it, and the raid crosses the whole floor
+   * to reach its own: without a statement of intent, a raider walking to the
+   * mushroom they were assigned spends every other mushroom on the way, and the
+   * groups waiting at those pads for the line to reach them are left standing on
+   * bare ground. Measured: nine pads gone inside two seconds and twelve of
+   * nineteen raiders killed by a ring they had correctly positioned for.
+   *
+   * Set by `allyThink` at the moment the group commits and read by the contact
+   * test in `step`. The PLAYER has no equivalent and must not: walking over one
+   * by accident, or too early, is a mistake the fight is built around.
+   */
+  padUid: number
   /**
    * Stacks of the fight's `counter` this raider is carrying.
    *

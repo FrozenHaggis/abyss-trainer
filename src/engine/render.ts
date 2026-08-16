@@ -54,6 +54,26 @@ const ELEMENT_NAME: Record<'fire' | 'frost', string> = {
 /** An empowered explorer. Gold, the file's existing "do not misread this" hue. */
 const GOLD = '210, 153, 34'
 
+/**
+ * How long a landed kick is announced on the floor.
+ *
+ * `World.interruptFlash` is deliberately never cleared by the sim — it stamps
+ * `atMs` and leaves consumers to age it — so the duration lives here, where the
+ * drawing is. Long enough to be unmissable if you were looking somewhere else
+ * when you pressed it, short enough that two kicks in a row are two events.
+ */
+const KICK_FLASH_MS = 1400
+
+/**
+ * Daylight beyond the link radius before the pair is called "closing".
+ *
+ * The engine's own default (STACK_KITE_MARGIN in sim.ts) is the distance the AI
+ * tanks walk the stacked pair to, so a pair inside it is a pair that has drifted
+ * off the walk rather than one that has already lost the pull. A fight that
+ * overrides `tankStackKite.marginYards` moves this readout with it.
+ */
+const STACK_MARGIN = 8
+
 const sideColour = (s: Side) => (s === 'red' ? SIDE_RED : SIDE_GREEN)
 
 /**
@@ -152,6 +172,69 @@ function pathArena(ctx: CanvasRenderingContext2D, cam: Camera, boss: BossDef, k 
 function arenaReach(boss: BossDef): number {
   const pts = arenaPoints(boss)
   return pts ? Math.max(...pts.map(p => Math.hypot(p.x, p.y))) : boss.arenaRadius
+}
+
+/**
+ * The gap a `tankedStacked` pair has to hold, and the body it is measured to.
+ *
+ * THE READOUT THIS REPLACES WAS TEACHING THE FIGHT BACKWARDS. It drew a line
+ * between the two tanked explorers with the yardage on it — "37 YD · HOLD 30+"
+ * — and the two of them standing together is not a mistake, it is the answer.
+ * `keepApart` links when the WIDEST pair of live entities is under `minYards`,
+ * which on a three-body council is literally "all three within 30 of each
+ * other"; a pair on top of each other with the third across the room links
+ * nothing at all. What loses the pull is the pair drifting within 30 of the
+ * body nobody is holding, so that is the only distance worth drawing.
+ *
+ * Measured as the FURTHEST of the pair from the threat, and that is exactly the
+ * quantity the engine scores: with the two held a few yards apart,
+ * max(d(threat, a), d(threat, b)) IS the widest of the three gaps. Reading it
+ * from the pair rather than re-deriving the widest pair is also what makes it
+ * structurally impossible for this line to end up drawn between the two bodies
+ * the tanks are deliberately standing together.
+ *
+ * Null on every fight with no `tankedStacked` entity — which is all of them but
+ * one — so the Sentinels keep the generic widest-pair readout untouched.
+ *
+ * Exported because the HUD asks the same question. Two answers computed in two
+ * files is two things to keep in step, and the one thing the HUD must never do
+ * is disagree with the canvas about a number the fight is scored on.
+ */
+export interface StackGap {
+  /** The middle of the stacked pair, in yards — where the readout hangs from. */
+  at: Vec
+  /** The body they must stay clear of, and how far the furthest of them is. */
+  threat: BossUnit
+  yards: number
+  /** The separation the fight's own rule demands. */
+  minYards: number
+  /** Inside the walk's margin: drifting toward the link, not yet in it. */
+  closing: boolean
+}
+
+export function stackGap(w: World): StackGap | null {
+  const def = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
+  if (!def || def.rule.type !== 'keepApart') return null
+  const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
+  const pair = live.filter(b => b.def.tankedStacked)
+  const threats = live.filter(b => !b.def.tankedStacked)
+  if (pair.length < 2 || !threats.length) return null
+  const at = {
+    x: pair.reduce((s, b) => s + b.pos.x, 0) / pair.length,
+    y: pair.reduce((s, b) => s + b.pos.y, 0) / pair.length,
+  }
+  // Whichever threat is closest to linking the council, not whichever is
+  // nearest: a body two yards from one of the pair and fifty from the other
+  // links nothing, and pointing the readout at it would cry wolf all pull.
+  let threat = threats[0]
+  let yards = Infinity
+  for (const t of threats) {
+    let gap = 0
+    for (const b of pair) gap = Math.max(gap, Math.hypot(t.pos.x - b.pos.x, t.pos.y - b.pos.y))
+    if (gap < yards) { yards = gap; threat = t }
+  }
+  const margin = w.boss.tankStackKite?.marginYards ?? STACK_MARGIN
+  return { at, threat, yards, minYards: def.rule.minYards, closing: yards < def.rule.minYards + margin }
 }
 
 /** A rounded rectangle, for the dark plates that keep small text legible. */
@@ -522,6 +605,56 @@ function drawShield(
 }
 
 /**
+ * A cast bar snapping in half, over the body that was casting.
+ *
+ * The only success in this raid that is invisible by construction. Every other
+ * thing a player does right produces something to look at — a soak splits, a
+ * boss turns, a crate disappears — but an interrupt is proved by a hit that
+ * never arrives, and a kick that landed and a kick that was one frame late look
+ * identical if all you are shown is empty floor. Players were finishing pulls
+ * genuinely unsure whether a single one of their kicks had gone through.
+ *
+ * So the cast is drawn AND broken: two halves thrown apart with a tear between
+ * them, widening as it fades. Green, because in this palette green is correct
+ * play — the same call the mushrooms and the fish make. `f` runs 1 to 0.
+ */
+function drawBrokenCast(
+  ctx: CanvasRenderingContext2D, x: number, y: number, f: number, name: string,
+) {
+  const span = 96
+  // The halves fly apart as it fades, so the break is a movement rather than a
+  // static graphic that could be mistaken for a bar with a notch in it.
+  const gap = 6 + 26 * (1 - f)
+  const h = 9
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, f * 1.5))
+  for (const side of [-1, 1]) {
+    const x0 = side < 0 ? x - gap / 2 - span / 2 : x + gap / 2
+    roundedRect(ctx, x0, y - h / 2, span / 2, h, 2)
+    ctx.fillStyle = `rgba(${GREEN}, 0.5)`
+    ctx.fill()
+    ctx.strokeStyle = `rgba(${GREEN}, 0.95)`
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+  // The tear itself, in white so it reads as a break rather than as one more
+  // green edge on a green bar.
+  ctx.strokeStyle = 'rgba(255, 246, 244, 0.92)'
+  ctx.lineWidth = 2.5
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  ctx.moveTo(x - 5, y - h)
+  ctx.lineTo(x + 3, y - 1)
+  ctx.lineTo(x - 3, y + 1)
+  ctx.lineTo(x + 5, y + h)
+  ctx.stroke()
+  ctx.restore()
+  ctx.lineCap = 'butt'
+  ctx.lineWidth = 1
+  drawLabel(ctx, `KICKED — ${name.toUpperCase()}`, x, y - 20, GREEN, 12, Math.min(1, f * 1.7))
+}
+
+/**
  * One altar: a plinth in its own colour, dim when idle and blazing when it is
  * being drained, with its Infusion stacks beside it.
  *
@@ -712,6 +845,63 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     pathArena(ctx, cam, w.boss, r); ctx.stroke()
   }
 
+  // ── the patrol lap ──
+  //
+  // A body walking a circle nobody can move is effectively a moving piece of the
+  // room, and until the circle is drawn it reads as aimless wandering. On the
+  // Lost Explorers it is the whole shape of the tank job: Trader Gebbo laps the
+  // middle of the floor all pull, and the two stacked tanks have to keep their
+  // pair on the far side of that lap as he goes. You cannot plan a walk against
+  // a body when the only thing on screen is where it is standing this instant.
+  //
+  // So the lap is drawn as the route it is, and three pips are projected along
+  // it — where he will be in two, four and six seconds. Where he IS comes off
+  // `b.pos` and is never re-derived; the projection is the only arithmetic done
+  // here, because a future position is the one thing the world does not own.
+  //
+  // Bone rather than a verb colour. A patrol is neither ground to avoid nor
+  // somewhere to go — it is a body's route, which is exactly what bone means
+  // everywhere else in this file.
+  for (const b of w.bosses) {
+    const lap = b.def.patrol
+    if (!lap || !b.alive) continue
+    const lc = toPx(cam, lap.centre)
+    const lr = lap.radius * cam.scale
+    ctx.save()
+    ctx.setLineDash([6, 10])
+    // Marching the way he walks, so the ring carries the direction as well as
+    // the shape.
+    ctx.lineDashOffset = (-(w.elapsedMs / 60) % 16) * Math.sign(lap.degPerSec || 1)
+    ctx.strokeStyle = `rgba(${BONE}, 0.24)`
+    ctx.lineWidth = 2
+    ctx.beginPath(); ctx.arc(lc.x, lc.y, lr, 0, Math.PI * 2); ctx.stroke()
+    ctx.restore()
+    ctx.lineWidth = 1
+
+    const rate = (lap.degPerSec * Math.PI) / 180
+    const now = ((lap.startDeg ?? 0) * Math.PI) / 180 + rate * (w.elapsedMs / 1000)
+    for (const ahead of [2, 4, 6]) {
+      const a = now + rate * ahead
+      const at = toPx(cam, {
+        x: lap.centre.x + Math.cos(a) * lap.radius,
+        y: lap.centre.y + Math.sin(a) * lap.radius,
+      })
+      // Fading with distance into the future, so the nearest pip is the one the
+      // eye lands on and the run of them reads as a direction.
+      const f = 1 - (ahead - 2) / 9
+      ctx.beginPath(); ctx.arc(at.x, at.y, 3.4, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(${BONE}, ${(0.42 * f).toFixed(3)})`; ctx.fill()
+      if (ahead === 6) drawLabel(ctx, `${b.def.name.toUpperCase()} · 6s`, at.x, at.y - 14, BONE, 10, 0.5)
+    }
+
+    // And the heading, on the body itself — tangent to the lap, so which way
+    // round he is going is readable without watching him for a second first.
+    const bp = toPx(cam, b.pos)
+    const head = Math.atan2(b.pos.y - lap.centre.y, b.pos.x - lap.centre.x)
+      + (lap.degPerSec >= 0 ? Math.PI / 2 : -Math.PI / 2)
+    drawArrow(ctx, bp.x + Math.cos(head) * 30, bp.y + Math.sin(head) * 30, head, 20, BONE, 0.5)
+  }
+
   // ── the two stack marks ──
   //
   // Where each half of the raid stands so one Mutilate cone can take one of them
@@ -900,6 +1090,12 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // file must never do is tell a carrier to walk out of the only ground that
     // saves them. Drawn in its own colours immediately below.
     if (inst.def.rule.type === 'elementPool') continue
+    // A ripple is a travelling RING and its declared `annulus` shape is only
+    // there so the guards that skip shapeless instances still see one. Drawn
+    // here it would be a fixed disc sitting on the bomb site for the whole
+    // crossing — the wrong geometry, in the wrong place, for the wave the
+    // mechanic is now. It gets its own pass below.
+    if (inst.def.ripple) continue
     // A landed shell is still crossing the room. It is drawn with the rest of
     // its fan below, as a lane, rather than as one more puddle that happens to
     // be sliding — the whole point of the shape is which way it is going.
@@ -1000,15 +1196,60 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
     ctx.stroke()
     ctx.lineWidth = 1
+    // Frost also gets a hard hexagon and fire does not, so the two are separated
+    // by SHAPE as well as by hue and motif. Under a red telegraph on a dark
+    // floor, orange and blue are closer than anybody would like — and now that
+    // a volley drops exactly ONE pool per carrier there is no second copy of
+    // either to check yourself against.
+    if (el === 'frost') {
+      ctx.beginPath()
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 - Math.PI / 2
+        const x = p.x + Math.cos(a) * rr * 0.42
+        const y = p.y + Math.sin(a) * rr * 0.42
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+      }
+      ctx.closePath()
+      ctx.strokeStyle = `rgba(${col}, ${0.8 * dying})`
+      ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1
+    }
     // YOUR cure. The green ring is the whole reason the pools are not green:
     // it appears on exactly one of the two, and it means "this one, run at it".
+    //
+    // Both are named in full rather than abbreviated to FIRE and FROST, because
+    // the full names are the ones a carrier is wearing and the ones the HUD chip
+    // and the body rim use. One vocabulary for one mechanic.
     if (w.player.element && w.player.element !== el) {
       ctx.beginPath(); ctx.arc(p.x, p.y, rr + 5 + 3 * pulse, 0, Math.PI * 2)
       ctx.strokeStyle = `rgba(${GREEN}, ${0.55 + 0.4 * pulse})`
       ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1
-      drawLabel(ctx, 'YOUR CURE', p.x, p.y - rr - 14, GREEN, 11, 0.95)
+      drawLabel(ctx, `YOUR CURE · ${ELEMENT_NAME[el]}`, p.x, p.y - rr - 14, GREEN, 11, 0.95)
+      // And a line to it, while you are carrying something. There is exactly one
+      // of these on the floor, it does not move, and the entire decision is
+      // getting to it before the next volley — which is the same argument that
+      // puts a marching line on every explorer that can still eat a fish.
+      if (w.player.alive) {
+        const me = toPx(cam, w.player.pos)
+        ctx.save()
+        ctx.setLineDash([9, 7])
+        ctx.lineDashOffset = -(w.elapsedMs / 42) % 16
+        ctx.strokeStyle = `rgba(${GREEN}, ${0.4 + 0.3 * pulse})`
+        ctx.lineWidth = 2.5
+        ctx.beginPath(); ctx.moveTo(me.x, me.y); ctx.lineTo(p.x, p.y); ctx.stroke()
+        ctx.restore()
+        ctx.lineWidth = 1
+      }
     } else {
-      drawLabel(ctx, el.toUpperCase(), p.x, p.y - rr - 12, col, 10, 0.6 * dying)
+      drawLabel(
+        ctx, ELEMENT_NAME[el], p.x, p.y - rr - 12, col, 10,
+        (w.player.element ? 0.8 : 0.6) * dying,
+      )
+      // The pool of your OWN element. It looks exactly like the one that saves
+      // you and does nothing whatever, and with one of each on the floor a run
+      // at the wrong one costs the trade rather than a second or two.
+      if (w.player.element === el) {
+        drawLabel(ctx, 'YOUR OWN — NO CURE', p.x, p.y + rr + 12, col, 10, 0.75 * dying)
+      }
     }
   }
 
@@ -1183,6 +1424,10 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (inst.def.rule.type === 'launchPad') continue
     if (inst.def.rule.type === 'elementPool') continue
     if (inst.def.rule.type === 'lethalGround') continue // drawn above as a hole
+    // A ripple's geometry is its ring, not its declared shape. See the ripple
+    // pass below; drawn here it would be a filled disc over the bomb site while
+    // the actual danger was a line thirty yards away.
+    if (inst.def.ripple) continue
     // A wind marker belongs on the raiders, not on the floor. It spawns at the
     // player's feet and does not follow them, so drawn here it was a purple
     // circle sitting wherever you happened to be standing eight seconds ago —
@@ -1196,6 +1441,38 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     if (isLane(inst)) continue
     const col = ruleColour(inst, w)
     const t = progress(inst)
+
+    // ── a kicked cast ──
+    //
+    // The telegraph is the cast bar in this renderer, so a kicked cast is a cast
+    // bar that has to visibly BREAK. Drawn as the outline snapped into arcs with
+    // a cross struck through it, and never filled and never with a timing ring:
+    // both of those mean "this is still coming", which is the one thing a landed
+    // interrupt has just made untrue.
+    //
+    // Green, because a kick landing is correct play. The instance itself only
+    // lives for a frame or two after the press — the engine drops its timer so
+    // that nothing is left behind — so this is the flicker at the point of
+    // contact and `interruptFlash` below is the announcement that outlives it.
+    if (inst.interrupted) {
+      ctx.save()
+      ctx.setLineDash([10, 7])
+      ctx.strokeStyle = `rgba(${GREEN}, 0.9)`
+      ctx.lineWidth = 3
+      pathShape(ctx, cam, inst)
+      ctx.stroke()
+      ctx.restore()
+      const bp = toPx(cam, inst.pos)
+      const r = (inst.def.shape.kind === 'circle' ? inst.def.shape.radius : 6) * cam.scale
+      ctx.strokeStyle = 'rgba(255, 246, 244, 0.9)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(bp.x - r * 0.6, bp.y - r * 0.6); ctx.lineTo(bp.x + r * 0.6, bp.y + r * 0.6)
+      ctx.moveTo(bp.x + r * 0.6, bp.y - r * 0.6); ctx.lineTo(bp.x - r * 0.6, bp.y + r * 0.6)
+      ctx.stroke()
+      ctx.lineWidth = 1
+      continue
+    }
 
     // On the floor, but not yet live.
     //
@@ -1461,6 +1738,128 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     )
   }
 
+  // ── Blast Wave, as an expanding ring ──
+  //
+  // The other form of the same mechanic, and the one this fight uses. The wave
+  // comes off the bomb as a LINE that travels outward, and the danger is the
+  // line — not the floor inside it, which it has already crossed, and not the
+  // floor outside it, which it has not reached yet. That distinction is the
+  // whole mechanic: the answer is to be airborne off a mushroom at the moment
+  // the line arrives, so the player is timing a jump against a moving edge and
+  // the edge has to be legible enough to count in.
+  //
+  // So it is drawn as a band and not as a disc: a bright leading edge, a dimmer
+  // trailing one, and only the strip between them filled. A filled circle would
+  // say "everything in here is dangerous", which would send a raider running
+  // outward ahead of a wave that is faster than the rim is far.
+  //
+  // The geometry is `Instance.ringRadius` — the band's INNER edge, grown by the
+  // engine — rather than anything re-derived here, so the line drawn and the
+  // line billed are the same line.
+  for (const inst of w.instances) {
+    const rip = inst.def.ripple
+    if (!rip) continue
+    const p = toPx(cam, inst.pos)
+    // Airborne is the answer, so the whole thing turns green the moment you are
+    // — the same call the aloft ring makes further down. A wave that stayed red
+    // while you were safe would have a player fighting to get back to the floor.
+    const safe = w.player.aloft > 0
+    const col = safe ? GREEN : RED
+
+    if (!inst.resolved) {
+      // The fuse. The ring has not started and there is no band to draw yet, but
+      // WHERE it will start from is the one thing worth knowing in advance — it
+      // decides which way the line will come at you and therefore which mushroom
+      // is the one to be standing on.
+      const t = progress(inst)
+      ctx.save()
+      ctx.setLineDash([5, 6])
+      ctx.strokeStyle = `rgba(${col}, ${0.4 + 0.5 * t})`
+      ctx.lineWidth = 2.5
+      ctx.beginPath(); ctx.arc(p.x, p.y, (4 + 6 * (1 - t)) * cam.scale, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
+      ctx.lineWidth = 1
+      drawLabel(ctx, 'BLAST WAVE — RING FROM HERE', p.x, p.y - 12 * cam.scale, col, 12, 0.95)
+      continue
+    }
+
+    const inner = Math.max(0, inst.ringRadius ?? 0)
+    const outer = Math.max(0, (inst.ringRadius ?? -rip.thickness) + rip.thickness)
+    if (outer <= 0) continue
+    ctx.save()
+    // Clipped to the floor, like the lanes and the gales: a ring running off
+    // into the void reads as floor that is not there.
+    pathArena(ctx, cam, w.boss)
+    ctx.clip()
+
+    // The band. Filled low — it is a stripe of floor, not a telegraph landing.
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, outer * cam.scale, 0, Math.PI * 2)
+    if (inner > 0) ctx.arc(p.x, p.y, inner * cam.scale, 0, Math.PI * 2, true)
+    ctx.fillStyle = `rgba(${col}, 0.26)`
+    ctx.fill()
+
+    // The leading edge, brightest and thickest, because it is the thing being
+    // timed. Everything else on this wave is context for this one line.
+    ctx.beginPath(); ctx.arc(p.x, p.y, outer * cam.scale, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(${col}, ${0.75 + 0.25 * pulse})`
+    ctx.lineWidth = 4.5; ctx.stroke()
+    if (inner > 0) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, inner * cam.scale, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(${col}, 0.5)`
+      ctx.lineWidth = 2; ctx.stroke()
+    }
+
+    // Where the line will be in a second. A speed cannot be read off a still
+    // frame and a raider timing a jump is being asked to predict exactly this,
+    // so the prediction is drawn rather than left to be estimated.
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, (outer + rip.speed) * cam.scale, 0, Math.PI * 2)
+    ctx.setLineDash([4, 9])
+    ctx.strokeStyle = `rgba(${col}, 0.3)`
+    ctx.lineWidth = 1.5; ctx.stroke()
+    ctx.setLineDash([])
+    ctx.restore()
+    ctx.lineWidth = 1
+
+    // And the countdown, on the player, because the number that matters is not
+    // how big the ring is but how long until it is on YOU.
+    if (!w.player.alive) continue
+    const d = Math.hypot(w.player.pos.x - inst.pos.x, w.player.pos.y - inst.pos.y)
+    const me = toPx(cam, w.player.pos)
+    if (d < inner) {
+      // Behind the line. Already crossed, and nothing else is coming from this
+      // bomb — which is worth saying, or the ring stays frightening after it has
+      // stopped being dangerous.
+      drawLabel(ctx, 'WAVE HAS PASSED', me.x, me.y - 50, GREEN, 12, 0.8)
+      continue
+    }
+    if (d <= outer) {
+      drawLabel(
+        ctx, safe ? 'IT PASSES UNDER YOU' : 'ON THE LINE — GET AIRBORNE',
+        me.x, me.y - 50, col, 13, 0.95,
+      )
+      continue
+    }
+    const inSec = (d - outer) / rip.speed
+    drawLabel(
+      ctx,
+      safe ? `SAFE — LINE IN ${inSec.toFixed(1)}s` : `BLAST LINE IN ${inSec.toFixed(1)}s`,
+      me.x, me.y - 50, safe ? GREEN : inSec < 1.5 ? RED : GOLD, 13, 0.95,
+    )
+    // The exact point of the ring that is coming for you, ticked on the line
+    // itself — on a fifty-yard circle "it is nearly here" is otherwise a
+    // judgement about a curve a long way off to one side.
+    const ang = Math.atan2(w.player.pos.y - inst.pos.y, w.player.pos.x - inst.pos.x)
+    const tick = toPx(cam, {
+      x: inst.pos.x + Math.cos(ang) * outer,
+      y: inst.pos.y + Math.sin(ang) * outer,
+    })
+    ctx.beginPath(); ctx.arc(tick.x, tick.y, 5, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${col}, ${0.7 + 0.3 * pulse})`; ctx.fill()
+  }
+
   // ── impact flash ──
   // A quarter-second bloom where something just landed, so a hit is an event
   // you see rather than a number that changed.
@@ -1471,6 +1870,10 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // An element pool did not land either — it is dripped under a carrier every
     // second or so, and a white bloom on each one would strobe the whole trade.
     if (inst.def.rule.type === 'elementPool') continue
+    // A ripple does not land either — it is the moment it STARTS travelling, and
+    // a bloom in the shape of its unused annulus would be a flash over the wrong
+    // floor entirely.
+    if (inst.def.ripple) continue
     const since = -inst.timer
     if (since > 260) continue
     const f = 1 - since / 260
@@ -1566,7 +1969,100 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   // told at 39 that you have already failed is not the same lesson.
   //
   // Drawn before the entities so the line reads as ground between them.
-  if (apartDef && apartMin !== undefined && w.bosses.length > 1) {
+  //
+  // ── the stacked pair, and the body they are being walked away from ──
+  //
+  // The first readout this file draws for a fight where the tanks stand two
+  // bodies TOGETHER, and it exists because the pairwise version taught the fight
+  // backwards — see `stackGap` for the full argument. Nothing at all is drawn
+  // between the stacked pair: they are supposed to be on top of each other, and
+  // a yardage between them with "HOLD 30+" on it is an instruction to pull apart
+  // the one pair that must not be. What is drawn instead is the boundary that
+  // can actually lose the pull, and the pair's live distance to it.
+  const stack = stackGap(w)
+  if (stack) {
+    const linked = stack.yards < stack.minYards
+    const col = linked ? RED : stack.closing ? GOLD : GREEN
+    const tp = toPx(cam, stack.threat.pos)
+    const ap = toPx(cam, stack.at)
+    const mid = { x: (ap.x + tp.x) / 2, y: (ap.y + tp.y) / 2 }
+
+    // The link radius, drawn as the boundary it is: a circle around the body
+    // nobody holds that the pair must stay outside of. Thin and unfilled while
+    // there is daylight, hot once the pair is inside it — the same discipline
+    // the split raid's bubbles use, and for the same reason. A filled ring would
+    // read as ground a telegraph was landing on, and this is not damage, it is a
+    // line on the floor.
+    const rr = stack.minYards * cam.scale
+    ctx.save()
+    ctx.setLineDash([11, 8])
+    ctx.lineDashOffset = -(w.elapsedMs / 90) % 19
+    ctx.strokeStyle = `rgba(${col}, ${linked ? 0.85 : stack.closing ? 0.6 : 0.3})`
+    ctx.lineWidth = linked ? 3.5 : 2
+    ctx.beginPath(); ctx.arc(tp.x, tp.y, rr, 0, Math.PI * 2); ctx.stroke()
+    ctx.restore()
+    ctx.lineWidth = 1
+    drawLabel(ctx, `${stack.minYards} YD LINK`, tp.x, tp.y - rr - 10, col, 11, linked ? 1 : 0.55)
+
+    // The live distance, hung off the MIDDLE of the pair rather than off either
+    // body, so it is visibly the pair's number and not one tank's.
+    ctx.save()
+    ctx.setLineDash([9, 6])
+    ctx.lineWidth = linked ? 4 : 2
+    ctx.strokeStyle = `rgba(${col}, ${linked ? 0.55 + 0.35 * pulse : 0.45})`
+    ctx.beginPath(); ctx.moveTo(ap.x, ap.y); ctx.lineTo(tp.x, tp.y); ctx.stroke()
+    ctx.restore()
+    ctx.lineWidth = 1
+    drawLabel(
+      ctx,
+      `${Math.round(stack.yards)} YD TO ${stack.threat.def.name.toUpperCase()}  ·  HOLD ${stack.minYards}+`,
+      mid.x, mid.y, col, 12, linked || stack.closing ? 1 : 0.8,
+    )
+    // Drifting in is the state worth catching, because by the time it is a link
+    // the damage has already stopped counting. Gold rather than red: nothing is
+    // wrong yet, and spending the loudest colour on screen on a pair that is
+    // still legal would leave nothing louder for the pair that is not.
+    if (!linked) {
+      if (stack.closing) {
+        drawLabel(ctx, 'CLOSING — WALK THEM OFF HIM', mid.x, mid.y - 20, GOLD, 12, 0.75 + 0.25 * pulse)
+      }
+    } else {
+      // And when it is broken, say what it costs on every body it costs it on.
+      // A player must be able to see instantly that the pull they are in is
+      // being wasted.
+      drawLabel(ctx, '99% DAMAGE REDUCTION', mid.x, mid.y - 20, RED, 13)
+      for (const unit of w.bosses) {
+        if (unit.def.untargetable || !unit.alive) continue
+        const up = toPx(cam, unit.pos)
+        drawShield(ctx, up.x, up.y, 30, w.elapsedMs, pulse)
+        drawLabel(ctx, '99% DR', up.x, up.y - 42, RED, 11)
+      }
+    }
+
+    // Where the pair should be standing this instant, read straight off
+    // `World.tankStackMark`. VIOLET, which in this palette is "go here" — and
+    // never re-derived, so the mark the AI tanks are actually walking to and the
+    // mark on screen cannot disagree by a frame.
+    //
+    // Bright for a player who is holding one of the pair, because then it is the
+    // job; faint for everybody else, because a moving pair with no visible
+    // destination looks like two bosses wandering off.
+    const mark = w.tankStackMark
+    if (mark) {
+      const mine = w.bosses.some(b => b.def.tankedStacked && b.alive && b.targetId === 0)
+      const mp = toPx(cam, mark)
+      ctx.save()
+      ctx.setLineDash([6, 6])
+      ctx.lineDashOffset = -(w.elapsedMs / 45) % 12
+      ctx.strokeStyle = `rgba(${VIOLET}, ${mine ? 0.85 : 0.28})`
+      ctx.lineWidth = mine ? 3 : 1.5
+      ctx.beginPath(); ctx.arc(mp.x, mp.y, 6 * cam.scale, 0, Math.PI * 2); ctx.stroke()
+      if (mine) { ctx.beginPath(); ctx.moveTo(ap.x, ap.y); ctx.lineTo(mp.x, mp.y); ctx.stroke() }
+      ctx.restore()
+      ctx.lineWidth = 1
+      if (mine) drawLabel(ctx, 'WALK THEM HERE', mp.x, mp.y - 6 * cam.scale - 12, VIOLET, 12, 0.9)
+    }
+  } else if (apartDef && apartMin !== undefined && w.bosses.length > 1) {
     // The WIDEST pair of live, targetable entities — the same pair the sim
     // measures, so the number on screen is the number being scored.
     //
@@ -1865,6 +2361,29 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
   }
 
+  // ── the kick that landed ──
+  //
+  // Drawn OVER the entities, on the one that was casting, because the question
+  // it answers is "did my interrupt go through" and the answer has to find a
+  // player who was looking at their own feet when they pressed it. The broken
+  // telegraph above is the flicker at the point of contact; this outlives the
+  // instance, which the engine retires almost immediately so that a kicked cast
+  // leaves nothing at all behind.
+  //
+  // `interruptFlash` is set for the PLAYER'S kicks only — the raid's own covers
+  // set `Instance.interrupted` and nothing else — so this can never congratulate
+  // a healer for a kick they have no button for. The sim stamps `atMs` and never
+  // clears it, so the ageing is done here.
+  if (w.interruptFlash) {
+    const since = w.elapsedMs - w.interruptFlash.atMs
+    if (since >= 0 && since < KICK_FLASH_MS) {
+      const def = w.boss.mechanics.find(m => m.id === w.interruptFlash!.id)
+      const caster = bossUnitFor(w, def?.from)
+      const cp = toPx(cam, caster.pos)
+      drawBrokenCast(ctx, cp.x, cp.y - 56, 1 - since / KICK_FLASH_MS, w.interruptFlash.name)
+    }
+  }
+
   // ── adds ──
   // Shape encodes the job the same way telegraph colour encodes the verb:
   // red hexagon = kill it, violet ring = block it, gold = kicking target,
@@ -2011,7 +2530,13 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     // violet ring as "something has gone wrong" spends the three seconds that
     // were saving them trying to get back down, so while a wave is live the ring
     // is joined by the word and both go green.
-    const waveUp = w.instances.some(i => !i.resolved && i.def.rule.type === 'wave')
+    // A slab wave is dangerous while it is winding up and gone once it has
+    // resolved; a RIPPLE is the other way round — it does nothing until it
+    // resolves and then spends the whole crossing live, so "is a wave up" has to
+    // ask the two forms different questions. Read against `resolved` alone, the
+    // ring would go green exactly as the line started moving.
+    const waveUp = w.instances.some(i =>
+      i.def.rule.type === 'wave' && (i.def.ripple ? true : !i.resolved))
     if (waveUp) {
       ctx.beginPath(); ctx.arc(pp.x, pp.y, 22 + 3 * pulse, 0, Math.PI * 2)
       ctx.strokeStyle = `rgba(${GREEN}, ${0.6 + 0.35 * pulse})`

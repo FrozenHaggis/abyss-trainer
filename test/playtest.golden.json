@@ -137,12 +137,12 @@
   "careless/explorers/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Final Ascension — Mor'zahi ascended",
+    "outcome": "Blast Wave",
     "failures": {
+      "Blast Wave": 1,
       "Icebound Flames": 3,
-      "Shredding Shards": 4,
-      "United Defense": 1,
-      "Useless Junk": 6
+      "Shredding Shards": 3,
+      "United Defense": 1
     }
   },
   "careless/explorers/healer": {
@@ -150,8 +150,9 @@
     "cleared": false,
     "outcome": "Raid wiped — healing could not keep up",
     "failures": {
-      "Icebound Flames": 2,
-      "Throw Junk": 1
+      "Icebound Flames": 3,
+      "Shell Spin": 1,
+      "Throw Junk": 3
     }
   },
   "careless/explorers/dps": {
@@ -159,8 +160,9 @@
     "cleared": false,
     "outcome": "Raid wiped — healing could not keep up",
     "failures": {
-      "Icebound Flames": 2,
-      "Throw Junk": 1
+      "Icebound Flames": 3,
+      "Shell Spin": 1,
+      "Throw Junk": 3
     }
   },
   "careless/sszorak/tank": {
@@ -420,35 +422,34 @@
     }
   },
   "competent/explorers/tank": {
-    "wins": 2,
+    "wins": 3,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Concussive Blast": 1,
-      "Icebound Flames": 2,
-      "Useless Junk": 2
+      "Icebound Flames": 4,
+      "Shell Spin": 3,
+      "Shredding Shards": 1,
+      "United Defense": 2
     }
   },
   "competent/explorers/healer": {
-    "wins": 2,
-    "cleared": true,
-    "outcome": "KILL",
-    "failures": {
-      "Aftershock": 1,
-      "Concussive Blast": 1,
-      "Icebound Flames": 4,
-      "Mighty Thud": 2,
-      "Useless Junk": 1
-    }
-  },
-  "competent/explorers/dps": {
     "wins": 3,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
       "Concussive Blast": 2,
+      "Explosive Surprise": 2,
+      "Icebound Flames": 5
+    }
+  },
+  "competent/explorers/dps": {
+    "wins": 2,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Concussive Blast": 1,
       "Explosive Surprise": 1,
-      "Icebound Flames": 2
+      "Icebound Flames": 3
     }
   },
   "competent/sszorak/tank": {

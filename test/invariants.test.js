@@ -198,7 +198,14 @@ test('sweep: no mechanic is scored against a role that lacks the button', () => 
       // soaked by the tank holding Ithraz and by nobody else, and a def that
       // listed a dps in `roles` would put a failure row on somebody the knock
       // happened to throw into a pool.
-      if (['tankSwap', 'faceAway', 'keepApart', 'tankSoak'].includes(m.rule)) {
+      //
+      // `holdMelee` joins them for the narrowest reason of the five: it is judged
+      // against ONE body's distance to the entity that body is holding, and
+      // nobody who is not a tank ever holds one. A dps listed in `roles` would be
+      // scored on a range check they are in no position to fail — and would be
+      // told, on the one fight that has this, to go and stand on a serpent that
+      // is coiled in the acid off the edge of the platform.
+      if (['tankSwap', 'faceAway', 'keepApart', 'tankSoak', 'holdMelee'].includes(m.rule)) {
         for (const r of m.roles) {
           assert.equal(r, 'tank', `${key}/${m.id}: '${m.rule}' is a tank job but scores ${r}`)
         }
@@ -547,4 +554,88 @@ test('sweep: an entity placed off the floor is stationary', () => {
         'and its tank will be sent into the acid to reach it')
     }
   }
+})
+
+// ── 20. A melee leash must be reachable from the floor ───────────────────────
+//
+// Plan test 11, the second of its two static sweeps, and it exists because the
+// obvious number was wrong. `holdMelee` is a distance a tank must keep to the
+// entity they are holding, and the obvious value for it is the engine's own
+// MELEE_RANGE of 5 — which on the Twin Fangs is unsatisfiable: both serpents are
+// coiled in the acid three yards off the top edge of the platform, so the
+// nearest square of floor a body may stand on is 3.00 yards from either of them
+// and the AI tank's station is 4.947. A five-yard leash therefore fails both
+// tanks from the pull, forever, with nowhere on the platform to go and no AI
+// change able to fix it — a rule the room cannot satisfy.
+//
+// The margin is three yards rather than nothing. A leash satisfiable only by
+// standing on the single nearest point of floor is not a leash a body can hold:
+// the idle sway alone is worth 2.26 yards, the tank has to walk soaks and
+// sidestep pools inside it, and the AI station is itself a clamp two yards
+// inside the edge. So the demand is that the floor gets within `maxYards - 3` of
+// the entity, which leaves a tank somewhere to actually stand.
+//
+// Exact rather than rasterised: the nearest point of a polygon to a point
+// outside it is on its boundary, so this projects onto every edge and takes the
+// minimum. A room with no polygon uses the entity's distance from the centre
+// against the radius, the same way `inArena` falls back.
+test('sweep: every melee leash has floor a tank can hold it from', () => {
+  /** Distance from p to the segment ab. */
+  const toSeg = (p, a, b) => {
+    const vx = b.x - a.x, vy = b.y - a.y
+    const len2 = vx * vx + vy * vy
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0
+    return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t))
+  }
+
+  let checked = 0
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    const leashes = [...code.matchAll(/rule: \{ type: 'holdMelee', maxYards: ([\d.]+) \}/g)]
+    if (!leashes.length) continue
+    // Which entity each one belongs to. Read out of the same block the rule is
+    // in, because a leash on the wrong serpent is measured from the wrong place.
+    const blocks = code.split(/\r?\n {4}\{\r?\n/).slice(1)
+    const pts = arenaPointsOf(code)
+    const radius = Number(/arenaRadius:\s*([\d.]+)/.exec(code)[1])
+    const starts = new Map([...code.matchAll(
+      /\{ id: '(\w+)'[^\n]*?start: \{ x: (-?[\d.]+), y: (-?[\d.]+) \}/g,
+    )].map(m => [m[1], { x: Number(m[2]), y: Number(m[3]) }]))
+
+    for (const blk of blocks) {
+      const rule = blk.match(/rule: \{ type: 'holdMelee', maxYards: ([\d.]+) \}/)
+      if (!rule) continue
+      const max = Number(rule[1])
+      const id = blk.match(/id: '(\w+)'/)?.[1] ?? '?'
+      const from = blk.match(/from: '(\w+)'/)?.[1]
+      const at = from && starts.get(from)
+      assert.ok(at, `${key}/${id}: holdMelee is cast by '${from}', which has no start position`)
+
+      let nearest
+      if (pts) {
+        nearest = Infinity
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          nearest = Math.min(nearest, toSeg(at, pts[i], pts[j]))
+        }
+        // Inside the polygon the entity is standing on its own floor.
+        let inside = false
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          const a = pts[i], b = pts[j]
+          if ((a.y > at.y) !== (b.y > at.y) &&
+              at.x < ((b.x - a.x) * (at.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) inside = !inside
+        }
+        if (inside) nearest = 0
+      } else {
+        nearest = Math.max(0, Math.hypot(at.x, at.y) - radius)
+      }
+
+      checked++
+      assert.ok(nearest <= max - 3,
+        `${key}/${id}: the nearest floor to '${from}' is ${nearest.toFixed(2)}yd away and the ` +
+        `leash is ${max}yd, so a tank holding it has under three yards of platform to live on. ` +
+        'A range check the room cannot satisfy fails every tank from the pull and no AI ' +
+        'change can save them')
+    }
+  }
+  assert.ok(checked > 0, 'no holdMelee rule was found anywhere — this sweep would pass vacuously')
 })

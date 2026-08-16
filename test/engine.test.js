@@ -426,6 +426,15 @@ test('the raid sweeps every globule a Caustic Deluge leaves', async () => {
       loop: [], ambient: [], adds: [], atFullEnergy: undefined,
       energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
     }
+    // Standing where a tank stands. Not a convenience: this world runs for
+    // twenty-two seconds with no input, and a tank left at the raid's spawn
+    // point is 32 yards from the serpent they are holding — the melee leash
+    // empties the raid bar in four seconds, the raid starts dying, and what the
+    // test would then be measuring is a leash wipe rather than the soak rota.
+    // Every assertion below is unchanged; the player is simply doing the one
+    // thing a tank does on this fight all pull.
+    w.player.pos.x = -7
+    w.player.pos.y = -14
     step(w, input, TICK_MS)
     fire(w, 'deluge')
 
@@ -983,4 +992,305 @@ test('both tank stations have somewhere survivable inside the tank leash', async
       `${e.id}'s tank has nowhere inside their ${LEASH}yd leash that survives Stone Breaker — ` +
       'they are thrown into the venom every cast and there is nothing the AI can do about it')
   }
+})
+
+// ── the melee leash ───────────────────────────────────────────────────────────
+//
+// "The tanks must never move out of melee range of the bosses otherwise they
+// both start doing heavy raid damage and wipe the raid very quickly."
+//
+// The rule itself is two lines of arithmetic. Everything hard about it is the
+// three windows where a tank is legitimately not standing where they belong —
+// the pull, a knockback and the swap — because each one is a moment the fight
+// creates and would then punish the raid for. Two of the checks below are about
+// those windows, and the knock one is hazard 4.3: from the Ithraz tank's own
+// station a Stone Breaker push lands them fifteen yards out, so without a grace
+// the fight's showpiece tank mechanic is an automatic wipe on every cast.
+
+/**
+ * A world with the leash live and nothing else moving.
+ *
+ * Stone Breaker keeps its knock and loses its channel. The three slams are a
+ * different mechanic with their own tests above, and an unsoaked one throws the
+ * entire raid into the acid — which would end the pull several seconds before
+ * the leash had anything to say about it.
+ */
+async function leashBench(seat, seed = 7) {
+  const { createWorld, clampToArena, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  seedRng(seed)
+  const w = createWorld(boss, 'tank', 'green')
+  w.boss = {
+    ...boss,
+    mechanics: boss.mechanics.map(m => (m.id === 'stonebreaker' ? { ...m, channel: undefined } : m)),
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const vexhul = w.bosses.find(b => b.def.id === 'vexhul')
+  const ithraz = w.bosses.find(b => b.def.id === 'ithraz')
+  const leashes = boss.mechanics.filter(m => m.rule.type === 'holdMelee')
+  assert.equal(leashes.length, 2,
+    'the Twin Fangs no longer declares one melee leash per serpent — this bench would be vacuous')
+  assert.deepEqual(leashes.map(m => m.from).sort(), ['ithraz', 'vexhul'],
+    'the two leashes are not owned one by each serpent')
+  const max = leashes[0].rule.maxYards
+  assert.ok(leashes.every(m => m.rule.maxYards === max),
+    'the two serpents leash their tanks at different distances — the tanks TRADE serpents, ' +
+    'so the same footwork would be judged differently depending on which one you held')
+  if (seat === 'ithraz') {
+    const displaced = ithraz.targetId
+    ithraz.targetId = 0
+    vexhul.targetId = displaced
+  }
+  const gap = unit => Math.hypot(w.player.pos.x - unit.pos.x, w.player.pos.y - unit.pos.y)
+  /**
+   * The nearest floor to a serpent — the same `clampToArena(start, 2)` the ally
+   * AI parks its own tanks on.
+   *
+   * Walking at the serpent itself is not "walking back into melee", it is
+   * walking into the acid: both serpents are coiled three yards OFF the top edge
+   * and the player is not clamped to the floor. A human tank aims at the ledge
+   * in front of their serpent, and so does this.
+   */
+  const stationOf = unit => clampToArena(w.boss, unit.def.start, 2)
+  /** Walk the player at full tilt toward a point, the way a human would. */
+  const walkAt = (to) => {
+    const i = NO_INPUT()
+    i.right = to.x - w.player.pos.x > 0.3
+    i.left = to.x - w.player.pos.x < -0.3
+    i.down = to.y - w.player.pos.y > 0.3
+    i.up = to.y - w.player.pos.y < -0.3
+    return i
+  }
+  return { w, boss, vexhul, ithraz, max, gap, stationOf, walkAt, fire, step, TICK_MS }
+}
+
+// The rule, both ways round, in one pull. Standing on your serpent costs nothing
+// at all for twenty seconds; walking off it empties the raid bar inside five,
+// which is what "wipe the raid very quickly" has to mean if the tank job on this
+// fight is going to be a job at all.
+test('a tank on their serpent is never scored, and a tank who walks off it wipes the raid', async () => {
+  const { w, vexhul, max, gap, step, TICK_MS } = await leashBench('vexhul')
+  assert.equal(vexhul.targetId, 0, 'a tanking player no longer opens holding Vexhul')
+
+  // Where the AI parks its own tanks — on the floor, in range, nowhere near the
+  // edge. Twenty seconds of standing there with no input at all.
+  w.player.pos.x = -7
+  w.player.pos.y = -14
+  assert.ok(gap(vexhul) <= max, 'the tank station is not inside the leash it is a station for')
+  for (let ms = 0; ms < 20000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+
+  assert.deepEqual([...w.failures.keys()], [],
+    `a tank standing in melee was scored: ${[...w.failures.keys()].join(', ')}`)
+  assert.equal(w.raidHealthLow, 1,
+    `the raid bar fell to ${w.raidHealthLow} with both tanks standing exactly where they belong`)
+  assert.equal(w.leashOutMs.vexhul, 0, 'the leash thinks a tank in melee is out of range')
+  assert.equal(w.leashOutMs.ithraz, 0, 'the AI tank on Ithraz cannot hold its own leash')
+
+  // Now walk off. Teleported rather than driven, so the clock below measures the
+  // consequence rather than the walk.
+  w.player.pos.x = 0
+  w.player.pos.y = 14
+  assert.ok(gap(vexhul) > max, 'the mouth of the platform is somehow still in melee of Vexhul')
+  let died = -1
+  for (let ms = 0; ms < 12000 && died < 0; ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+    if (!w.player.alive) died = ms
+  }
+  assert.ok(died >= 0, 'a tank stood 33 yards from their serpent for twelve seconds and the raid lived')
+  assert.ok(died < 6000,
+    `the raid took ${(died / 1000).toFixed(1)}s to fall over. "Very quickly" is the whole ` +
+    'consequence — a leash the raid can be healed through is a tax, not a rule')
+  assert.match(w.deathCause ?? '', /raid wiped/i,
+    `died of "${w.deathCause}" rather than of the raid bar the leash empties`)
+  // Once, not once per tick. A tank who stood out of range for four seconds made
+  // one mistake, and a debrief counting frames would bury every other row.
+  assert.equal(w.failures.get('spittle')?.count, 1,
+    `Concentrated Spittle was recorded ${w.failures.get('spittle')?.count} times for one departure`)
+  assert.equal(w.failures.has('clottedbolt'), false,
+    'the tank on the OTHER serpent was named for a leash they were holding perfectly')
+})
+
+// Hazard 4.3, which is the reason the grace exists at all.
+//
+// Stone Breaker throws every body ten yards straight away from Ithraz. From the
+// Ithraz tank's own station — the only place they are allowed to be — that lands
+// them about fifteen yards from him, outside any leash this fight could sanely
+// set. So the mechanic that most needs the tank in position is also the one that
+// guarantees they are not, and with no window to walk back the fight would wipe
+// the raid every time it cast its own tank mechanic.
+test('a Stone Breaker knock does not break the leash it throws the tank out of', async () => {
+  const { w, ithraz, max, gap, stationOf, walkAt, fire, step, TICK_MS } = await leashBench('ithraz')
+  assert.equal(ithraz.targetId, 0, 'the player is not holding Ithraz')
+  w.player.pos.x = 7.4
+  w.player.pos.y = -14.1
+  assert.ok(gap(ithraz) <= max, 'the Ithraz station is not inside its own leash')
+
+  fire(w, 'stonebreaker')
+  // Through the cast and the throw, standing still — the knock is not something
+  // anybody plays around once it is in the air.
+  let thrownTo = 0
+  for (let ms = 0; ms < 3400; ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+    thrownTo = Math.max(thrownTo, gap(ithraz))
+  }
+  assert.equal(w.player.alive, true, `the tank died to the knock from their own station: ${w.deathCause}`)
+  assert.ok(thrownTo > max,
+    `the push left the tank ${thrownTo.toFixed(1)}yd from Ithraz, inside the ${max}yd leash — ` +
+    'this check exists to prove the grace is load-bearing and it is proving nothing')
+
+  // And walk back, which is the whole of what the grace buys.
+  let backAt = -1
+  for (let ms = 0; ms < 2600 && backAt < 0; ms += TICK_MS) {
+    step(w, walkAt(stationOf(ithraz)), TICK_MS)
+    if (gap(ithraz) <= max) backAt = ms
+  }
+  assert.ok(backAt >= 0,
+    'the tank could not get back inside the leash in the time the grace gives them')
+  assert.deepEqual([...w.failures.keys()], [],
+    `the tank was scored for a knockback the fight put them in: ${[...w.failures.keys()].join(', ')}`)
+  assert.equal(w.raidHealthLow, 1,
+    `the raid bar fell to ${w.raidHealthLow} while both tanks were airborne. The grace has to ` +
+    'suspend the cost as well as the blame, or Stone Breaker wipes the raid on every cast')
+})
+
+// The trade Stone Breaker is the reward for. The two stations are fifteen yards
+// apart, so there is no arrangement of two bodies in which the crossing does not
+// break at least one leash — a swap with no grace on it punishes the raid for
+// completing the mechanic that earns it.
+test('the tanks may cross to the other serpent without the raid paying for it', async () => {
+  const { w, vexhul, ithraz, max, gap, stationOf, walkAt, step, TICK_MS } = await leashBench('vexhul')
+  w.player.pos.x = -7
+  w.player.pos.y = -14
+  for (let ms = 0; ms < 2000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  assert.equal(w.raidHealthLow, 1, 'the raid bar moved before the swap this check is about')
+
+  // Exactly what a clean Stone Breaker does to the seats.
+  const other = ithraz.targetId
+  vexhul.targetId = other
+  ithraz.targetId = 0
+  assert.ok(gap(ithraz) > max,
+    'the two stations are close enough that a tank is already in range of the serpent they ' +
+    'have just taken — there is no crossing here and this check measures nothing')
+
+  let backAt = -1
+  for (let ms = 0; ms < 3600 && backAt < 0; ms += TICK_MS) {
+    step(w, walkAt(stationOf(ithraz)), TICK_MS)
+    if (gap(ithraz) <= max) backAt = ms
+  }
+  assert.ok(backAt >= 0, 'a tank cannot cross to the other serpent inside the swap grace')
+  assert.deepEqual([...w.failures.keys()], [],
+    `a tank was scored for making the swap the fight asked for: ${[...w.failures.keys()].join(', ')}`)
+  assert.equal(w.raidHealthLow, 1,
+    `the raid bar fell to ${w.raidHealthLow} during a tank swap both tanks performed correctly`)
+})
+
+// The other half of the rule, and the half nobody watches: the AI tanks hold
+// their own leashes. They are pulled at by every dodge in `allyThink` — flee the
+// splash, relocate off the pool, pre-position for the knock — and any one of
+// those walking them a yard too far costs the raid 30% a second for something no
+// player did and no player can stop. A full pull of the real rotation, with the
+// loop, the adds and the energy bar all running.
+test('the AI tanks never walk out of melee on a full pull', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  for (const seed of [1, 3, 7]) {
+    seedRng(seed)
+    // A HEALER, so both tanks are AI and every leash on the fight is theirs.
+    const w = createWorld(boss, 'healer', 'green')
+    let worst = 0
+    let worstId = null
+    for (let ms = 0; ms < 120000 && w.player.alive; ms += TICK_MS) {
+      step(w, NO_INPUT(), TICK_MS)
+      for (const [id, out] of Object.entries(w.leashOutMs)) {
+        if (out > worst) { worst = out; worstId = id }
+      }
+    }
+    assert.equal(worst, 0,
+      `seed ${seed}: the AI tank on ${worstId} spent ${(worst / 1000).toFixed(2)}s out of range ` +
+      'on a pull where nothing asked them to leave. The raid pays 30% a second for that, and ' +
+      'the player has no way to stop it')
+  }
+})
+
+// ── Uncoiled Wrath ────────────────────────────────────────────────────────────
+//
+// "If one dies and the other isnt dead within 5 seconds its a wipe due to
+// uncoiled wrath." It used to be twelve seconds and 20% off the raid bar on a
+// repeating clock — long enough to kill the second serpent from a third of its
+// health, and cheap enough to eat four times and still take the kill.
+test('leaving one serpent alive past the sync window ends the pull', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const sync = boss.mechanics.find(m => m.rule.type === 'syncKill')
+  assert.ok(sync, 'the Twin Fangs no longer forces a synchronised kill')
+  const window = sync.rule.withinSec
+  assert.ok(window <= 5,
+    `the sync window is ${window}s. The raid leader's number is five, and it is the number ` +
+    'the whole switch is timed against')
+
+  seedRng(7)
+  const w = createWorld(boss, 'healer', 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const vexhul = w.bosses.find(b => b.def.id === 'vexhul')
+  const ithraz = w.bosses.find(b => b.def.id === 'ithraz')
+  // Settle the raid first, so nothing below is the pull timer or a stray tick.
+  for (let ms = 0; ms < 2000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  vexhul.hp = 0
+  vexhul.alive = false
+
+  let died = -1
+  for (let ms = 0; ms < (window + 4) * 1000 && died < 0; ms += TICK_MS) {
+    step(w, NO_INPUT(), TICK_MS)
+    if (!w.player.alive) died = ms
+  }
+  assert.ok(died >= 0,
+    `one serpent was left alive for ${window + 4}s and the pull carried on. The survivor's ` +
+    'rage is uncapped — there is no number of seconds at which this is survivable')
+  assert.ok(died >= window * 1000 - 200,
+    `the wipe landed at ${(died / 1000).toFixed(1)}s, inside the ${window}s the raid is given`)
+  assert.ok(died < (window + 1) * 1000,
+    `the wipe landed at ${(died / 1000).toFixed(1)}s against a ${window}s window — a grace ` +
+    'nobody declared is a grace nobody can plan around')
+  assert.ok(w.failures.has(sync.id),
+    'nobody was named for a sync kill they overran, on a rule whose roles include every role')
+  assert.equal(w.raidHealthLow, 0,
+    'the debrief will report a comfortable raid bar beside a dead raid')
+  assert.equal(ithraz.alive, true,
+    'the surviving serpent died on its own, which is not the case being tested')
+})
+
+// The negative, and the reason the window is worth having: a raid that lands the
+// switch takes the kill. Without this the check above is satisfied by a rule that
+// simply kills you the moment one serpent dies.
+test('killing both serpents inside the window is a clean kill', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const sync = boss.mechanics.find(m => m.rule.type === 'syncKill')
+
+  seedRng(7)
+  const w = createWorld(boss, 'healer', 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  const [vexhul, ithraz] = ['vexhul', 'ithraz'].map(id => w.bosses.find(b => b.def.id === id))
+  for (let ms = 0; ms < 2000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  vexhul.hp = 0
+  vexhul.alive = false
+  // A second and a half later, which is a switch a raid can actually make.
+  for (let ms = 0; ms < 1500; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  ithraz.hp = 0
+  ithraz.alive = false
+  for (let ms = 0; ms < 4000; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+
+  assert.equal(w.killed, true, 'both serpents are dead and the pull is not a kill')
+  assert.equal(w.player.alive, true, `the raid wiped on a switch it made: ${w.deathCause}`)
+  assert.equal(w.failures.has(sync.id), false,
+    'a raid that killed them a second and a half apart was named for the sync')
 })

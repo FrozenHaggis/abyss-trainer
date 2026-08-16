@@ -215,6 +215,18 @@ interface HudSample {
   separation: number | null
   /** The separation the fight demands, from its own `keepApart` rule. */
   minApart: number
+  /**
+   * The melee leash on the entity the player is holding: what it is called, how
+   * far out they are, and how far they may go.
+   *
+   * Null on the seven fights with no `holdMelee`, and null for anybody not
+   * currently holding one — including the other tank, who has their own leash on
+   * the other serpent and can do nothing about this one. The mirror of the
+   * separation readout, shown the same way for the same reason: a raid bar
+   * falling off a cliff because a tank drifted two yards is indistinguishable
+   * from a healing check until somebody puts the number on screen.
+   */
+  leash: { name: string; yards: number; max: number } | null
   /** Permanent proximity stacks the player is carrying, one row per aura. */
   marks: { id: string; name: string; side?: Side; stacks: number }[]
   /**
@@ -263,6 +275,29 @@ function separationOf(w: World): number | null {
   return closest
 }
 
+/**
+ * The leash on the entity the PLAYER is holding, measured the way the engine
+ * measures it: to that entity, never to the nearest one.
+ *
+ * Reading it off `w.bosses` rather than off `w.leashOutMs` on purpose. The
+ * readout has to be live at every distance so a tank can watch themselves drift
+ * — the engine's record only exists once the leash is already broken, which is
+ * the moment it stops being useful.
+ */
+function leashOf(w: World): { name: string; yards: number; max: number } | null {
+  for (const def of w.boss.mechanics) {
+    if (def.rule.type !== 'holdMelee') continue
+    const unit = w.bosses.find(b => b.def.id === def.from) ?? w.bosses[0]
+    if (!unit || unit.targetId !== 0 || !unit.alive) continue
+    return {
+      name: unit.def.name,
+      yards: Math.hypot(w.player.pos.x - unit.pos.x, w.player.pos.y - unit.pos.y),
+      max: def.rule.maxYards,
+    }
+  }
+  return null
+}
+
 export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
   boss: BossDef; role: Role; side?: Side; drillId?: string
   onEnd: (r: RunResult) => void; onQuit: () => void
@@ -273,7 +308,7 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
     health: 1, raid: 1, bossHp: 1, energy: 0, elapsed: 0, cooldowns: {},
     alive: true, stacks: 0, tanking: false, raidAlive: 0,
     prompt: null, next: [], drillReps: 0, drillClean: 0,
-    units: [], separation: null, minApart: 0, marks: [],
+    units: [], separation: null, minApart: 0, leash: null, marks: [],
     marked: false, green: 0, pairTarget: ORB_COUNT, phase: null,
     altars: [], enrage: [], inbound: null, venom: 0, venomRaid: 0,
   })
@@ -464,6 +499,7 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
           })),
           separation: separationOf(world),
           minApart,
+          leash: leashOf(world),
           // Floored, because a mark is a whole stack — a fractional one would
           // read as a bug rather than as the aura ticking.
           marks: markDefs.map(m => ({
@@ -682,6 +718,21 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
               <span className="sep-lab">Apart</span>
               <span className="sep-num">{Math.round(hud.separation)}<em>yd</em></span>
               <span className="sep-need">hold {hud.minApart}+</span>
+            </div>
+          )}
+
+          {/* The melee leash, and the same argument as the separation above it
+              inverted. A tank welded to a serpent has one number to hold all
+              pull and no cast bar telling them how they are doing, so it is on
+              screen continuously rather than only once it has gone wrong.
+              Re-uses the separation row's styling deliberately: it is the same
+              kind of readout — a live yardage against a bound — and inventing a
+              second look for it would say the two were different things. */}
+          {hud.leash && (
+            <div className={`separation${hud.leash.yards > hud.leash.max ? ' hot' : ''}`}>
+              <span className="sep-lab">{hud.leash.name}</span>
+              <span className="sep-num">{Math.round(hud.leash.yards)}<em>yd</em></span>
+              <span className="sep-need">stay inside {hud.leash.max}</span>
             </div>
           )}
 

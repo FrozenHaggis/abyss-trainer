@@ -156,7 +156,20 @@ export const twinfangs: BossDef = {
   energyPerSec: 2.2,            // ~45s to the Vile Flood window, so three per pull
   atFullEnergy: 'flood',
   ambient: ['venom'],
-  pullLengthSec: 150,
+  // 200, and this number is not only an enrage timer — it is the divisor in the
+  // damage model. `perShot = base / (pullLengthSec * SHOTS_PER_SEC * 0.46)`, so
+  // raising it makes every shot land softer and the serpents take proportionally
+  // longer to bring down.
+  //
+  // Which is exactly why it is 200 and not the 280 the intermission wanted. The
+  // sync kill demands both serpents dead inside five seconds of each other, and
+  // what five seconds of fire is WORTH is decided here: 14.5% of a serpent at
+  // 150, 10.9% at 200, 7.8% at 280. At 280 the window is narrower than a good
+  // raid can close by shooting and the mechanic becomes "did you save a
+  // cooldown"; at 150 the pull is too short to see three Submerges. 200 fits
+  // three intermissions and still leaves five seconds of unbroken fire worth
+  // about a tenth of a health bar, which is a switch a raid can make on purpose.
+  pullLengthSec: 200,
 
   // Two symmetric halves. Stone Breaker lands once a half, matching the file's
   // "roughly once a minute". Each half forces movement inward (globule, feast,
@@ -226,9 +239,91 @@ export const twinfangs: BossDef = {
       // The entities do not share a health pool, so leaving one far behind is
       // the failure this rule scores. Judged continuously from the moment the
       // first one dies.
-      rule: { type: 'syncKill', withinSec: 12 },
+      //
+      // FIVE SECONDS, AND IT IS A WIPE. The raid leader's words: "if one dies
+      // and the other isnt dead within 5 seconds its a wipe due to uncoiled
+      // wrath." Twelve seconds of grace and a 20% chip off the raid bar was a
+      // different mechanic wearing this one's name — long enough to kill the
+      // second serpent from a third of its health, and cheap enough that a pull
+      // could overrun it repeatedly and still be a kill.
+      //
+      // The arithmetic says the window is tight but winnable without a saved
+      // cooldown, and it was checked rather than felt. At `pullLengthSec: 200` a
+      // landed shot takes 0.435% off a serpent, so five seconds of unbroken fire
+      // — 25 shots at five a second — is 10.9% of one. So the raid has to bring
+      // them down inside about a tenth of a bar of each other. Burst triples it
+      // to a third of a serpent for anyone who saved a cooldown for the switch,
+      // which is the play the mechanic is asking for rather than the play it
+      // requires.
+      rule: { type: 'syncKill', withinSec: 5 },
       good: 'Both serpents die within seconds of each other.',
       failText: 'Killed one serpent far ahead of the other — Uncoiled Wrath',
+    },
+    {
+      id: 'spittle',
+      name: 'Concentrated Spittle',
+      spellId: 1295107,
+      // VEXHUL'S HALF OF THE LEASH. Two defs rather than one, because there are
+      // two serpents, two tanks and two separate range checks — and the ability
+      // data names them separately for exactly that reason. One shared def would
+      // have to pick an owner, and whichever it picked would be telling the other
+      // tank that their serpent's range check is somebody else's problem.
+      //
+      // The comment sits below `id:` for the reason the Stone Breaker block
+      // records: the sweeps split a boss file on `{` immediately followed by
+      // `id:`, so a def that opens with prose is silently glued to the one before
+      // it and stops being checked.
+      what: "A range check rather than a cast: Vexhul pelts her own tank only when they have walked out of melee, and every hit is heavy raid damage nobody can heal through.",
+      from: 'vexhul',
+      // Tank only, and the sweep at invariants.test.js enforces it alongside
+      // tankSwap, faceAway, keepApart and tankSoak. Nobody else in the raid can
+      // answer a range check on a serpent they are not holding.
+      roles: ['tank'],
+      telegraphMs: 0,               // nothing to read; it is a state, not an event
+      origin: 'boss',
+      // TWELVE YARDS, NOT MELEE RANGE, and the difference is the whole reason
+      // this number is written down rather than taken from the engine.
+      //
+      // `MELEE_RANGE` is 5. Vexhul is coiled in the acid at (-8,-19), three yards
+      // clear of the top edge, so the nearest floor a body can stand on is 3.00
+      // yards from her and the AI tank's station is 4.947. A literal five-yard
+      // leash therefore fails an AI tank the moment they sway, and a player tank
+      // has a strip of floor about two yards wide to live on for the whole pull.
+      // That is not a leash, it is a bug with a rule attached.
+      //
+      // Twelve is measured against what the fight does to a tank rather than
+      // against the word "melee". Stone Breaker throws them 10 yards and they
+      // land 14.95 from their serpent — covered by the knock grace, not by the
+      // leash — and the far end of Stone Breaker's own soak arc is 9.4 yards from
+      // Ithraz, which has to be inside it or the tank cannot do the job the swap
+      // is the reward for. Anything under about 10 makes one of those two
+      // impossible.
+      rule: { type: 'holdMelee', maxYards: 12 },
+      good: 'The Vexhul tank never leaves her, whatever lands on them — they sidestep on the spot and walk straight back after a knock.',
+      failText: 'Walked out of range of Vexhul — Concentrated Spittle went on the raid',
+    },
+    {
+      id: 'clottedbolt',
+      name: 'Clotted Bolt',
+      spellId: 1295115,
+      // ITHRAZ'S HALF, and the harder one to hold. The ability data says why:
+      // "an out-of-range Ithraz tank usually means nobody is soaking Stone
+      // Breaker either" — this tank is the one being thrown across the room and
+      // then asked to walk three pools, so their leash is under pressure from
+      // the fight roughly once a rotation while Vexhul's tank simply stands.
+      what: "The same range check on the other serpent: Ithraz lances his own tank only when they are out of melee, and an Ithraz tank out of range is usually an unsoaked Stone Breaker as well.",
+      from: 'ithraz',
+      roles: ['tank'],
+      telegraphMs: 0,
+      origin: 'boss',
+      // The same twelve, and it has to be the same twelve. The tanks TRADE
+      // serpents on a clean Stone Breaker, so a tighter leash on one of them
+      // would mean the swap silently changed how much room a tank has — the same
+      // player, the same footwork, a different verdict depending on which
+      // serpent they happened to be holding.
+      rule: { type: 'holdMelee', maxYards: 12 },
+      good: 'The Ithraz tank walks the whole slam arc without leaving him, and is back on him before the knock grace runs out.',
+      failText: 'Walked out of range of Ithraz — Clotted Bolt went on the raid',
     },
     {
       id: 'venom',

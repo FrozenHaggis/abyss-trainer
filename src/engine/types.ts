@@ -80,6 +80,39 @@ export type Rule =
    */
   | { type: 'keepApart'; minYards: number }
   /**
+   * A tanked entity that punishes the raid whenever its own holder walks out of
+   * range of it. The mirror of `keepApart`: that one is two tanks who must not
+   * come together, this one is one tank who must not leave.
+   *
+   * Concentrated Spittle and Clotted Bolt, one per serpent. The ability data
+   * calls both "a range check, not a dodgeable mechanic — Vexhul pelts her
+   * current target only when they are out of melee, so any occurrence means the
+   * tank walked out", and the raid leader states the consequence in one
+   * sentence: "the tanks must never move out of melee range of the bosses
+   * otherwise they both start doing heavy raid damage and wipe the raid very
+   * quickly." So there is nothing to dodge and nothing to press. It is a place
+   * you have to keep standing, all pull, while everything else in the fight
+   * tries to move you.
+   *
+   * Judged continuously and PER HOLDER, keyed on `BossUnit.targetId`. Both halves
+   * matter. Continuously, because — exactly like `keepApart` and the tank swap —
+   * the failure is a state you are allowed to sit in rather than an event you
+   * miss. Per holder, because there are two serpents and two tanks: the Vexhul
+   * tank wandering is Vexhul's range check going off, and telling the Ithraz
+   * tank about it would blame them for standing where the fight put them.
+   *
+   * `maxYards` is NOT melee range and must not be confused with it. `MELEE_RANGE`
+   * is 5, and on this floor 5 is unsatisfiable: the serpents are coiled in the
+   * acid three yards off the top edge, the nearest walkable floor to either of
+   * them is 3.00 yards away, and the AI tank station is 4.947 — so a literal
+   * melee leash would have both tanks permanently failing from the pull with
+   * nowhere on the platform to go. The number is a leash a tank can actually
+   * hold, wide enough to survive Stone Breaker's push and walk its three pools,
+   * and the static sweep in invariants.test.js re-checks it against the real
+   * polygon so it can never silently become unsatisfiable again.
+   */
+  | { type: 'holdMelee'; maxYards: number }
+  /**
    * Contact kills outright — a hole in the floor, not a mechanic. Checked every
    * tick rather than at a resolve moment, and it never expires.
    *
@@ -140,6 +173,14 @@ export type Rule =
    * Uncoiled Wrath, the uncapped rage the survivor gains when the first dies,
    * forces a synchronised kill." The Coiled Altar links its pair the same way
    * in Stage Three: "killing one berserks the other".
+   *
+   * Overrunning the window is a WIPE, not a chip off the raid bar. The raid
+   * leader's words are "if one dies and the other isnt dead within 5 seconds its
+   * a wipe due to uncoiled wrath", and the survivor's rage is uncapped in both
+   * fights that carry this rule — there is no number at which it stops. A drain
+   * taught the wrong lesson twice over: it said the sync kill was a healing
+   * check, and because the clock reset and the drain repeated, a pull could
+   * survive four or five overruns and still be a kill.
    */
   | { type: 'syncKill'; withinSec: number }
   /** The boss's facing must not sweep the arena centre. Tank job. */

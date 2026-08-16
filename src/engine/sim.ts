@@ -343,6 +343,35 @@ export interface World {
   /** True while two tanked entities are close enough to gain their damage reduction. */
   bossesLinked: boolean
   linkedMs: number
+
+  // ── the melee leash ──
+  //
+  // All three are keyed by ENTITY id rather than being single values, because
+  // the rule is per holder and the Twin Fangs runs two of them at once. A flat
+  // pair of numbers would have Vexhul's tank walking out and Ithraz's tank
+  // wearing the clock — which is the exact mistake `overStackBy` was split up to
+  // stop the tank swap making.
+  /** Entity id -> ms its holder has been outside `maxYards`, ungraced. */
+  leashOutMs: Record<string, number>
+  /**
+   * Entity id -> the `targetId` last seen holding it.
+   *
+   * Not bookkeeping: it is how the swap grace arms itself. The tanks trade, this
+   * disagrees with `targetId` for one tick, and both leashes are forgiven for
+   * the length of the crossing walk. Nothing has to know that a swap happened.
+   */
+  leashHolder: Record<string, number>
+  /** Entity id -> ms of grace left, during which the leash is neither scored nor drained. */
+  leashGraceMs: Record<string, number>
+  /**
+   * Is any leash currently broken, for the HUD and the prompt.
+   *
+   * The mirror of `bossesLinked`, and it exists for the same reason: the renderer
+   * and the prompt both need "is this going wrong right now" as one boolean, and
+   * neither should be re-deriving it from four records a frame later than the
+   * scoring did.
+   */
+  leashBroken: boolean
   /** ms of unscored grace after a converge stage, for the drag back apart. */
   separationGraceMs: number
   /** Set in drill mode: the one mechanic being practised. */
@@ -1048,6 +1077,10 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     burnUsed: false,
     bossesLinked: false,
     linkedMs: 0,
+    leashOutMs: {},
+    leashHolder: {},
+    leashGraceMs: {},
+    leashBroken: false,
     separationGraceMs: 0,
     drillId: null,
     drillReps: 0,
@@ -1101,7 +1134,40 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
   // A split fight seats the player on their own side’s entity before the first
   // tick, so their group, their mechanics and their golem are all in one place.
   seatPlayerTank(w)
+  // Nobody is in melee at t = 0 — the raid spawns at the mouth and the serpents
+  // are coiled at the top of the wedge — so the leash opens graced. Armed AFTER
+  // the seating, because the seating is what decides which holder each entry
+  // belongs to.
+  armLeashGrace(w, TANK_LEASH_OPEN_MS)
   return w
+}
+
+/** Every entity on this fight that welds its tank to it, with its own leash. */
+function meleeLeashes(w: World): { def: MechanicDef; maxYards: number; unit: BossUnit }[] {
+  const out: { def: MechanicDef; maxYards: number; unit: BossUnit }[] = []
+  for (const def of w.boss.mechanics) {
+    if (def.rule.type !== 'holdMelee') continue
+    out.push({ def, maxYards: def.rule.maxYards, unit: bossUnitFor(w, def.from) })
+  }
+  return out
+}
+
+/**
+ * Forgive every melee leash on the fight for `ms`.
+ *
+ * Deliberately blanket rather than per entity. Everything that arms this — the
+ * pull, a knockback, a swap — moves BOTH tanks at once on the only fight that
+ * has two of these, and a grace granted to one of a pair that were thrown by the
+ * same cast would be arbitrary. `Math.max` rather than assignment so a knock
+ * landing inside the opening window cannot shorten it.
+ *
+ * Inert on the seven fights with no `holdMelee`: the loop runs over an empty
+ * list and writes nothing.
+ */
+function armLeashGrace(w: World, ms: number) {
+  for (const { unit } of meleeLeashes(w)) {
+    w.leashGraceMs[unit.def.id] = Math.max(w.leashGraceMs[unit.def.id] ?? 0, ms)
+  }
 }
 
 /** Whoever is holding an entity — the primary unless told otherwise. */
@@ -2459,6 +2525,20 @@ function resolveInstance(w: World, inst: Instance) {
     case 'survive':
       if (def.knockbackYards) {
         const push = def.knockbackYards
+        // Forgive the melee leash for the flight and the walk back, BEFORE
+        // anybody is moved and outside the `inside` test below.
+        //
+        // Outside it deliberately: the AI tanks are thrown by the same code a
+        // few lines down, and on this fight it is usually an AI tank who is
+        // holding the serpent the player is not. A grace that only armed when
+        // the PLAYER was in the shape would leave the other tank draining the
+        // raid bar for three seconds every Stone Breaker, for a push they were
+        // standing correctly for.
+        //
+        // Before, because `resolveInstance` is free to kill the player on the
+        // way through and the grace has to be on the clock either way — the
+        // fight does not stop wiping the raid because you died mid-flight.
+        armLeashGrace(w, TANK_LEASH_KNOCK_MS)
         if (inside) {
           const landing = knockLanding(w.player.pos, inst.pos, push)
           if (!inArena(w.boss, landing)) {
@@ -2985,6 +3065,63 @@ export const IMPACT_FLASH_MS = 260
  * short enough that you are never punished for a swap that is their job.
  */
 const CO_TANK_REACTION_MS = 1400
+
+// ── the melee leash ──────────────────────────────────────────────────────────
+//
+// `holdMelee`: one tank, welded to one entity, judged every tick. Three separate
+// graces, because there are three separate reasons a tank is legitimately not
+// standing where they are supposed to be — and every one of them is something
+// the FIGHT did to them rather than something they chose.
+//
+// A grace suspends the scoring AND the drain, not merely the blame. Barking at a
+// tank for being airborne would be bad enough; emptying the raid bar while they
+// are airborne would make Stone Breaker an automatic wipe on a fight where it is
+// supposed to be the tank's showpiece.
+
+/**
+ * The pull. The player spawns at (0,12) and their serpent is 32 yards away, so
+ * the leash cannot be live before anybody has had time to walk to it — 2.3s at
+ * PLAYER_SPEED, 2.7 for an AI tank at ALLY_SPEED, and the raid takes a beat to
+ * sort itself out on top. Generous rather than exact: nobody learns anything
+ * from failing a range check during the pull timer.
+ */
+const TANK_LEASH_OPEN_MS = 6000
+/**
+ * The tank swap's crossing walk.
+ *
+ * Stone Breaker's reward is a trade, and a trade means both tanks are walking to
+ * the other serpent's station — 14.8 yards apart on this floor. There is no
+ * arrangement of two bodies in which that crossing does not break at least one
+ * leash for at least a second, so a swap with no grace on it is a mechanic that
+ * punishes the raid for completing it. Sized to the walk with slack, and armed
+ * on the holder CHANGING rather than on the swap mechanic, so it covers a taunt,
+ * a death and a re-seat as well as the trade.
+ */
+const TANK_LEASH_GRACE_MS = 4000
+/**
+ * A knockback. Hazard 4.3, and the one that is load-bearing.
+ *
+ * Measured over the real polygon: from the Ithraz tank's station a 10-yard Stone
+ * Breaker push lands them at (6.24,-4.16), 14.95 yards from Ithraz and outside
+ * any leash this fight could sanely set. Without this window Stone Breaker is an
+ * automatic wipe every single cast — the tank is thrown out of range by the very
+ * mechanic they are about to soak three pools of. 3 seconds covers the ~10-yard
+ * walk back at PLAYER_SPEED with room to spare, and it is armed on ANY
+ * `knockbackYards` resolve rather than on Stone Breaker specifically, because a
+ * leash that only forgave one named mechanic would break on the next one.
+ */
+const TANK_LEASH_KNOCK_MS = 3000
+/**
+ * What an out-of-range tank costs the raid, per second, per broken leash.
+ *
+ * "They both start doing heavy raid damage and wipe the raid very quickly." At
+ * 0.30 against passive regen of 0.046-0.052 the bar empties in about four
+ * seconds from full, and both serpents out at once does it in two. That is
+ * "very quickly" and it is meant to be: there is no positioning puzzle here and
+ * no cooldown that answers it, so the only honest number is one that makes
+ * walking out of range unsurvivable rather than expensive.
+ */
+const TANK_LEASH_DPS = 0.3
 
 /**
  * Ally AI. Deliberately assignment-based rather than emergent: when a mechanic
@@ -3855,6 +3992,58 @@ function allyThink(w: World) {
     const bounded = clampToArena(w.boss, a.want, reach)
     a.want.x = bounded.x
     a.want.y = bounded.y
+
+    // 8. An AI tank never walks out of its own melee leash.
+    //
+    //    A hard clamp rather than a preference, and it is enforced dead last —
+    //    after the knock pre-position, the soak run, every dodge above and the
+    //    floor inset — because it is the only bound on this list whose violation
+    //    costs the raid 30% of its health per second. An AI tank who sidesteps a
+    //    splash out of range is not making a trade-off; they are wiping the
+    //    group for one stack.
+    //
+    //    AFTER the arena clamp specifically, and that ordering is the whole
+    //    reason this is step 8 rather than a step 6f. Both serpents sit OUTSIDE
+    //    the polygon, three yards off the top edge, so "push this point 3.2
+    //    yards further into the floor" and "keep this point near the serpent"
+    //    pull in opposite directions: clamped second, the inset was adding up to
+    //    three yards back onto a distance this had just bounded, and the Ithraz
+    //    tank flickered out of range for a tick or two every time a splash
+    //    landed near the ledge. Measured on seed 3, which is how it was found.
+    //
+    //    It is not redundant with the station leash at 6b either. The station is
+    //    `clampToArena(entity.start, 2)` — 4.947 yards from its serpent on this
+    //    floor — and 6b allows six yards of drift in ANY direction, including
+    //    straight away, at 10.95. Inside a 12-yard leash by a yard, which sounds
+    //    safe right up until Stone Breaker widens that leash to reach the far
+    //    pool on its arc and the sum goes past 12. So the leash is asserted
+    //    against the thing it is actually about: the distance to the serpent
+    //    this body is holding.
+    //
+    //    Pulling a point back toward a serpent can only ever move it toward the
+    //    top edge of the floor, never over it — the serpents are three yards
+    //    beyond an edge the raid is always south of — so this cannot undo the
+    //    clamp above and walk anybody into the acid.
+    //
+    //    No exemption for a soak run, deliberately. `arcOnFloor` lays every
+    //    Stone Breaker pool within 9.4 yards of Ithraz, so a tank walks the whole
+    //    arc without coming near this bound; if a future arc could not, the
+    //    answer is a smaller arc, not a tank who leaves melee to soak it.
+    for (const { maxYards, unit } of meleeLeashes(w)) {
+      if (unit.targetId !== a.id || !unit.alive) continue
+      const dx = a.want.x - unit.pos.x
+      const dy = a.want.y - unit.pos.y
+      const d = Math.hypot(dx, dy)
+      // A yard inside the line, not on it. The leash is judged on `pos` and this
+      // bounds `want`, and the idle sway at step 6 is worth 2.26 yards on its
+      // own — a destination exactly on the boundary would flicker in and out of
+      // range without anybody moving.
+      const keep = maxYards - 1
+      if (d > keep) {
+        a.want.x = unit.pos.x + (dx / d) * keep
+        a.want.y = unit.pos.y + (dy / d) * keep
+      }
+    }
   }
 }
 
@@ -3990,6 +4179,25 @@ function computePrompt(w: World): Prompt | null {
   if (w.bossesLinked) {
     const d = w.boss.mechanics.find(m => m.rule.type === 'keepApart')
     if (d) consider({ verb: 'PULL THEM APART', mechanic: d.name, urgency: 1 }, 0)
+  }
+
+  // A leash you have walked out of. Ranked at the very top, above the linked
+  // pair and above every telegraph on the floor: the raid bar is emptying at
+  // 30% a second and nothing else the player could be doing matters for the four
+  // seconds that takes. Only ever spoken to the tank who is actually out — the
+  // other tank standing correctly on the other serpent has nothing to fix.
+  if (w.leashBroken) {
+    for (const { def, maxYards, unit } of meleeLeashes(w)) {
+      if (unit.targetId !== 0 || (w.leashOutMs[unit.def.id] ?? 0) <= 0) continue
+      consider({
+        verb: `GET BACK ON ${unit.def.name.toUpperCase()}`,
+        mechanic: def.name,
+        // Not a telegraph filling: it is already going wrong, and it gets worse
+        // the further out you are. Scaled by how far past the leash they are so
+        // the bark hardens as they keep walking.
+        urgency: Math.min(1, dist(w.player.pos, unit.pos) / (maxYards * 2)),
+      }, 0)
+    }
   }
 
   // Where the boss is standing, on a fight with fountains.
@@ -5444,6 +5652,64 @@ export function step(w: World, input: Input, dtMs: number) {
     }
   }
 
+  // ── the melee leash ──
+  //
+  // The mirror of the block below. `keepApart` is two tanks who must not let
+  // their entities meet; this is one tank who must not leave theirs, and it is
+  // judged the same way for the same reason — the failure is a state you can sit
+  // in, so there is no resolve moment to hang it on.
+  //
+  // What it costs is the raid bar, and it costs it while a grace is NOT running.
+  // The blame is narrower than the cost, exactly as it is everywhere else in
+  // this engine: the raid pays whoever walked out, and only a PLAYER holding the
+  // entity is ever named for it.
+  w.leashBroken = false
+  for (const { def, maxYards, unit } of meleeLeashes(w)) {
+    const id = unit.def.id
+    // A drill is one mechanic, on loop, with the rest of the fight switched off.
+    // Leaving the leash live through a Caustic Deluge drill would wipe the raid
+    // every few seconds for standing where the globules are, which is the whole
+    // of what that drill is for. The leash's own drill is the exception, and it
+    // is the only place a `holdMelee` def is the thing being practised.
+    if (w.drillId && w.drillId !== def.id) continue
+    // Nobody is holding it — it is dead, or the seat is empty because a tank
+    // died. There is no holder to be out of range, and charging the raid for an
+    // absence would bill them twice for the same corpse.
+    if (!unit.alive || unit.targetId < 0) { w.leashOutMs[id] = 0; continue }
+    // The holder changed: a taunt, a death, or Stone Breaker's trade. Whoever
+    // just took the serpent is somewhere else in the room and has to walk.
+    const was = w.leashHolder[id]
+    if (was !== undefined && was !== unit.targetId) {
+      w.leashGraceMs[id] = Math.max(w.leashGraceMs[id] ?? 0, TANK_LEASH_GRACE_MS)
+    }
+    w.leashHolder[id] = unit.targetId
+
+    const grace = w.leashGraceMs[id] ?? 0
+    if (grace > 0) { w.leashGraceMs[id] = Math.max(0, grace - dtMs); w.leashOutMs[id] = 0; continue }
+
+    const holder = currentTank(w, unit)
+    // Measured to the ENTITY THEY HOLD, never to the nearest one. `isInMelee`
+    // takes the nearest, which on a two-serpent fight would let the Ithraz tank
+    // satisfy their range check by standing on Vexhul — the one arrangement the
+    // fight forbids outright.
+    if (dist(holder.pos, unit.pos) <= maxYards) { w.leashOutMs[id] = 0; continue }
+
+    w.leashBroken = true
+    const wasOut = (w.leashOutMs[id] ?? 0) > 0
+    w.leashOutMs[id] = (w.leashOutMs[id] ?? 0) + dtMs
+    // The cost is immediate and has no threshold clock in front of it. A leash is
+    // not a stack count and there is nothing to read: the instant the tank is
+    // out, the serpent is pelting them and the raid is paying for it, which is
+    // what makes walking back the only answer.
+    w.raidHealth -= TANK_LEASH_DPS * dt
+    // The BLAME is once per departure, not once per tick. Scored on the rising
+    // edge and never again until they come back inside — a tank standing out of
+    // range for four seconds made ONE mistake, and a debrief reading "Clotted
+    // Bolt ×240" would be counting frames rather than failures.
+    if (!wasOut && holder.isPlayer && def_scored(w, def)) recordFailure(w, def)
+    if (!w.seen.has(def.id)) { w.seen.add(def.id); w.announce = def }
+  }
+
   // ── keep them apart ──
   // 99% damage reduction while the pair is close: your shots stop mattering,
   // which is the honest consequence and a far better teacher than a number
@@ -6022,8 +6288,25 @@ export function step(w: World, input: Input, dtMs: number) {
       if (w.soloMs > syncDef.rule.withinSec * 1000) {
         w.soloMs = 0
         if (syncDef.roles.includes(w.player.role)) recordFailure(w, syncDef)
-        // The survivor's rage is uncapped, so it compounds rather than ticking.
-        w.raidHealth -= 0.2
+        // A WIPE, not a chip. "If one dies and the other isnt dead within 5
+        // seconds its a wipe due to uncoiled wrath."
+        //
+        // It used to take 0.2 off the raid bar and reset the clock, which was
+        // wrong twice over. The survivor's rage is uncapped — there is no number
+        // at which it stops — so a fixed drain says the opposite of what the
+        // mechanic is; and because the clock restarted, a pull could overrun the
+        // window four times and still be a kill, which taught raiders that the
+        // sync is a healing check they can eat. The whole reason both bosses in
+        // this raid carry the rule is that they do not share health and killing
+        // one early is supposed to be unrecoverable.
+        //
+        // The bar is emptied as well as the player killed, for the same reason
+        // `venomWipe` does it: the debrief's lowest-raid-HP line has to agree
+        // with what happened rather than report a comfortable 60% beside a dead
+        // player.
+        w.raidHealth = 0
+        w.raidHealthLow = 0
+        killPlayer(w, syncDef.failText || `${syncDef.name} — the survivor enraged`)
       }
     } else {
       w.soloMs = 0

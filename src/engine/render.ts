@@ -1044,6 +1044,59 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
     }
   }
 
+  // ── the melee leash ──
+  //
+  // Drawn for exactly the same reason the separation line above is, and it is
+  // the same argument inverted: knowing you are at 10 yards and drifting is what
+  // lets a tank fix it, and being told at 13 that the raid bar has already
+  // started emptying is not the same lesson.
+  //
+  // Only ever drawn for the entity the PLAYER is holding. Both serpents carry a
+  // leash and the AI tank holds the other one, so drawing both would put a line
+  // across the room to a rule the player cannot act on — and the ring around
+  // that serpent would read as ground to stay out of, which is the opposite of
+  // what it is.
+  //
+  // A ring AND a tether, because they answer different questions. The ring is
+  // where the boundary is, which is what you steer by; the tether carries the
+  // number, which is what you check.
+  for (const def of w.boss.mechanics) {
+    if (def.rule.type !== 'holdMelee') continue
+    const unit = bossUnitFor(w, def.from)
+    if (unit.targetId !== 0 || !unit.alive || !w.player.alive) continue
+    const max = def.rule.maxYards
+    const d = Math.hypot(w.player.pos.x - unit.pos.x, w.player.pos.y - unit.pos.y)
+    const out = d > max
+    // Bone inside the boundary rather than green: standing in melee is not a
+    // job well done, it is the default, and the palette's green means "get in
+    // here" everywhere else in this file. What the ring says is "this is the
+    // line", and it only turns hot once the line is behind you.
+    const col = out ? RED : BONE
+    const bp = toPx(cam, unit.pos)
+    const rr = max * cam.scale
+    ctx.save()
+    ctx.setLineDash([7, 7])
+    ctx.lineWidth = out ? 3 : 1.5
+    ctx.strokeStyle = `rgba(${col}, ${out ? 0.5 + 0.35 * pulse : 0.3})`
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, rr, 0, Math.PI * 2); ctx.stroke()
+    ctx.restore()
+
+    const pp = toPx(cam, w.player.pos)
+    ctx.save()
+    ctx.setLineDash([5, 5])
+    ctx.lineWidth = out ? 3 : 1.5
+    ctx.strokeStyle = `rgba(${col}, ${out ? 0.8 : 0.28})`
+    ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(pp.x, pp.y); ctx.stroke()
+    ctx.restore()
+    drawLabel(
+      ctx, `${Math.round(d)} YD  ·  STAY INSIDE ${max}`,
+      (bp.x + pp.x) / 2, (bp.y + pp.y) / 2, col, 12, out ? 1 : 0.75,
+    )
+    // And when it is broken, say what it costs — the bar is gone in about four
+    // seconds and the collapse is otherwise unexplained.
+    if (out) drawLabel(ctx, 'OUT OF RANGE — THE RAID IS TAKING IT', pp.x, pp.y - 34, RED, 13)
+  }
+
   // ── the altars, and the pair the boss is about to drink ──
   // The whole tank job on this fight, drawn.
   //

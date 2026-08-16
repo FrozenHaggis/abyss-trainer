@@ -252,6 +252,26 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
             yours: mine,
           }
 
+    case 'holdMelee':
+      // The tank's half and everybody else's half are different sentences, and
+      // the second one is not "nothing to do here". A leash nobody can help with
+      // is still the fastest way this fight ends: the bar empties in about four
+      // seconds, which is inside a healer's reaction time, so the only useful
+      // thing the other eighteen bodies can know is what the sudden collapse
+      // was — and, for the raid, not to drag their tank out of position chasing
+      // a soak or a stack.
+      //
+      // The yardage is spoken plainly rather than dressed up as "melee range",
+      // because it is not melee range and a tank told to be in melee would try
+      // to stand on a serpent that is coiled in the acid.
+      return role === 'tank'
+        ? {
+            verb: 'STAY ON IT',
+            line: `Do not leave it. Anything further than about ${def.rule.maxYards} yards from the one you are holding and it stops attacking you and starts on the raid instead — there is no cast to read, no cooldown that answers it, and the raid bar is gone in seconds. Sidestep on the spot, and if something throws you, walk straight back before you do anything else.`,
+            yours: mine,
+          }
+        : notYours(`The tanks are welded to their serpents — anything past about ${def.rule.maxYards} yards and it turns on the raid instead. Nothing here is yours except not pulling them off it: never make a tank chase you, and expect the bar to fall off a cliff rather than sag if one of them is dragged out.`)
+
     case 'keepApart':
       return role === 'tank'
         ? { verb: 'PULL THEM APART', line: `Hold them at least ${def.rule.minYards} yards apart. Let them close and both gain 99% damage reduction — your damage stops mattering.`, yours: mine }
@@ -302,9 +322,14 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
         : notYours('One tank eats every one of these. Get out of them and stay out — a body in the swirly is standing where the soak has to happen, and it takes the slam for nothing.')
 
     case 'syncKill':
+      // The window is spoken, and it is spoken as a wipe rather than as damage.
+      // "Leaving one behind enrages it" is true and useless: it describes a
+      // debuff on a boss, when what the raider needs to know is that the pull is
+      // over. The number comes off the rule so the sentence cannot drift from
+      // what the engine counts.
       return {
         verb: 'EVEN THEM OUT',
-        line: 'They do not share a health pool. Keep the bars level and kill them together — leaving one behind enrages it.',
+        line: `They do not share a health pool, and the survivor's rage has no cap. Keep the bars level all the way down and kill them together — more than ${def.rule.withinSec} seconds between the two deaths and the one still standing wipes you, however healthy the raid was a moment earlier.`,
         yours: mine,
       }
 

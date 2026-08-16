@@ -474,12 +474,10 @@
   "competent/twinfangs/tank": {
     "wins": 0,
     "cleared": false,
-    "outcome": "Fell into the acid",
+    "outcome": "Eternal Venom — 10 stacks",
     "failures": {
       "Caustic Deluge": 3,
-      "Corrosive Spit": 2,
-      "Falling": 1,
-      "Stone Breaker": 1,
+      "Corrosive Spit": 4,
       "Vile Flood": 1
     }
   },

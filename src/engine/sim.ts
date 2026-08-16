@@ -122,6 +122,17 @@ const GALE_BRACE_MS = 5000
  * what being thrown by an exploding glob of venom ought to look like.
  */
 const CYST_KNOCK_MS = 650
+/**
+ * How long a `knockbackYards` push carries the player, in ms.
+ *
+ * Shorter than the cyst's because it is a shove rather than a launch: ten yards
+ * over this is about 22 yd/s, roughly twice a sprint, which reads as being
+ * knocked back rather than as flying. What matters is that it reads as MOTION at
+ * all — Stone Breaker used to set the landing position outright, and an instant
+ * reposition does not look like being thrown away from Ithraz, it looks like a
+ * teleport. That was the exact complaint the cyst burst had already fixed once.
+ */
+const PUSH_KNOCK_MS = 450
 /** How long a raider is aloft after a Crosswinds knock, in ms. */
 const WIND_ALOFT_MS = 1500
 
@@ -3144,9 +3155,29 @@ function resolveInstance(w: World, inst: Instance) {
               hurt(w, def.damage ?? 0.25, def.name)
             }
           }
-          w.player.pos.x = landing.x
-          w.player.pos.y = landing.y
-          w.player.aloft = 1200
+          // THE PLAYER TRAVELS. `landing` is where the push puts them, and this
+          // carries them there over PUSH_KNOCK_MS instead of moving them there
+          // between one frame and the next. Setting the position outright made
+          // Stone Breaker read as a teleport rather than as ten yards of shove
+          // away from Ithraz — the same complaint, and the same fix, as the
+          // Viscous Cyst burst above.
+          //
+          // `safe` is the inverse of `offPlatform`: an ordinary push is caught
+          // by the rim, and Stone Breaker's is not — the flight is allowed to
+          // finish in the venom, and the floor check at the top of step() turns
+          // that into the fall with the room's own death text. `landing` has
+          // already been clamped back onto the floor above in the case where the
+          // rim does catch you, so travelling to it is right either way.
+          const fly = PUSH_KNOCK_MS / 1000
+          w.player.knock = {
+            vx: (landing.x - w.player.pos.x) / fly,
+            vy: (landing.y - w.player.pos.y) / fly,
+            ms: PUSH_KNOCK_MS,
+            safe: !def.offPlatform,
+          }
+          // Airborne for the flight and a beat past it, so the landing is a
+          // moment you can see rather than a frame you miss.
+          w.player.aloft = Math.max(w.player.aloft, PUSH_KNOCK_MS + 300)
           w.shake = 1
         }
         // The raid goes too.

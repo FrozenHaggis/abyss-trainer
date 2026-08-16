@@ -1546,3 +1546,359 @@ test('the AI raid rotates through the three bites and loses nobody', async () =>
     }
   }
 })
+
+// ── Stir the Depths ──────────────────────────────────────────────────────────
+//
+// Six waves out of the venom, one a second, each one running the length of the
+// wedge. The argument for the whole mechanic is geometric — it has to be
+// dodgeable on a concave floor with a hole bitten out of one edge, and it must
+// never herd anybody at that hole — so the tests for it are measurements over
+// the real polygon rather than assertions about fields.
+
+/**
+ * A Twin Fangs pull with Stir the Depths and nothing else on the floor.
+ *
+ * Same isolation `feastBench` uses and for the same reason: with the loop, the
+ * ambient venom, the adds and the energy bar switched off, every shape measured
+ * below was put there by this channel and every stack that moves was its doing.
+ */
+async function depthsBench(role, seed) {
+  const eng = await engine()
+  const { createWorld, seedRng, BOSSES } = eng
+  const boss = BOSSES.find(b => b.key === 'twinfangs')
+  const depths = boss.mechanics.find(m => m.id === 'depths')
+  const wave = boss.mechanics.find(m => m.id === 'wave')
+
+  assert.ok(depths, 'Stir the Depths is gone')
+  assert.equal(depths.channel?.defId, 'wave',
+    'Stir the Depths no longer channels its waves — everything below would measure nothing')
+  assert.ok(wave, 'the Stir the Depths wave def is gone')
+  assert.ok(wave.edgeArc, 'the wave no longer declares an edgeArc, which is what aims it inward')
+  assert.equal(wave.origin, 'edge', `the wave rises from '${wave.origin}' rather than the rim`)
+  assert.ok(wave.radialDrift && wave.driftSpeed,
+    'the wave no longer travels on the bearing it was thrown — it would sit where it spawned')
+
+  seedRng(seed)
+  const w = createWorld(boss, role, 'green')
+  w.boss = {
+    ...boss,
+    loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+    energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+  }
+  return { ...eng, w, boss, depths, wave }
+}
+
+/** Every wave one channel produced, with where it came from and where it went. */
+function runChannel(bench, seconds = 16) {
+  const { w, step, fire, TICK_MS } = bench
+  fire(w, 'depths')
+  const seen = new Map()
+  for (let i = 0; i < (seconds * 1000) / TICK_MS; i++) {
+    step(w, NO_INPUT(), TICK_MS)
+    for (const v of w.instances) {
+      if (v.def.id !== 'wave') continue
+      const rec = seen.get(v.uid)
+      if (!rec) {
+        seen.set(v.uid, { from: { ...v.pos }, last: { ...v.pos }, drift: { ...v.drift }, back: 0 })
+        continue
+      }
+      // How far it has ever moved BACKWARD along its own heading. A bounce off
+      // the far rim shows up here and nowhere else.
+      const d = Math.hypot(rec.drift.x, rec.drift.y) || 1
+      const along = ((v.pos.x - rec.last.x) * rec.drift.x + (v.pos.y - rec.last.y) * rec.drift.y) / d
+      if (along < -0.01) rec.back += -along
+      rec.last = { ...v.pos }
+    }
+  }
+  return [...seen.values()]
+}
+
+// The shape of the mechanic, measured rather than declared: six waves, each one
+// rising off the SOUTHERN rim and running up the room, none of them turning
+// round, and none of them creeping toward the mouth fast enough to push anybody
+// at the hole in the floor.
+test('six waves rise off the mouth end of the wedge and run up the room', async () => {
+  for (const seed of [1, 7, 1337]) {
+    const bench = await depthsBench('dps', seed)
+    const { wave, boss, edgeDistance } = bench
+    const waves = runChannel(bench)
+
+    assert.equal(waves.length, bench.depths.channel.count,
+      `seed ${seed}: the channel put ${waves.length} waves out, not ` +
+      `${bench.depths.channel.count} — "spawn 6 circles" is the spec's own number`)
+
+    for (const v of waves) {
+      const spawnDeg = (Math.atan2(v.from.y, v.from.x) * 180) / Math.PI
+      assert.ok(spawnDeg >= wave.edgeArc.fromDeg - 0.01 && spawnDeg <= wave.edgeArc.toDeg + 0.01,
+        `seed ${seed}: a wave rose on bearing ${spawnDeg.toFixed(1)}deg, outside the declared ` +
+        `arc ${wave.edgeArc.fromDeg}-${wave.edgeArc.toDeg}. An arc that is not honoured is a ` +
+        'wave coming out of the tanks’ ledge at the raid from behind')
+      assert.ok(edgeDistance(boss, v.from) < 0.5,
+        `seed ${seed}: a wave rose ${edgeDistance(boss, v.from).toFixed(1)}yd from any rim — ` +
+        'it is supposed to come out of the venom, not appear in the middle of the room')
+
+      // The whole anti-trap guarantee in one number. Every wave travels UP the
+      // wedge, so a raider backing away from one walks north onto the widest
+      // part of the floor. A wave with real southward speed would push the raid
+      // down onto the mouth and into the venom pocket, which is not a dodge
+      // anybody can make — you cannot outrun a wave by stepping into a hole.
+      assert.ok(v.drift.y < wave.driftSpeed * 0.5,
+        `seed ${seed}: a wave is travelling ${v.drift.y.toFixed(1)}yd/s toward the mouth. ` +
+        'The southern rim is where the pocket is, and a wave heading that way herds the raid ' +
+        'at it')
+
+      assert.equal(v.back.toFixed(2), '0.00',
+        `seed ${seed}: a wave travelled ${v.back.toFixed(1)}yd backward along its own heading. ` +
+        'It bounced — the Axegrinder’s mechanic, not this one — which sends the swell back ' +
+        'through a raid that had already read it and walked in behind it')
+
+      const gone = Math.hypot(v.last.x - v.from.x, v.last.y - v.from.y)
+      assert.ok(gone > 20,
+        `seed ${seed}: a wave covered ${gone.toFixed(1)}yd. It is supposed to cross the ` +
+        'platform, not break on the rim it came out of')
+    }
+  }
+})
+
+// The measurement the mechanic lives or dies by, on the floor it is played on.
+//
+// Rasterised at half-yard cells over the real wedge, sampled ten times a second
+// for the whole channel, and the question asked at every sample is not "how much
+// is covered" but "how far is the nearest clear cell" — computed as a flood fill
+// out of the clear ground, so the answer is a distance a body could actually
+// WALK rather than a straight line across the venom pocket.
+//
+// Two claims, and the second is the one the raid leader asked for. Nowhere on
+// the floor is ever cut off; and the mouth end, where the pocket is, is no worse
+// than anywhere else. A wave pattern that sealed the mouth would be a death
+// sentence for whoever was standing in it, because the only way out is past the
+// waves and the alternative is a hole.
+test('Stir the Depths always leaves a step out, and never seals the mouth', async () => {
+  const CELL = 0.5
+  const X0 = -24, Y0 = -17
+  const NX = Math.round(48 / CELL) + 1
+  const NY = Math.round(39 / CELL) + 1
+
+  let worstCover = 0, leastFree = Infinity, worstWalk = 0, worstMouthWalk = 0
+  let samples = 0, cut = 0
+
+  for (const seed of [1, 7, 1337]) {
+    const bench = await depthsBench('dps', seed)
+    const { w, step, fire, TICK_MS, inArena, isInside, boss } = bench
+
+    // The floor, once. Same crossing test the engine uses, so the pocket is a
+    // hole here exactly as it is a hole in play.
+    const floor = new Uint8Array(NX * NY)
+    const pts = []
+    for (let ix = 0; ix < NX; ix++) {
+      for (let iy = 0; iy < NY; iy++) {
+        const x = X0 + ix * CELL, y = Y0 + iy * CELL
+        if (inArena(boss, { x, y })) { floor[ix * NY + iy] = 1; pts.push([ix, iy, x, y]) }
+      }
+    }
+    assert.ok(pts.length > 4000, `only ${pts.length} floor cells — the raster missed the room`)
+
+    fire(w, 'depths')
+    for (let i = 0; i < (16 * 1000) / TICK_MS; i++) {
+      step(w, NO_INPUT(), TICK_MS)
+      if (i % 6 !== 0) continue
+      const waves = w.instances.filter(v => v.def.id === 'wave')
+      if (!waves.length) continue
+      samples++
+
+      const covered = new Uint8Array(NX * NY)
+      let nCov = 0
+      for (const [ix, iy, x, y] of pts) {
+        if (waves.some(v => isInside(v, { x, y }))) { covered[ix * NY + iy] = 1; nCov++ }
+      }
+      worstCover = Math.max(worstCover, (nCov / pts.length) * 100)
+      leastFree = Math.min(leastFree, (pts.length - nCov) * CELL * CELL)
+
+      // Flood fill out of every clear cell at once: `dd` ends up holding each
+      // cell's walking distance to safety, in cells.
+      const dd = new Int16Array(NX * NY).fill(-1)
+      const q = []
+      for (const [ix, iy] of pts) {
+        const k = ix * NY + iy
+        if (!covered[k]) { dd[k] = 0; q.push(k) }
+      }
+      for (let head = 0; head < q.length; head++) {
+        const k = q[head]
+        const ix = Math.floor(k / NY), iy = k % NY
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            if (!dx && !dy) continue
+            const jx = ix + dx, jy = iy + dy
+            if (jx < 0 || jy < 0 || jx >= NX || jy >= NY) continue
+            const j = jx * NY + jy
+            if (!floor[j] || dd[j] >= 0) continue
+            dd[j] = dd[k] + 1
+            q.push(j)
+          }
+        }
+      }
+      for (const [ix, iy, , y] of pts) {
+        const d = dd[ix * NY + iy]
+        if (d < 0) { cut++; continue }
+        worstWalk = Math.max(worstWalk, d * CELL)
+        if (y > 11) worstMouthWalk = Math.max(worstMouthWalk, d * CELL)
+      }
+    }
+  }
+
+  assert.ok(samples > 100, `only ${samples} samples — the channel is not being measured`)
+  assert.equal(cut, 0,
+    `${cut} cell-samples had no walkable route to clear ground at all. Somebody standing there ` +
+    'is taking the stack whatever they do')
+  // A fifth of the floor at the worst instant. Six four-yard circles on 1156
+  // square yards is 20%, and the number is pinned because it is the one that
+  // moves if anybody adds a seventh wave or widens the circles: at half the
+  // floor the mechanic stops being a route to walk and becomes a dice roll.
+  assert.ok(worstCover < 30,
+    `the waves cover ${worstCover.toFixed(1)}% of the floor at their worst`)
+  assert.ok(leastFree > 700,
+    `only ${leastFree.toFixed(0)} square yards of the wedge are ever clear at once`)
+  // Under a second of walking at PLAYER_SPEED 14, from anywhere, at any moment.
+  assert.ok(worstWalk <= 10,
+    `the worst spot on the floor is ${worstWalk.toFixed(1)}yd from safety`)
+  assert.ok(worstMouthWalk <= worstWalk + 0.01,
+    `the mouth end is ${worstMouthWalk.toFixed(1)}yd from safety against ` +
+    `${worstWalk.toFixed(1)}yd everywhere else — the waves are sealing the one part of the ` +
+    'room with a hole in it')
+})
+
+// The two halves of "off the floor", which are opposites, and the reason the
+// retirement test is a dot product rather than a bare `inArena` check.
+//
+// This floor has a hole in it: the venom pocket is bitten out of the bottom
+// edge, so `inArena` is false over the pocket exactly as it is false past the
+// rim. Measured over ten seeds, roughly one wave in thirty crosses the corner of
+// the notch and spends half a second over open venom in the middle of the room —
+// and it has to come out the other side, because a wave that evaporated over the
+// pocket would teach the raid that the hole is cover.
+test('a wave crosses the venom pocket, and retires at the far rim', async () => {
+  const bench = await depthsBench('dps', 7)
+  const { w, step, fire, TICK_MS, inArena, wave, boss } = bench
+
+  // The far rim first, driven rather than waited for: a wave is put outside the
+  // top edge with its heading pointing further out, which is the state a wave
+  // reaches after it has crossed.
+  fire(w, 'wave')
+  const out = w.instances.find(i => i.def.id === 'wave')
+  assert.ok(out, 'firing a wave on its own produced no instance')
+  for (let ms = 0; ms <= wave.telegraphMs + 200; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  assert.ok(w.instances.includes(out), 'the wave was gone before it had finished rising')
+  out.pos = { x: 0, y: -16.4 }                       // just past the top edge
+  out.drift = { x: 0, y: -wave.driftSpeed }          // and still going
+  assert.equal(inArena(boss, out.pos), false, 'the test point is on the floor — nothing to retire')
+  step(w, NO_INPUT(), TICK_MS)
+  assert.equal(w.instances.includes(out), false,
+    'a wave that crossed the platform is still in play. Either it bounced — which is the ' +
+    'Axegrinder’s mechanic and would send it back through the raid — or it is drifting ' +
+    'around in the venom sea being drawn as a hazard nobody can reach')
+
+  // And the pocket: the same "outside the polygon" state, but still heading for
+  // the middle of the room, so it keeps going.
+  fire(w, 'wave')
+  const over = w.instances.find(i => i.def.id === 'wave' && i !== out)
+  assert.ok(over, 'firing a second wave produced no instance')
+  for (let ms = 0; ms <= wave.telegraphMs + 200; ms += TICK_MS) step(w, NO_INPUT(), TICK_MS)
+  over.pos = { x: 0, y: 18 }                         // inside the notch
+  over.drift = { x: 0, y: -wave.driftSpeed }         // running up the room
+  assert.equal(inArena(boss, over.pos), false, 'the venom pocket is no longer a hole in the floor')
+  const was = { ...over.pos }
+  step(w, NO_INPUT(), TICK_MS)
+  assert.ok(w.instances.includes(over),
+    'a wave crossing the venom pocket was deleted in mid-room. The pocket is a hole, not the ' +
+    'far side of the platform, and a swell that vanishes over it teaches the raid that ' +
+    'standing at the hole is cover')
+  assert.ok(over.pos.y < was.y - 0.05,
+    `the wave over the pocket stopped moving (${was.y.toFixed(2)} -> ${over.pos.y.toFixed(2)})`)
+})
+
+// One wave is one stack and one row, however long it sits on you.
+//
+// Both halves matter. The stack is what the mechanic costs — "touching these
+// gives a stack of Eternal Venom" — and the single row is what makes the debrief
+// readable: a wave rolls over a body for the best part of a second at sixty
+// frames a second, and "Stir the Depths x54" would be counting frames rather
+// than the one mistake that was made.
+test('a wave that rolls over you costs one stack and names you once', async () => {
+  const bench = await depthsBench('dps', 3)
+  const { w, step, fire, TICK_MS, wave } = bench
+  assert.equal(wave.applies?.hit, 1, 'the wave no longer applies a stack — this checks nothing')
+
+  fire(w, 'wave')
+  const inst = w.instances.find(i => i.def.id === 'wave')
+  assert.ok(inst, 'firing a wave produced no instance')
+  w.player.venom = 2
+
+  // Parked in its path and left there. Standing still in front of a wave is the
+  // mistake; it should cost exactly once.
+  let touched = 0
+  for (let ms = 0; ms < 5000 && w.instances.includes(inst); ms += TICK_MS) {
+    w.player.pos.x = inst.pos.x
+    w.player.pos.y = inst.pos.y
+    step(w, NO_INPUT(), TICK_MS)
+    touched++
+  }
+
+  assert.ok(touched > 60, `the wave was only in play for ${touched} frames`)
+  assert.equal(w.player.venom, 3,
+    `standing in one wave for ${touched} frames moved the count from 2 to ${w.player.venom}`)
+  assert.equal(w.failures.get('wave')?.count, 1,
+    `the debrief will read "Stir the Depths x${w.failures.get('wave')?.count ?? 0}" for one wave`)
+})
+
+// The gate, from the other side. `edgeArc` is a field rather than a test on
+// `origin === 'edge'` for exactly one reason: the Coiled Altar's Axegrinder is
+// the raid's other edge mechanic, and its own comment says it "comes off the
+// wall and ricochets". The random facing and the bounce ARE that mechanic —
+// suppress either of them globally and an axe that criss-crosses the room for
+// five seconds becomes one that leaves on its first pass.
+test('the Coiled Altar axes still come off any wall, and still ricochet', async () => {
+  const { createWorld, fire, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const boss = BOSSES.find(b => b.key === 'coiledaltar')
+  const axe = boss.mechanics.find(m => m.id === 'axegrinder')
+  assert.ok(axe, 'Axegrinder is gone')
+  assert.equal(axe.origin, 'edge', `Axegrinder now spawns at '${axe.origin}'`)
+  assert.equal(axe.edgeArc, undefined,
+    'Axegrinder has been given an edgeArc, which turns it inward and stops it bouncing — it ' +
+    'is supposed to ricochet')
+
+  const bearings = []
+  let bounces = 0
+  for (const seed of [1, 2, 3, 5, 7]) {
+    seedRng(seed)
+    const w = createWorld(boss, 'dps', 'green')
+    w.boss = {
+      ...boss,
+      loop: [], ambient: [], adds: [], atFullEnergy: undefined,
+      energyPerSec: 0, pullLengthSec: 3600, phases: undefined,
+    }
+    for (let cast = 0; cast < 4; cast++) {
+      w.instances.length = 0
+      fire(w, 'axegrinder')
+      const inst = w.instances.find(i => i.def.id === 'axegrinder')
+      if (!inst) continue
+      bearings.push(Math.atan2(inst.pos.y, inst.pos.x))
+      let sign = Math.sign(inst.drift.x)
+      for (let ms = 0; ms < axe.telegraphMs + 500; ms += TICK_MS) {
+        step(w, NO_INPUT(), TICK_MS)
+        if (!w.instances.includes(inst)) break
+        if (Math.sign(inst.drift.x) !== sign) { bounces++; sign = Math.sign(inst.drift.x) }
+      }
+    }
+  }
+
+  assert.ok(bearings.length >= 10, `only ${bearings.length} axes measured`)
+  // Off any wall, not off half of them. An arc-gated spawn would bunch every one
+  // of these into a 160-degree slice.
+  const spread = Math.max(...bearings) - Math.min(...bearings)
+  assert.ok(spread > Math.PI * 1.5,
+    `${bearings.length} axes came off ${((spread * 180) / Math.PI).toFixed(0)} degrees of wall. ` +
+    'Axegrinder spawns anywhere on the rim; this looks like the edgeArc gate has leaked')
+  assert.ok(bounces > 0,
+    'not one axe bounced in twenty casts. The bounce suppression was supposed to be gated on ' +
+    'edgeArc — without that gate this fight loses its ricochet')
+})

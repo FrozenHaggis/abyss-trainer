@@ -1365,6 +1365,30 @@ export function arenaEdge(boss: BossDef, angle: number, inset = 0): Vec {
   return { x: dir.x * r, y: dir.y * r }
 }
 
+/**
+ * How far off "straight across the room" an `edgeArc` hazard may be thrown.
+ *
+ * The whole spread, not the half: a wave's bearing is the inward one plus or
+ * minus half of this.
+ *
+ * Sixty degrees, and it is bounded from both sides. At zero every wave passes
+ * exactly through the middle of the room, because the inward bearing is the
+ * reverse of the one `arenaEdge` cast its ray on — one patch of floor crossed
+ * six times and the rest of the wedge once or twice, which is a formation rather
+ * than a mechanic. At ninety a wave rising off one of the legs runs ALONG the
+ * rim instead of across the room, and on this floor that sweeps the raid down
+ * the wedge toward the mouth, where the venom pocket is: the one direction a
+ * dodge must never be pushed.
+ *
+ * What sixty measures out at over the Twin Fangs wedge, all three pinned by the
+ * rasterised probe in engine.test.js: the six waves cover at worst 19.9% of 1156
+ * square yards at any instant, no point of floor is ever further than 6.0 yards
+ * from clear ground — under half a second at PLAYER_SPEED — and the worst
+ * southward component of any wave's heading is 2.0 yards a second against a
+ * raider's twelve.
+ */
+const EDGE_ARC_SPREAD = Math.PI / 3
+
 // ── stages ───────────────────────────────────────────────────────────────────
 // A boss with no `phases` never touches any of this and behaves exactly as it
 // did before stages existed: `loop`, `loopIntervalSec` and `ambient` off the
@@ -1862,7 +1886,21 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
       break
     }
     case 'edge': {
-      pos = arenaEdge(w.boss, rnd() * Math.PI * 2)
+      // A named stretch of rim, or anywhere on it. `edgeArc` is what makes a
+      // wave a wave rather than a thing that happens at the edge: Stir the
+      // Depths rises out of the venom at the mouth end of the wedge, so the
+      // bearing is rolled inside the arc the boss file declares and the raid can
+      // learn which side of the room the swell comes from.
+      //
+      // One `rnd()` either way on purpose. The bearing is the only roll this
+      // case has ever made, so a fight that declares no arc — the Coiled Altar's
+      // Axegrinder is the only one — draws from the stream in exactly the order
+      // it did before and its pull is byte-for-byte unchanged.
+      const arc = def.edgeArc
+      const t = rnd()
+      pos = arenaEdge(w.boss, arc
+        ? ((arc.fromDeg + t * (arc.toDeg - arc.fromDeg)) * Math.PI) / 180
+        : t * Math.PI * 2)
       break
     }
     default: pos = floorAnchor(w, def)
@@ -1877,6 +1915,20 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
   let ang = angle ?? 0
   if (angle === undefined && def.origin === 'boss') {
     ang = Math.atan2(w.player.pos.y - pos.y, w.player.pos.x - pos.x)
+  } else if (angle === undefined && def.edgeArc) {
+    // Inward, so that `radialDrift` carries it ACROSS the platform. Straight at
+    // the middle of the room would be the obvious bearing and it is the wrong
+    // one: `arenaEdge` casts its ray from the centre, so "back at the centre" is
+    // exactly the reverse of the bearing it spawned on and six waves would all
+    // pass through the same point — one spot in the room hit by every wave, and
+    // every other spot hit by at most a couple. Spread them and the six really
+    // do cross in six directions, which is what the raid has to read.
+    //
+    // The spread is bounded well inside a right angle so the bearing is still
+    // unambiguously inward from anywhere on the arc. Wider and a wave rising off
+    // one of the legs can end up running ALONG the rim, herding the raid down
+    // the edge instead of across the floor.
+    ang = Math.atan2(-pos.y, -pos.x) + (rnd() - 0.5) * EDGE_ARC_SPREAD
   } else if (angle === undefined) {
     ang = rnd() * Math.PI * 2
   }
@@ -2403,7 +2455,17 @@ function resolveInstance(w: World, inst: Instance) {
       // point, and Deadly — could materialise on top of you and kill you
       // outright with no reaction window. That is not a mechanic, it is a coin
       // flip, and it killed all three roles at the 90 second mark in playtests.
-      if (inside && !def.popsOnContact) {
+      //
+      // A wave is exempt for a different reason, and it is one of the two
+      // things `edgeArc` exists for. Everything else in this switch is judged at
+      // the moment it goes off because that moment is the mechanic; a wave has
+      // no such moment. It comes off the rim already travelling and is dangerous
+      // for its whole four-second crossing, so judging the instant its telegraph
+      // happens to end would blame whoever was standing a few yards inside the
+      // rim and hand every other body in the room a free run. What it costs is
+      // charged on contact instead, in the linger tick below — which is where a
+      // hazard that is dangerous for its whole life belongs.
+      if (inside && !def.popsOnContact && !def.edgeArc) {
         if (scored) recordFailure(w, def)
         // Deadly means deadly. Everything else is damage you get healed through
         // — scaled by the Infusion behind it, so an Expulsion off a fountain
@@ -6231,9 +6293,39 @@ export function step(w: World, input: Input, dtMs: number) {
       inst.pos.x += inst.drift.x * dt
       inst.pos.y += inst.drift.y * dt
       if (!inArena(w.boss, inst.pos)) {
-        inst.drift.x *= -1
-        inst.drift.y *= -1
-        inst.pos = clampToArena(w.boss, inst.pos, 1)
+        // Off the floor. What that means depends on what the hazard IS, and the
+        // two answers are opposites.
+        //
+        // An Axegrinder is an axe thrown at a wall: it "comes off the wall and
+        // ricochets", so the rim is what keeps it in play and bouncing it is the
+        // mechanic. A Stir the Depths wave came out of the venom, ran up the
+        // room and has gone back into the venom on the far side — bouncing it
+        // would send the same wave back through a raid that had already read it
+        // and walked behind it, which is the opposite of what the floor showed
+        // them. So an `edgeArc` hazard retires at the far rim instead.
+        //
+        // The `outward` test is there because this floor has a HOLE in it. The
+        // venom pocket is bitten out of the bottom edge, so `inArena` is false
+        // over the pocket as well as past the rim, and a wave crossing the
+        // corner of the notch would otherwise vanish in the middle of the room.
+        // A wave over the pocket is still travelling toward the centre; one that
+        // has crossed is travelling away from it. One dot product tells them
+        // apart, and it holds for any room whose polygon contains the origin —
+        // which `arenaEdge` already assumes, since it casts its rays from there.
+        const outward = inst.def.edgeArc
+          && inst.drift.x * inst.pos.x + inst.drift.y * inst.pos.y > 0
+        if (outward) {
+          // Resolved-and-expired is how everything else leaves the floor, and it
+          // is what the filter below reads. Marking it resolved rather than
+          // letting the timer run out also means the `avoid` judgement never
+          // fires from out in the acid, where there is nobody left to judge.
+          inst.resolved = true
+          inst.timer = -1e9
+        } else if (!inst.def.edgeArc) {
+          inst.drift.x *= -1
+          inst.drift.y *= -1
+          inst.pos = clampToArena(w.boss, inst.pos, 1)
+        }
       }
     }
     // A cone from the boss tracks its facing ONLY when the tracking is the
@@ -6389,6 +6481,23 @@ export function step(w: World, input: Input, dtMs: number) {
         if (!inst.answered) {
           if (!phase?.windToCysts && def_scored(w, inst.def)) recordFailure(w, inst.def)
           burstCyst(w, inst)
+        }
+      } else if (inst.def.edgeArc) {
+        // The wave rolled over you. Once per wave, however long you stand in
+        // it: the failure a raider makes here is "did not read the swell", and
+        // a debrief reading "Stir the Depths ×61" would be counting frames
+        // rather than mistakes — the same distinction the melee leash draws.
+        //
+        // This is where the whole cost lands, because `case 'avoid'` above
+        // deliberately declines to judge an `edgeArc` hazard at its resolve.
+        // The stack is already paid by `payHit` a few lines up; this is the
+        // damage and the blame. It does NOT retire the wave the way
+        // `popsOnContact` does — a wave that has hit somebody keeps going, and
+        // the nineteen other bodies it is heading for still have to move.
+        if (!inst.answered) {
+          inst.answered = true
+          if (def_scored(w, inst.def)) recordFailure(w, inst.def)
+          hurt(w, inst.def.damage ?? 0.15, inst.def.name)
         }
       } else if (inst.def.popsOnContact) {
         // "pops on contact for damage and a 30% slow" — one hit, then it is

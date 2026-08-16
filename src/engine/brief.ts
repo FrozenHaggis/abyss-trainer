@@ -112,6 +112,25 @@ export function briefFor(def: MechanicDef, role: Role): RoleBrief {
           yours: mine,
         }
       }
+      // Ground that TRAVELS. "Step out of the marked ground before it lands" is
+      // the instruction for a circle that appears, waits and goes off, and it is
+      // wrong in both halves for something that is already live and coming at
+      // you: there is no moment it lands, and the ground you are standing on is
+      // safe right up until it is not. Three mechanics in the raid are this —
+      // the Twin Fangs' waves, Sszorak's Tempest vortices and the Coiled Altar's
+      // Axegrinder — and all three were being briefed as puddles.
+      //
+      // What the raider needs is the one thing a still picture cannot give them:
+      // read the heading, and judge the floor by where the thing is GOING.
+      if (def.driftSpeed) {
+        return {
+          verb: 'READ THE DRIFT',
+          line: def.lethal
+            ? 'This one is moving, and it kills outright. Do not judge it by where it is — judge it by where it is heading, and clear the whole lane in front of it rather than sidestepping the shape.'
+            : 'This one is moving. Do not judge it by where it is — judge it by where it is heading: step across its path early, or in behind one that has already gone past, and never let it walk onto you while you are looking at something else.',
+          yours: mine,
+        }
+      }
       return {
         verb: 'MOVE OUT',
         line: def.lethal

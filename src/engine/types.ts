@@ -714,6 +714,38 @@ export interface MechanicDef {
    */
   radialDrift?: boolean
   /**
+   * An `origin: 'edge'` hazard rises from a NAMED stretch of rim and travels
+   * inward across the floor, instead of appearing anywhere on it and wandering.
+   *
+   * Degrees, measured from the arena centre the way `arenaEdge` measures them:
+   * +x is 0 and +y is 90, and on the Twin Fangs +y is the mouth end of the
+   * wedge. `{ fromDeg: 10, toDeg: 170 }` is therefore "somewhere along the
+   * southern rim", which is the whole of Stir the Depths' geometry — the waves
+   * come out of the venom at the wide end and run up the room, so every raider's
+   * escape is northward or sideways and never back toward the pocket.
+   *
+   * Four separate behaviours hang off this field being PRESENT, and all four
+   * are gated on the field rather than on `origin === 'edge'` for one reason:
+   * the raid's other edge mechanic is the Coiled Altar's Axegrinder, whose own
+   * comment says it "comes off the wall and ricochets". A random facing and the
+   * bounce at the rim ARE that mechanic. Making every edge spawn inward-facing,
+   * or suppressing the bounce for every edge origin, would silently turn an axe
+   * that criss-crosses the room into one that crosses it once and leaves.
+   *
+   *   • the spawn bearing is rolled inside the arc rather than round the circle
+   *   • the hazard faces inward (see `radialDrift`, which then carries it there)
+   *     with a spread, so six of them cross in six directions rather than all
+   *     funnelling through the middle of the room
+   *   • it does not bounce off the far rim: it has crossed the platform and gone
+   *     back into the sea it came out of, so it is retired instead
+   *   • it is judged on CONTACT rather than at the instant it resolves. The
+   *     other way round, a hazard that is live for a four-second crossing would
+   *     be scored on where one arbitrary frame of it found you — see the
+   *     exemption in `case 'avoid'` and the branch that replaces it in the
+   *     linger tick, which bills the body once per hazard rather than per frame.
+   */
+  edgeArc?: { fromDeg: number; toDeg: number }
+  /**
    * Whatever this spawns lands on the nearest of 12, 3, 6 or 9 o'clock.
    *
    * A Viscous Cyst has to be somewhere the Maelstrom's gales can blow the raid

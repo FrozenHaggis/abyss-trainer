@@ -545,21 +545,125 @@ export const twinfangs: BossDef = {
     {
       id: 'depths',
       name: 'Stir the Depths',
-      spellId: 1292807,
-      what: "6s channel pulsing the raid every 2s while waves run down five lanes .",
+      spellId: 1290956,
+      // THE CHANNEL. Split from its waves for the same reason Caustic Deluge was
+      // split from its splashes: one def was two mechanics, and the one that
+      // mattered could not be authored.
+      //
+      // It was a single drifting LANE — one line shape, rolled somewhere on the
+      // floor, on a random bearing. The comment defending that said an 'edge'
+      // spawn would point half its waves off the platform, which was true of the
+      // engine as it stood: a non-boss origin got a random facing, so a wave
+      // rising out of the venom was as likely to go straight back into it. That
+      // is now fixed rather than worked around — `edgeArc` names the stretch of
+      // rim the swell comes off and turns the hazard inward — so the mechanic
+      // can be what the raid leader described: "small waves from the acid that
+      // move across the platform in different directions ... spawn 6 circles".
+      // One lane could never be six directions.
+      //
+      // 1290956 rather than 1292807, and the two IDs are why the split is the
+      // honest reading rather than a convenience. abilities.json carries both
+      // under the name Stir the Depths: 1290956 is the Important channel that
+      // "pulses the raid every 2s", 1292807 is the Avoidable "wave contact —
+      // damage plus an Eternal Venom stack". The data was already describing a
+      // parent and a child; the file was collapsing them into one.
+      what: "6s channel on the raid that heaves six waves out of the venom at the mouth of the platform, one a second, each running the length of the wedge.",
       from: 'vexhul',
       roles: ['tank', 'dps', 'healer'],
-      telegraphMs: 6000,             // "6s channel ... while waves run down five lanes"
-      shape: { kind: 'line', length: 70, width: 11 },
-      // A lane rather than an edge spawn on purpose: the engine gives non-boss
-      // origins a random facing, so half of an 'edge' wave would point straight
-      // off the platform and never threaten anyone. A drifting interior lane is
-      // the same read — watch which lane clears, step into it.
-      origin: 'random',
-      driftSpeed: 6,
+      // The cast bar, not the channel — the six seconds are the six beats below.
+      // Long enough to be read and moved off the mouth end for; short enough
+      // that it is a warning rather than a mechanic of its own.
+      telegraphMs: 1500,
+      // No shape, and nothing to dodge about the channel itself. Everything it
+      // costs a raider who is paying attention, it costs through the waves.
+      origin: 'boss',
+      // A real pulse rather than the zero Caustic Deluge's parent carries. The
+      // two parents differ in what the data says they do: 1289192 is a channel
+      // on the tank whose whole output is the splashes, while 1290956 "pulses
+      // the raid every 2s" in its own right — so charging for it is not the
+      // double-billing the Deluge comment warns about, it is the healing check
+      // the channel actually is. One lump per cast, which is how a fired
+      // raidDamage lands; three pulses of a 6s channel rolled into one number.
+      rule: { type: 'raidDamage', dps: 1.6 },
+      channel: { defId: 'wave', count: 6, everyMs: 1000 },
+      good: 'Heal the pulse; read which way each swell is running and step in behind one that has passed.',
+      failText: '',
+    },
+    {
+      id: 'wave',
+      name: 'Stir the Depths',
+      spellId: 1292807,
+      // THE WAVES. Six of them, one a beat, and every one of them is a stack.
+      //
+      // NEVER in the loop, for the reason `splash` is not: it is a beat of a
+      // channel. One wave crossing an empty room with no channel behind it is
+      // not the mechanic — the mechanic is six of them in the air at once,
+      // arriving from different parts of the rim, which is what makes it a route
+      // to walk rather than a sidestep.
+      //
+      // The comment sits below `spellId:` because that is the one gap both boss
+      // file parsers tolerate — see the block on Ravenous Feast, which records
+      // what each of them does with prose anywhere else.
+      what: "Each beat of the channel heaves a wave out of the venom and drives it up the platform. There is nothing to soak and nothing to gain: touching one is a stack of Eternal Venom you cannot get back.",
+      from: 'vexhul',
+      roles: ['tank', 'dps', 'healer'],
+      // Under a second of swell, spent crossing the first six yards of floor
+      // inside the rim it came out of. The wave is already moving — drift runs
+      // whether or not a hazard has resolved — so the telegraph is not a pause,
+      // it is the stretch of its run where it is still building and cannot hurt
+      // anybody.
+      //
+      // Short on purpose. This is the one hazard in the fight whose cost is NOT
+      // decided at the instant it resolves: see the `edgeArc` exemption in
+      // sim.ts's `case 'avoid'`. Judging a wave at one moment of a four-second
+      // crossing would judge whoever happened to be near the rim and hand
+      // everyone else a free run, so the resolve is got out of the way early and
+      // the whole cost is charged on contact instead.
+      telegraphMs: 800,
+      // Four yards, the same as a Caustic Deluge splash, and chosen against the
+      // floor rather than for flavour: six circles of this size crossing the
+      // wedge cover at worst a fifth of it and leave nowhere more than six yards
+      // from clear ground. Both numbers are measured over the real polygon and
+      // pinned by the rasterised probe in engine.test.js.
+      shape: { kind: 'circle', radius: 4 },
+      // "small waves from the acid". The acid is everywhere outside the floor,
+      // but the waves come off the SOUTHERN rim — the mouth end and the pocket —
+      // for a reason that is about safety rather than flavour: every wave then
+      // travels up the wedge, so a raider backing away from one is walking north
+      // onto the widest part of the floor. Coming the other way they would herd
+      // the raid down onto the mouth and into the venom pocket, and there is no
+      // amount of dodging skill that survives being pushed at a hole.
+      //
+      // 10 to 170 rather than 0 to 180: a wave that rises exactly on the axis of
+      // the top edge runs the length of a leg instead of across the room.
+      origin: 'edge',
+      edgeArc: { fromDeg: 10, toDeg: 170 },
+      // Eight yards a second — two thirds of a player's 14 and a raider's 12, so
+      // it can be outrun in a straight line and is comfortably sidestepped, but
+      // it cannot be ignored by anyone standing still.
+      driftSpeed: 8,
+      // Inward, on the bearing it was thrown. Without this the drift bearing is
+      // rolled fresh and a wave that rose out of the venom would as often as not
+      // go straight back into it.
+      radialDrift: true,
+      // 3.3s of life after the swell, and it is a distance rather than a
+      // duration: 4.1 seconds of travel at eight yards a second is 33 yards,
+      // which is the length of this wedge from the mouth to the tanks' ledge.
+      // So a wave either crosses the whole room or expires within a few yards of
+      // doing so — measured, 42 of 60 run out of energy at the far rim and the
+      // other 18 reach it and are retired. None of them stops in the middle of
+      // the floor and sits there as a puddle, which is the failure mode a
+      // shorter linger would produce: waves that die where the raid is standing
+      // teach nothing about reading a heading.
+      lingerMs: 3300,
       rule: { type: 'avoid' },
-      damage: 0.28,
-      good: 'Heal the pulse; step into a lane a wave just cleared, safe from every later lane.',
+      damage: 0.16,
+      // "Touching these gives a stack of Eternal Venom so must be avoided." The
+      // damage is the smaller half; the stack is the mechanic, and on a fight
+      // that sheds one stack per Ravenous Feast a careless six-wave channel is
+      // three rotations of income given away in six seconds.
+      applies: { hit: 1 },
+      good: 'Nobody is clipped. The raid reads each swell as it rises and walks into the water a wave has already passed through.',
       failText: 'Caught by a Stir the Depths wave',
     },
     {

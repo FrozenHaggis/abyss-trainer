@@ -21,6 +21,13 @@ mechanic on its **own clock** instead, and one cast can be armed by another
 resolving rather than by a timer — the Lost Explorers' crates wait for the
 empowered ability the last fish bought.
 
+A rotation entry can also be **gated** on something the pull has to reach: an
+explorer eating a fish, or one of them dying. A gate that has just opened takes
+the next beat rather than waiting its turn, and a beat that lands on a gate still
+shut is spent on whichever open gate is overdue instead of on silence — so an
+ability you have just paid for shows up, and no ability arrives more often than
+its own boss file asked for.
+
 ## The raid
 
 | Boss | Teaches |
@@ -104,6 +111,11 @@ data. Tests run on every build and every deploy:
   bomb to blast — and now that the wave is a ring that travels, that chain runs
   on until the line reaches the far rim. Authored either way round without the
   answer, both are unwinnable and neither would have failed anything
+- **a cure that is consumed must have exactly one customer.** A Fire or Frost
+  Patch goes out the moment it cleanses somebody, which is only fair because a
+  Frostfire Volley deals one carrier of each element and lays one patch of each,
+  so nobody is ever second in a queue for one. Deal two carriers of one element
+  and you owe them two patches of the opposite ground
 - **the fish economy is finite and cannot be double-spent.** Three Disgusting
   Fish exist in the whole Explorers encounter, each explorer can eat exactly one,
   and feeding one that has already eaten is rejected rather than consumed — a
@@ -268,13 +280,21 @@ Recorded honestly rather than quietly left out.
   T+10.8, the ring is born at T+16.3 and is retired once it has passed
   2×50+4 = 104 yards, which at 11 yd/s takes 10 more seconds. An 18-second pad
   left the answer gone for eight seconds of the question.
-- **Frostfire Volley drops one pool per carrier, not a trail.** Each carrier lays
-  a single patch of their own element the instant it lands, offset a few yards
-  along the bearing *away* from the other carrier so the two patches end up
-  further apart than the two bodies are, and neither pool is consumed by curing
-  somebody. It used to drip a fresh pool every nine tenths of a second, which
-  painted two converging stripes and solved the trade by accident somewhere in
-  the middle — the mechanic is one decision about one destination.
+- **Frostfire Volley drops one pool per carrier, not a trail, and a pool is
+  spent when it cures somebody.** Each carrier lays a single patch of their own
+  element the instant it lands, offset a few yards along the bearing *away* from
+  the other carrier so the two patches end up further apart than the two bodies
+  are. It used to drip a fresh pool every nine tenths of a second, which painted
+  two converging stripes and solved the trade by accident somewhere in the
+  middle — the mechanic is one decision about one destination. The patch then
+  goes out on contact, reversing an earlier ruling that it lingered: the fear
+  behind that ruling was that whoever arrived second would lose a race, and there
+  is no second arrival to lose one, because `polarity` deals exactly one carrier
+  of each element and lays exactly one patch of each, so every patch has exactly
+  one customer. **That is an invariant rather than a coincidence** — a polarity
+  that ever deals two carriers of one element owes them two patches of the
+  opposite ground — and what it buys is a floor that tells the truth, with no
+  spent cure still drawing next to the one that still works.
 - **An unsynchronised Explorers kill is no longer scored.** The survivors gaining
   Relentless Escalation, Cataclysmic Invocation and Smashing Shovel *is* the
   punishment, and charging a failure row on top of it punishes one mistake twice.
@@ -289,8 +309,8 @@ Recorded honestly rather than quietly left out.
   **7.2 yards**, and every ally in the game has always stopped that far from its
   mark. Invisible for a station and fatal for an errand: a Throw Junk crate is
   eaten inside three yards, so a raider sent to one walked to five, stopped, and
-  watched it until the window closed — which on a fight where one uncollected
-  crate wipes the raid ended every tank pull at t=30 with no action available to
+  watched it until the window closed — which on a fight where a failed crate
+  window wipes the raid ended every tank pull at t=30 with no action available to
   the player at all. Measuring it honestly for every ally on every fight moved
   **twenty** cells of the sweep in both directions, including three careless
   clears, so the correction is scoped: an errand that has to be physically
@@ -298,16 +318,105 @@ Recorded honestly rather than quietly left out.
   The general fix is a balance pass on six other encounters and is still owed.
 - **The Explorers' fish is planted uniformly, and 75% is emergent rather than
   rolled.** The decision is that the player finds it roughly three times in four,
-  and that otherwise an ally feeds it on a fixed priority — Iku, then Gebbo, then
-  Nama, skipping anyone already empowered — so a missed fish costs you the
-  *choice* rather than the pull. The priority half is now real: `feedPriority` is
-  a `BossDef` field, and after six seconds of first refusal the nearest non-tank
-  raider carries a fish nobody claimed into the next mouth on the list. The
-  weighted plant is not: the engine still hides the fish in any of the six
-  crates. What makes the number come out roughly right anyway is where the player
-  is standing — among the crates on a dps or healer pull, and nowhere near them
-  on a tank pull, which is precisely the split the directive describes. A literal
-  75% would need the plant to know which crates are yours.
+  and that otherwise an ally feeds it to a mouth from `feedPriority`, skipping
+  anyone already empowered — so a missed fish costs you the *choice* rather than
+  the pull. After six seconds of first refusal the nearest non-tank raider
+  carries a fish nobody claimed into the next mouth on the list. The weighted
+  plant is not built: the engine still hides the fish in any of the six crates.
+  What makes the number come out roughly right anyway is where the player is
+  standing — among the crates on a dps or healer pull, and nowhere near them on a
+  tank pull, which is precisely the split the directive describes. A literal 75%
+  would need the plant to know which crates are yours.
+- **`feedPriority` is a pool, not a ranking, and that reversal is the whole of a
+  reported bug.** It shipped as the fixed list Iku, then Gebbo, then Nama, which
+  made Nama third on every pull anybody ever played — so Mighty Thud was always
+  the empowerment the pull ran out of time for, and the report came back as
+  "First Mate Nama's empowered ability comes in right before the enrage so it's
+  not able to practise". No amount of rotation tuning fixes that, because being
+  last was an *input* to the schedule rather than an output of it. The engine now
+  shuffles the list once per world out of the same seeded stream every spawn roll
+  draws from, so a fixed seed still reproduces a pull exactly while a session
+  practises all three empowerments instead of two. A boss with no `feedPriority`,
+  or a one-entry one, draws no numbers at all, so the other seven encounters'
+  seeded sequences are untouched.
+- **The simulated raid was killing the Explorer it was about to empower, and
+  that was an instrument defect wearing a difficulty costume.** The playtest bot
+  shoots the lowest of the three health bars, which on a council that starts
+  level is a tie broken by array order — so it opened on `entities[0]` on every
+  pull that has ever been played and drove that one body to a quarter of its
+  health before the first crate window closed. It could not then stop: two of the
+  three are tank-stacked four yards apart, so aiming at the other one still lands
+  shots on it. Measured, Iku was at 3% when it finally ate at sixty-two seconds
+  and dead four seconds later, and the Frostfire Volley the player had spent a
+  crate window finding never fired once — a corpse casts nothing, and a dead
+  mouth also deletes one of the three resets the pull is budgeted around. It is
+  the same shape of defect as the old `feedPriority`: being first was an *input*
+  to the schedule. The bot now levels the council while nobody has eaten and only
+  ever burns a body that already has. Both halves are gated on the fight
+  declaring a `feed` rule, so no other encounter's cells move. Three boss-file
+  numbers were retuned around it — `maxHp` 0.76 &rarr; 0.62, because the floor
+  under that dial was this bug and not the fight.
+- **A competent raid banks a fish for a while, not for the better part of a
+  minute.** The bot held every fish until the energy bar read 70%, which at the
+  fight's rate is forty-eight seconds of standing on the answer — three times a
+  pull, compounding, so the third Explorer was routinely still unfed at two
+  minutes and on some seeds the pull ended with the fish in the raid's pocket. A
+  percentage of a bar is a *duration* that scales with `energyPerSec`, which is
+  what made that dial a cliff rather than a plateau: a slower bar did not buy
+  time, it postponed every empowerment. The hold is now capped in seconds
+  (`FISH_HOLD_CAP_MS`, 18s) with the percentage lowered to 55, so `energyPerSec`
+  goes back to being the enrage clock and nothing else. Both figures were sampled
+  across the sweep rather than interpolated; both fail at *both* ends, and for
+  opposite reasons.
+- **The Explorers' empowered abilities used to arrive too late to practise, and
+  the cause was a round-robin standing in for a clock.** Every Throw Junk after
+  the first is armed by the previous fish's empowered ability *resolving*, and
+  that ability then had to wait its turn in an eighteen-slot rotation — measured,
+  a fifty-second dead window, so the third fish frequently never landed at all.
+  Two engine rules fix the wait and this fight's `loop` pays for them: a gate
+  that has just opened takes the next beat *without* advancing the loop index
+  (inserted, not substituted, so nothing is skipped), a beat that would have been
+  silence goes to whichever open gate is overdue against the cadence its own
+  array asked for, and each empowered entry now has three turns in a twenty-entry
+  rotation at a six-second beat. Four turns each was tried and is *worse*: more
+  heavy casts means a longer pull, a longer pull means later feeds, and the last
+  empowerment ends up squeezed harder than before. The wait between paying for an
+  ability and seeing it is now one beat, and across six seeds and three roles
+  every one of the eighteen pulls buys all three empowerments — seventeen of them
+  with 36–77s of pull left for the last one, the eighteenth with 6.6s. Fifty-one
+  of the fifty-four abilities bought are then cast two to eight times, and Mighty
+  Thud, the ability the report was about, is cast two to eight times on every row
+  in the sweep. The three cast once are all the ability bought *last* on a dps
+  pull, which is the shortest pull there is.
+- **Mighty Thud leaps twice where its directive says three targets, and it is the
+  one place an engine constant overrode the source.** The engine charges the raid
+  a flat 0.3 of its single bar for every Deadly soak the *player* is not standing
+  in — allies fill the other slots, but the last slot is always the player's and
+  the resolve is measured at the player's feet. A player tank is anchored to a
+  moving stack mark and this mechanic explicitly does not mark tanks, so on a
+  tank pull every leap is a guaranteed miss: three of them is 0.9 of the raid bar
+  per cast with nothing anybody can do about it. That was survivable only while
+  the ability barely fired; once it started arriving promptly, two casts one beat
+  apart came to 1.8 against a bar that starts at 1.0 and the tank cell wiped on
+  two seeds in three with no mistake in it. Two leaps halves both numbers, the
+  rota survives the cut, and the third leap comes back the day allies can satisfy
+  a soak on the player's behalf — which is the lesson `reservePickups` has
+  already learned for collects.
+- **A failed Throw Junk window is the Explorers' wipe, not a single crate.** The
+  directive says all boxes must be off the floor in ten seconds or the raid
+  wipes, and that shipped as a full raid bar charged *per uncollected crate* —
+  which with six crates models the window being failed six times over. One
+  crate slipping during a Mighty Thud rota or a bomb chain therefore ended the
+  pull outright, which is a cliff rather than a difficulty and made every other
+  number in the fight untunable. It is now 0.20 a crate: four left standing is
+  0.8 of the raid's single bar and effectively the pull, six is 1.2 and a wipe,
+  and a careless player who collects nothing still dies on the first window at
+  forty seconds in every role. It moved from 0.34 to 0.20 once every empowerment
+  started landing, because each crate window is re-armed by an empowered ability
+  resolving — so the windows come faster, collide with the rotation more often,
+  and the tail of that distribution was ending a third of the sweep's pulls
+  before the third fish. That one number took the count of empowered abilities
+  that fire only once from eleven in fifty-four to three.
 - **Two engine improvements are deliberately scoped to the Explorers, because
   widening them re-tunes fights nobody has re-tuned yet.** A dead entity now
   stops casting — but only on a fight that declares `unlockedByDeathOf`. Applied
@@ -334,15 +443,18 @@ Recorded honestly rather than quietly left out.
   to about two minutes before the raid bar gives out. The two non-tank careless
   cells still end at forty seconds on the first window, and that is the
   directive's own consequence rather than a tuning choice.
-- **The Explorers' tank kills marginally faster than its dps, and the reason it
-  used to has just been removed.** The bar the project holds is "dps fastest,
-  healer slowest"; the Explorers landed 124s tank, 125s dps, 155s healer, so the
-  healer half was right and the other two were a tie inside the noise. The stated
-  cause was that a tank on this fight was a *passenger* — never on a crate, never
-  on a fish, holding 99% accuracy standing next to Iku while the dps ran errands
-  at 96%. That is no longer true: the tanks now stack Nama and Iku and walk the
-  pair around a lapping Gebbo continuously, which is a job with no idle moment in
-  it. Those three timings pre-date the rebuild and are not re-measured here.
+- **The Explorers now order the way the project asks them to.** The bar is "dps
+  fastest, healer slowest"; the fight once landed 124s tank, 125s dps, 155s
+  healer, which was a tie inside the noise at the front. The stated cause was
+  that a tank here was a *passenger* — never on a crate, never on a fish, holding
+  99% accuracy standing next to Iku while the dps ran errands at 96% — and that
+  stopped being true when the tanks started stacking Nama and Iku and walking the
+  pair around a lapping Gebbo. It now reads **131s dps, 133s tank, 168s healer**
+  averaged over the three sweep seeds: the tank is genuinely paying for the
+  empowered half of the rotation, because Mighty Thud marks non-tanks and a tank
+  walking a moving stack mark cannot be inside any of the soaks it drops. The
+  front two are close enough that the order is a claim about the average rather
+  than about any single seed.
 - **The Explorers' tank job was authored backwards and is now the other way
   round.** United Defense links when **all three** explorers are inside 30 yards
   of one another — which is "the widest pair is under 30" — so two of them

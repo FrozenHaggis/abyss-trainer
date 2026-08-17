@@ -21,6 +21,34 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 const SEEDS = process.env.SEED ? [Number(process.env.SEED)] : [1337, 2024, 90210]
 
 /**
+ * The longest a competent raid will sit on a carried fish while banking the
+ * boss's energy bar, in ms.
+ *
+ * Only the Lost Explorers have a `feed` rule, so this reaches exactly one fight
+ * and no other boss's cells can move because of it. It is the second half of the
+ * spend rule down in the fish block — read the note there for why the first half
+ * alone was a defect rather than a preference.
+ *
+ * SAMPLED, NOT INTERPOLATED, over the whole competent sweep at `maxHp: 0.62` and
+ * `energyPerSec: 1.30`, counting how many of the fifty-four empowered abilities
+ * bought across six seeds and three roles then fired more than once:
+ *
+ *     12s  6 fire only once, and the healer runs into the enrage — a reset spent
+ *          at a sixth of a bar is most of a reset thrown away
+ *     15s  8 fire only once, and the healer still enrages
+ *     18s  3 fire only once, every cell clears            ← here
+ *     24s  3 fire only once and every cell clears, but two rows in eighteen
+ *          never buy their third empowerment at all
+ *     30s  the third feed goes back past two minutes on the slow seeds, which is
+ *          the behaviour this cap exists to remove
+ *
+ * The two ends fail for opposite reasons, which is why the middle is not an
+ * average of them: too short and the bar is never banked, too long and the last
+ * empowerment arrives with nothing left to spend on it.
+ */
+const FISH_HOLD_CAP_MS = 18000
+
+/**
  * Every `Rule` variant, and what this bot does about it.
  *
  * The instrument's own blind spots, written down. The bot is a measuring device,
@@ -205,6 +233,9 @@ function play(boss, role, smart, seed, side = 'green') {
   // tuning target for `energyPerSec` is "roughly 70% at the moment of a feed",
   // and that number exists for exactly one tick.
   let lastEnergy = 0
+  // How long the player has been carrying a fish, in ms. Reset the instant it is
+  // handed over or lost. See `FISH_HOLD_CAP_MS` at the top of the file.
+  let fishHeldMs = 0
   while (w.player.alive && !w.killed && w.elapsedMs / 1000 < boss.pullLengthSec && ticks < 40000) {
     if (!smart) {
       // A careless PLAYER, not a statue.
@@ -363,7 +394,7 @@ function play(boss, role, smart, seed, side = 'green') {
       // Delivery WAITS for the boxes, though. A carried fish has no timer at all
       // — `fishCarried` is a flag, and the only cost of holding it is the bar
       // ticking up — while the crates it came out of have a ten-second window and
-      // charge the raid a third of its health for each one left standing. A bot
+      // charge the raid a fifth of its health for each one left standing. A bot
       // that found the fish mid-window and walked fifty yards south to deliver it
       // abandoned three crates to do so and wiped the raid at forty-eight seconds
       // holding the thing that would have saved it. Finish the window, then walk.
@@ -394,21 +425,61 @@ function play(boss, role, smart, seed, side = 'green') {
         // So hold it until the bar is nearly full — unless another fish is
         // already lying on the floor, in which case this one has to be spent
         // now or that one rots where it fell and a reset is lost outright.
+        //
+        // AND NEVER PAST `FISH_HOLD_CAP_MS`, which is the half of this rule the
+        // pacing pass had to add. "Nearly full" is a percentage, and a percentage
+        // of a bar is a DURATION that scales with `energyPerSec` — so a slower
+        // bar did not merely postpone the enrage, it postponed every empowerment
+        // with it, one hold at a time, three holds deep. That coupling is the
+        // cliff the boss file describes on `energyPerSec`, and it is why the
+        // third explorer was still unfed at two minutes: the bot was standing on
+        // the answer waiting for a bar that took forty-eight seconds to reach
+        // seventy per cent. Measured on the un-capped rule, the third fish went
+        // in at 84.6-125.9s and on two seeds in six it was never delivered at
+        // all — the pull ended with the fish in the raid's pocket.
+        //
+        // Capping the hold in SECONDS decouples the two: `energyPerSec` goes back
+        // to being the enrage clock, and the empowerment schedule stops riding on
+        // it. It is also the more honest model of a raid — nobody watches a
+        // resource bar for the better part of a minute holding the thing that
+        // ends the fight; they bank it for a bit and then use it.
+        //
+        // "NEARLY FULL" IS 55, DOWN FROM 70, and the cap is why it could move.
+        // With a duration cap in place the percentage only ever decides the
+        // FIRST fish of a pull — every later one is spent on the clock — so this
+        // number is now, almost exactly, "how long is the opening of the fight".
+        // At 70 that opening was 48 seconds of a 130-second dps pull before the
+        // first empowerment could even be bought, and the two behind it inherited
+        // every second of it. Sampled at 40/45/50/55/70 against the finished
+        // fight: 40 and 45 spend the first reset too cheaply and cost the healer
+        // its cell, 50 delivers every empowerment but leaves six of fifty-four
+        // firing once, 55 leaves three, and 70 leaves eight and loses two rows'
+        // third empowerment entirely.
         const fishWaiting = w.instances.some(i =>
           !i.resolved && !i.answered && i.def.rule.type === 'feed')
-        const spendIt = w.bossEnergy >= 70 || fishWaiting
+        const spendIt = w.bossEnergy >= 55 || fishWaiting || fishHeldMs >= FISH_HOLD_CAP_MS
         if (w.fishCarried && !windowOpen && spendIt) {
           // A destination, not a distance, and a CHOICE rather than the nearest
           // body: which explorer you empower is the whole of what finding the
-          // fish buys you. The fight states the order it wants in `feedPriority`
-          // — Iku first, because Frostfire Volley is the empowerment that most
-          // changes the pull and the one whose resolve re-arms the next crate
-          // window soonest. Fed by proximity instead, the bot handed the first
+          // fish buys you. Fed by proximity instead, the bot handed the first
           // fish to whichever body it happened to be standing next to; on the
           // seeds where that was Gebbo the next crate window was eighteen seconds
           // late (a ten-second bomb fuse plus the six-second re-arm) and the pull
           // never caught up. Distance is the tie-break, not the rule.
-          const order = w.boss.feedPriority ?? []
+          //
+          // THIS PULL'S ORDER, `w.feedOrder`, not the declared `feedPriority`.
+          // The declared list used to be a ranking and this read it as one; it is
+          // now a POOL that the engine shuffles once per pull out of the world
+          // seed, and the boss file says in as many words that nothing
+          // downstream may read it as though it were still ordered. Reading the
+          // raw list here made the bot walk every fish it personally found to
+          // whoever happened to be written first in the array, which put the
+          // player and the raid on two different orders in the same pull — the
+          // engine's own `feedTarget` has always used the shuffled one — and
+          // quietly restored the structural last place the shuffle exists to
+          // remove. Falls back to the declared list only for a world built
+          // before `feedOrder` existed.
+          const order = w.feedOrder?.length ? w.feedOrder : (w.boss.feedPriority ?? [])
           const rank = (b) => {
             const i = order.indexOf(b.def.id)
             return i < 0 ? order.length : i
@@ -1285,7 +1356,56 @@ function play(boss, role, smart, seed, side = 'green') {
       // the other two with it...
       if (!target && w.boss.alliesChipOffTarget) {
         const live = w.bosses.filter(b => !b.def.untargetable && b.alive)
-        const lo = live.length ? Math.min(...live.map(b => b.hp)) : 1
+        // A MOUTH THAT HAS NOT EATEN IS NOT A BURN TARGET.
+        //
+        // The single most expensive thing this bot did on the Explorers, and it
+        // is a rule about the fight rather than a preference. The bar is the
+        // enrage and a fish is the only thing that empties it; a fish can only
+        // go into an explorer that is alive and has not eaten. So an explorer
+        // killed before it is fed does not merely cost you its empowered
+        // ability — it deletes one of the three resets the pull is budgeted
+        // around, permanently, and no later play can get it back.
+        //
+        // Measured before this existed: the bot drove whichever body was lowest
+        // straight to the bone, that body was frequently one nobody had fed yet,
+        // and it died around ninety seconds. On the dps seeds Iku was at 3% at
+        // seventy-four seconds with two fish still to come, and Frostfire Volley
+        // — an ability the player had spent a whole crate window looking for —
+        // simply never happened in the pull. A corpse casts nothing.
+        //
+        // Data-driven, and inert on the other seven bosses: it needs a `feed`
+        // rule to mean anything, and only one fight in the raid has one. While
+        // any live body still has to eat, the burn goes into the ones that
+        // already have — which is also what "the three die together" means when
+        // the fight sells their empowerments one at a time. Once every live body
+        // has eaten there is nothing left to protect and the rule below is
+        // exactly the rule that was here before.
+        const hasFeed = boss.mechanics.some(m => m.rule.type === 'feed')
+        const anyUnfed = hasFeed && live.some(b => !b.empowered)
+        const fed = live.filter(b => b.empowered)
+        // BEFORE THE FIRST FISH, NOBODY GOES TO THE BONE — the whole council is
+        // still a mouth. There is no fed body to burn instead, and the rule this
+        // replaces fell back to "shoot the lowest of all three", which on a
+        // council that starts level is a TIE broken by array order. The bot
+        // therefore opened on `entities[0]` on every pull that has ever been
+        // played, drove that one explorer to a quarter of its health before the
+        // first crate window even closed, and then could not stop: the two
+        // tank-stacked bodies stand four yards apart, so aiming at the other one
+        // still lands shots on it. Measured on the dps seeds, Iku was at 3% when
+        // it finally ate at sixty-two seconds and dead four seconds later —
+        // Frostfire Volley bought and never cast once.
+        //
+        // That is the same defect `feedPriority` had: being first was an INPUT to
+        // the schedule rather than a consequence of it, and no shuffle downstream
+        // can undo a body that was already at the bone. So while nothing has
+        // eaten, the shots go into the HIGHEST bar instead. It is the same
+        // "even them out" the block below already knows how to do, applied for
+        // the same reason — three bodies that have to die together cannot start
+        // by one of them nearly dying — and the raid still spends the opening
+        // minute doing damage rather than standing about.
+        const levelling = anyUnfed && !fed.length
+        const burn = anyUnfed && fed.length ? fed : live
+        const lo = burn.length ? Math.min(...burn.map(b => b.hp)) : 1
         // ...right down to the bone, and only THEN even them out.
         //
         // Switching away the moment the warning appears looks like obedience and
@@ -1296,9 +1416,14 @@ function play(boss, role, smart, seed, side = 'green') {
         // bone instead and the raid delivers the other two to within a chipLag
         // of it, which is less than half the work and is what "they have to die
         // together" means in practice.
-        const evenOut = lo <= 0.04
+        const evenOut = levelling || lo <= 0.04
         let pick = null
-        for (const b of live) {
+        // Both halves read `burn`, which is `live` on every fight without a feed
+        // and on every moment of a feed fight where nothing is left to protect.
+        // Evening out across the unfed as well would put the shots straight back
+        // into the body being saved — the highest bar is usually the one that has
+        // not eaten, because it is the one nobody has been shooting.
+        for (const b of burn) {
           if (!pick || (evenOut ? b.hp > pick.hp : b.hp < pick.hp)) pick = b
         }
         if (pick) input.aim = { x: pick.pos.x, y: pick.pos.y }
@@ -1343,6 +1468,7 @@ function play(boss, role, smart, seed, side = 'green') {
     step(w, input, TICK_MS)
     input.pressed.length = 0
     ticks++
+    fishHeldMs = w.fishCarried ? fishHeldMs + TICK_MS : 0
     // CASTS=1 names every instance the moment it is created. The one question a
     // timeline raises — did Shell Spin actually fire at 5, 35 and 65 — has no
     // other answer, and reading it out of the per-second dump means guessing.

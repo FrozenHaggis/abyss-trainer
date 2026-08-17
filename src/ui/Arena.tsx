@@ -1309,10 +1309,19 @@ export default function Arena({ boss, role, side, drillId, onEnd, onQuit }: {
             {hud.element && (
               <span style={{ ...S.chip, borderColor: hud.element === 'fire' ? '#ff8a3e' : '#7ec4ff' }}>
                 <span style={{ ...S.dot, background: hud.element === 'fire' ? '#ff8a3e' : '#7ec4ff' }} />
+                {/* THE DEBUFF'S NAME, and the GROUND'S name, and they are not
+                    the same word. What you are carrying is Burning Flames or
+                    Piercing Frost — a minute-long marker on your body. What
+                    cures it is a Frost Patch or a Fire Patch, which is a patch
+                    of floor with its own spell id. This chip is the only place
+                    in the UI both halves appear side by side, so it is the one
+                    place the difference can be read rather than inferred, and
+                    "run into frost" was quietly using the debuff's vocabulary
+                    for the ground. */}
                 <span style={S.colour}>{hud.element === 'fire' ? 'Burning Flames' : 'Piercing Frost'}</span>
                 <span style={S.num}>{(hud.elementMs / 1000).toFixed(0)}s</span>
                 <span style={S.tag}>
-                  run into {hud.element === 'fire' ? 'frost' : 'fire'}
+                  run into the {hud.element === 'fire' ? 'Frost Patch' : 'Fire Patch'} — it is spent curing you
                 </span>
               </span>
             )}

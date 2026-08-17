@@ -427,17 +427,43 @@ export type Rule =
    * a second volley landing on a carrier who still has one detonates
    * `deathId`, and that is where the death is attributed.
    *
+   * ONE OF EACH, ALWAYS. The dealer hands out exactly one fire and exactly one
+   * frost and lays one patch of each, and that is not a detail of how it happens
+   * to be written — `elementPool` is consumed by the cure it performs, and the
+   * only thing that stops a spent pool stranding somebody is that no two live
+   * carriers ever want the same patch. A `polarity` that dealt two carriers of
+   * one element would have to lay two of the opposite ground with them.
+   *
    * The README recorded "the engine has no polarity primitive" as a known gap.
    * This is it.
    */
   | { type: 'polarity'; firePoolId: string; frostPoolId: string; deathId: string }
   /**
-   * A patch of one element that cures the other.
+   * A patch of one element that cures the other, ONCE, and is spent doing it.
    *
    * The ground half of `polarity`. Standing in it does nothing at all unless you
    * are carrying the opposite element, in which case it strips the debuff. It is
    * never damage and never a failure, which is why it cannot be an `avoid` with
    * the harm switched off: the renderer's verb palette would paint the cure red.
+   *
+   * ONE POOL, ONE CURE, GONE. This reverses an earlier reading — that a patch of
+   * frostfire "does not know how many people have walked through it" — and the
+   * reason is the arithmetic of the mechanic rather than a preference. A volley
+   * deals exactly two elements, one of each, and lays exactly two patches, one of
+   * each. A fire patch cures frost carriers and there is exactly one of those; a
+   * frost patch cures fire carriers and there is exactly one of those. So each
+   * pool has exactly one customer in the world, and lingering after that customer
+   * has been served is not generosity, it is a cure sitting on the floor that
+   * nothing left alive can use. Consuming it says out loud what the trade is: two
+   * patches, two carriers, each spends the other's.
+   *
+   * It cannot strand the other carrier, and that is a property of the dealing
+   * rather than a hope — see `polarity`. The pool a carrier needs is the one
+   * their OPPOSITE dropped, and no two live carriers ever hold the same element,
+   * so no two bodies ever want the same patch. If a fight ever deals two carriers
+   * of one element it breaks that guarantee and the second one races the first
+   * for a single cure; the honest fix then is to lay a pool per carrier, not to
+   * make the cure eternal again.
    */
   | { type: 'elementPool'; element: 'fire' | 'frost' }
   /**
@@ -1153,6 +1179,13 @@ export interface MechanicDef {
    * their whole base rotation — Mighty Thud does not replace Shell Spin, it
    * arrives on top of it. Gated in `fire()` so it also covers combo parts,
    * queued channels and anything a phase opens with.
+   *
+   * A GATE IS AN EVENT, NOT A WAIT. Declaring this puts the mechanic under the
+   * rotation's gate rules (see `BossDef.loop`): the beat after the gate opens is
+   * ITS beat, and thereafter every beat the rotation cannot spend — because it
+   * landed on a gate that is still shut — is spent on whichever open gate has
+   * been silent longest. Both are engine behaviour derived from this field, so a
+   * fight gets them by declaring the gate rather than by arranging its array.
    */
   empoweredOnly?: string
   /**
@@ -1163,6 +1196,10 @@ export interface MechanicDef {
    * gets hers when Nama or Gebbo falls. An array rather than a single id because
    * that is how the encounter states it, and collapsing it to one entity would
    * make two thirds of the punishment unreachable.
+   *
+   * A gate, so the promptness rules documented on `empoweredOnly` apply to it
+   * identically: the price of an unsynchronised kill arrives on the beat after
+   * the body falls rather than whenever the array next comes round to it.
    */
   unlockedByDeathOf?: string[]
   /**
@@ -1636,6 +1673,37 @@ export interface BossDef {
    * Recurrence intervals are NOT in the source data, so the fight is driven off
    * an energy bar — which is how several of these bosses genuinely work. `loop`
    * cycles while energy fills; `atFullEnergy` fires and resets it.
+   *
+   * GATED ENTRIES ARE NOT ORDINARY ENTRIES, and the difference is the whole pace
+   * of a fight built on them. An entry carrying `empoweredOnly` or
+   * `unlockedByDeathOf` sits in the array all pull and simply does not fire
+   * while its gate is shut, which is right; what was wrong is what happened when
+   * the gate OPENED. A round-robin answers "when is this mechanic's turn" with
+   * "wherever it happens to sit in this array", so buying an ability could mean
+   * waiting most of a rotation to see it — measured at about fifty seconds on
+   * the Lost Explorers, where the next crate window is armed by that very cast
+   * and every fish after the first therefore inherited the delay. The fight's
+   * pace was a property of an array index.
+   *
+   * So the rotation runs two rules, both derived from the gates themselves and
+   * neither knowing which fight it is on:
+   *
+   *   • AN OPENING IS AN APPOINTMENT. The first beat after a gate opens belongs
+   *     to the mechanic it opened, and that beat is INSERTED rather than
+   *     substituted — the rotation index does not move, so nothing in the array
+   *     is skipped, it is all one beat later. The wait between buying an ability
+   *     and seeing it is therefore bounded by `loopIntervalSec`, whatever the
+   *     array looks like.
+   *   • A BEAT THAT WOULD BE SILENCE IS SPENT. A beat landing on a gate that is
+   *     still shut used to cast nothing at all. It now goes to whichever OPEN
+   *     gate has gone longest without casting. This adds no casts to a pull —
+   *     the beat was already there and was producing nothing — it only stops the
+   *     fight going quiet in exactly the stretch where the player has just paid
+   *     for something and wants the reps.
+   *
+   * Both are inert on a fight with no gated entries, which is seven of the
+   * eight: no gate ever opens, no beat is ever silent, and the rotation is the
+   * plain round-robin it has always been.
    */
   loop: string[]
   /**
@@ -1675,11 +1743,24 @@ export interface BossDef {
    */
   introEverySec?: number
   /**
-   * The order an ALLY walks a fish into a body, when the player did not take it.
+   * The bodies an ALLY will walk a fish into, when the player did not take it.
    *
-   * Entity ids, best first; anyone already fed is skipped. Declaring it is what
-   * switches the raid's backstop on at all, so a fight with no `feed` mechanic
-   * is untouched by its existence.
+   * Entity ids; anyone already fed is skipped. Declaring it is what switches the
+   * raid's backstop on at all, so a fight with no `feed` mechanic is untouched
+   * by its existence.
+   *
+   * A POOL, NOT A RANKING, and it used to be a ranking. Read strictly in order
+   * it made one body structurally last on every pull ever played: Nama was third
+   * on the Lost Explorers, so Mighty Thud was always the empowerment the pull
+   * ran out of time for and no session ever practised it. A trainer that can
+   * only teach two of the three abilities it contains is not teaching the fight.
+   *
+   * So the engine shuffles this once per world and feeds in THAT order — see
+   * `World.feedOrder`. Drawn from the same seeded stream as every spawn roll, so
+   * a seeded playtest still reproduces exactly: a fixed seed gives a fixed
+   * order, and only an unseeded browser pull varies. The list's own order is
+   * therefore the fight stating which mouths exist and not which comes first;
+   * the ordering claim it used to make is one the fight was not entitled to.
    *
    * The directive is explicit that the player has a strong chance of finding the
    * fish and a bot finds it otherwise, and that what a missed fish costs you is

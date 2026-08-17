@@ -139,10 +139,10 @@
     "cleared": false,
     "outcome": "Blast Wave",
     "failures": {
+      "Aftershock": 2,
       "Blast Wave": 1,
-      "Icebound Flames": 3,
-      "Shredding Shards": 3,
-      "United Defense": 1
+      "Icebound Flames": 2,
+      "Shredding Shards": 1
     }
   },
   "careless/explorers/healer": {
@@ -150,9 +150,10 @@
     "cleared": false,
     "outcome": "Raid wiped — healing could not keep up",
     "failures": {
-      "Icebound Flames": 3,
+      "Icebound Flames": 2,
+      "Mighty Thud": 2,
       "Shell Spin": 1,
-      "Throw Junk": 3
+      "Throw Junk": 6
     }
   },
   "careless/explorers/dps": {
@@ -160,7 +161,8 @@
     "cleared": false,
     "outcome": "Raid wiped — healing could not keep up",
     "failures": {
-      "Icebound Flames": 3,
+      "Icebound Flames": 1,
+      "Mighty Thud": 2,
       "Shell Spin": 1,
       "Throw Junk": 3
     }
@@ -426,30 +428,33 @@
     "cleared": true,
     "outcome": "KILL",
     "failures": {
-      "Icebound Flames": 4,
-      "Shell Spin": 3,
-      "Shredding Shards": 1,
-      "United Defense": 2
+      "Icebound Flames": 2,
+      "Shell Spin": 2,
+      "Shredding Shards": 1
     }
   },
   "competent/explorers/healer": {
-    "wins": 3,
-    "cleared": true,
-    "outcome": "KILL",
-    "failures": {
-      "Concussive Blast": 2,
-      "Explosive Surprise": 2,
-      "Icebound Flames": 5
-    }
-  },
-  "competent/explorers/dps": {
     "wins": 2,
     "cleared": true,
     "outcome": "KILL",
     "failures": {
+      "Aftershock": 5,
       "Concussive Blast": 1,
-      "Explosive Surprise": 1,
-      "Icebound Flames": 3
+      "Icebound Flames": 3,
+      "Mighty Thud": 1,
+      "Throw Junk": 2
+    }
+  },
+  "competent/explorers/dps": {
+    "wins": 3,
+    "cleared": true,
+    "outcome": "KILL",
+    "failures": {
+      "Aftershock": 3,
+      "Concussive Blast": 1,
+      "Icebound Flames": 3,
+      "Mighty Thud": 1,
+      "Throw Junk": 2
     }
   },
   "competent/sszorak/tank": {

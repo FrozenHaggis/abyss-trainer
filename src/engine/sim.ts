@@ -379,6 +379,55 @@ export interface World {
    * countdown it would be inventing.
    */
   timelineNextMs: number[]
+  /**
+   * Mechanic id -> the elapsed ms at which it last actually fired.
+   *
+   * Written by `fire()` after the gates, so it records casts that HAPPENED
+   * rather than casts that were attempted — a beat spent on a shut gate is not a
+   * cast and must not read as one, which is the whole distinction the starvation
+   * rule below is built on.
+   *
+   * Kept as a flat record rather than on the def, because a def is shared
+   * furniture read by the renderer, the briefing and the tests, and none of them
+   * should be able to see a fact about one live pull on it.
+   */
+  lastCastMs: Record<string, number>
+  /**
+   * Loop mechanic id -> was its gate open the last time the rotation looked.
+   *
+   * The baseline a gate OPENING is measured against. Gates are monotone in
+   * practice — an explorer never un-eats a fish and a corpse never gets back up
+   * — but this is written as a straight comparison rather than as a one-way
+   * latch so that a fight which ever does close one again cannot silently keep
+   * claiming an appointment it already spent.
+   */
+  gateOpen: Record<string, boolean>
+  /**
+   * Gated mechanics owed the next beat, oldest first.
+   *
+   * See `BossDef.loop`. This is the whole of "an opening is an appointment": the
+   * moment a gate goes from shut to open the mechanic behind it is queued here,
+   * and the next rotation beat casts it INSTEAD of advancing, so the wait
+   * between paying for an ability and seeing it is one `loopIntervalSec` rather
+   * than however far round the array it happens to sit.
+   *
+   * A queue rather than a single slot because two gates can open together —
+   * killing the second of a pair unlocks a punishment on every survivor at once
+   * — and dropping one of those on the floor would make the array index matter
+   * again for exactly the case the queue exists to stop mattering.
+   */
+  gatePending: string[]
+  /**
+   * The order this pull's raid offers a fish to the council.
+   *
+   * `boss.feedPriority` shuffled once at `createWorld`, out of the seeded stream
+   * — see the field's own comment for why a fixed list was a defect. Empty on
+   * every fight that declares no `feedPriority`, and drawing nothing for those
+   * fights is deliberate: a shuffle that consumed rolls unconditionally would
+   * shift the whole seeded sequence for the other seven bosses and silently
+   * invalidate every measurement ever taken against a seed.
+   */
+  feedOrder: string[]
   ambientTimerMs: number
   /** Screen-shake impulse, purely cosmetic. */
   shake: number
@@ -1466,8 +1515,13 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string, side:
   // drill's own boss no longer lists.
   w.timelineNextMs = []
   // A fish the raid was already walking somewhere belongs to the pull that was
-  // abandoned, not to the drill that replaced it.
+  // abandoned, not to the drill that replaced it. The order they would have
+  // walked it in goes with it: the drill's boss declares no `feedPriority` at
+  // all — a drill of the fish IS the player's decision about where to take it —
+  // and an order left lying about would be the pull's answer to a question the
+  // drill deliberately does not ask.
   w.fishAlly = -1
+  w.feedOrder = []
   /**
    * Force the drilled mechanic's gates open.
    *
@@ -1513,6 +1567,37 @@ export function createDrill(boss: BossDef, role: Role, mechanicId: string, side:
     }
   }
   return w
+}
+
+/**
+ * Which mouth the raid offers a fish to first, THIS pull.
+ *
+ * `boss.feedPriority` read strictly in order made one body last on every pull
+ * anybody had ever played — Nama, on the Lost Explorers — so Mighty Thud was
+ * always the empowerment the pull ran out of time for and a session could not
+ * practise it however many pulls it spent. The list is which mouths exist; which
+ * one comes first is not a claim the fight is entitled to make.
+ *
+ * Fisher-Yates out of `rnd()`, which is the SAME seeded stream as every spawn
+ * roll on the field. That is the point rather than a convenience: a playtest
+ * that cannot reproduce a pull is not a measurement, so a fixed seed has to give
+ * a fixed order, and the only way to guarantee that is to draw from the one
+ * stream `seedRng` fixes.
+ *
+ * A fight with no `feedPriority`, or a one-entry one, draws NOTHING — the loop
+ * body never runs. Seven of the eight bosses are in that position and their
+ * seeded sequences are untouched by this existing, which is the difference
+ * between adding a feature and re-rolling the whole tier's measurements.
+ */
+function feedOrderFor(boss: BossDef): string[] {
+  const order = [...(boss.feedPriority ?? [])]
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1))
+    const t = order[i]
+    order[i] = order[j]
+    order[j] = t
+  }
+  return order
 }
 
 export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): World {
@@ -1564,6 +1649,12 @@ export function createWorld(boss: BossDef, role: Role, side: Side = 'green'): Wo
     // Every entry armed for its own `startSec`. A timeline states its first cast
     // outright, so there is nothing to stage and nothing to unlock.
     timelineNextMs: (boss.timeline ?? []).map(t => t.startSec * 1000),
+    lastCastMs: {},
+    gateOpen: {},
+    gatePending: [],
+    // Rolled here, once, so the whole pull agrees about it: the raid's errand,
+    // the prompt and the debrief all read one order rather than three.
+    feedOrder: feedOrderFor(boss),
     ambientTimerMs: 0,
     shake: 0,
     playerStacks: 0,
@@ -2705,6 +2796,178 @@ function spawn(w: World, def: MechanicDef, at?: Vec, angle?: number) {
   }
 }
 
+/**
+ * Is this mechanic's state gate open right now?
+ *
+ * The three conditions that decide whether a cast happens at all, in one place
+ * so the scheduler can ASK the question instead of firing and finding out. That
+ * was the shape of the old defect: `fire()` returned silently on a shut gate, so
+ * the only way the rotation could learn a beat had produced nothing was after it
+ * had already spent it, and the beat was gone.
+ *
+ * Deliberately about state and NOT about the player. `def_scored` — whose side
+ * this belongs to, whose role it lands on — is a different question with a
+ * different answer, and folding it in here would let the rotation skip a
+ * mechanic for being somebody else's job. A mechanic you are not scored on still
+ * fires and still renders; that is the whole reason a trainer shows you the rest
+ * of the fight.
+ */
+export function canFire(w: World, def: MechanicDef): boolean {
+  // A corpse casts nothing — scoped, as the block in `fire` explains at length,
+  // to fights that declare `unlockedByDeathOf` at all.
+  if (def.from && w.boss.mechanics.some(m => m.unlockedByDeathOf?.length)
+      && !bossUnitFor(w, def.from).alive) return false
+  if (def.empoweredOnly && !w.bosses.some(b => b.def.id === def.empoweredOnly && b.empowered)) return false
+  if (def.unlockedByDeathOf && !def.unlockedByDeathOf.some(e => e in w.deadEntities)) return false
+  return true
+}
+
+/**
+ * Does this mechanic wait on a state the pull has to REACH?
+ *
+ * `empoweredOnly` and `unlockedByDeathOf` only. The dead-caster gate in
+ * `canFire` is deliberately not one of these: it is a gate that shuts and never
+ * opens, so it has no opening to be prompt about and nothing to be starved of —
+ * a mechanic whose caster is dead is not waiting its turn, it is over.
+ */
+function isGated(def: MechanicDef): boolean {
+  return !!def.empoweredOnly || !!def.unlockedByDeathOf?.length
+}
+
+/**
+ * Note every gate that has opened since the rotation last looked, and hand back
+ * the oldest one still owed a beat.
+ *
+ * Scanning only the INTRODUCED stretch of the loop, because staging is a promise
+ * the trainer makes about what it will show you and when — see `unlockedCount`.
+ * An appointment that jumped a mechanic in ahead of its own introduction would
+ * be the rotation quietly breaking that promise on a technicality.
+ *
+ * Sampled at the beat rather than every tick on purpose. The gates it watches
+ * are permanent once open, so a beat is early enough to catch every transition,
+ * and a fight with no gated entries walks a short list and writes nothing.
+ */
+function takeOpenedGate(w: World, loop: string[], live: number): string | null {
+  for (let i = 0; i < live; i++) {
+    const id = loop[i]
+    const def = w.boss.mechanics.find(m => m.id === id)
+    if (!def || !isGated(def)) continue
+    const open = canFire(w, def)
+    if (open && !w.gateOpen[id]) w.gatePending.push(id)
+    w.gateOpen[id] = open
+  }
+  // A gate that shut again between the opening and this beat has nothing to say,
+  // and its appointment is dropped rather than held: the mechanic behind it
+  // cannot be cast, so honouring it would spend the beat on silence — which is
+  // the exact thing this machinery exists to stop doing.
+  while (w.gatePending.length) {
+    const id = w.gatePending.shift()!
+    const def = w.boss.mechanics.find(m => m.id === id)
+    if (def && canFire(w, def)) return id
+  }
+  return null
+}
+
+/**
+ * How often the array itself asks for an id, in ms.
+ *
+ * An id appearing k times in a loop of n at interval T comes round every
+ * n·T/k — which is not a derived curiosity, it is the ONLY statement a
+ * round-robin makes about how often a mechanic should happen. Reading it back
+ * out gives the starvation rule below a ceiling that came from the fight rather
+ * than from a number somebody picked, and it is why that rule cannot turn into a
+ * density knob: nothing it does can make a mechanic arrive more often than its
+ * own author asked for.
+ *
+ * Measured over the WHOLE loop rather than the introduced stretch. Staging is a
+ * statement about what you have met so far; the cadence is a statement about the
+ * fight, and reading it off a half-open window would say Frostfire Volley is due
+ * every eleven seconds for the first minute of every pull.
+ */
+function designedGapMs(w: World, loop: string[], id: string): number {
+  let n = 0
+  for (const e of loop) if (e === id) n++
+  return n ? (loop.length / n) * activeInterval(w) * 1000 : Infinity
+}
+
+/**
+ * The open gate that is most overdue by its own schedule.
+ *
+ * What a beat is spent on when the rotation lands on a gate that is still shut.
+ * That beat produced nothing at all before this existed, so nothing here adds a
+ * cast the fight did not already call for — it converts a silence into one of
+ * them — which is why it is safe to apply to every fight rather than to a chosen
+ * one. On the seven bosses with no gated entries no beat is ever silent and this
+ * is never reached.
+ *
+ * OVERDUE, not merely hungriest, and the difference is the whole safety of the
+ * rule. Half the Lost Explorers' array is gated, so "the hungriest open gate"
+ * hands a newly-empowered ability every other beat in the fight — measured, that
+ * was Frostfire Volley every eleven seconds against an authored thirty-three,
+ * and all three competent cells died to raid damage inside seventy seconds. A
+ * beat is only converted for a mechanic the array's own cadence says is already
+ * late, so the ceiling on how often anything can arrive is unchanged and what
+ * this recovers is strictly the gap between "late" and "not until next rotation".
+ *
+ * Restricted to GATED entries, and that restriction is the argument for the rule
+ * rather than a detail of it. The claim being made is narrow: an ability the
+ * player has just PAID for should not be the thing the fight goes quiet about.
+ * Substituting an ordinary entry instead would be a different and much larger
+ * claim — that the rotation should always be full — which is a re-tune of every
+ * fight's density and is not this change.
+ *
+ * Never cast at all reads as infinitely overdue. Ties break on position in the
+ * loop, which is what keeps a seeded pull reproducible.
+ */
+function starvedGate(w: World, loop: string[], live: number): string | null {
+  let best: string | null = null
+  let worst = 0
+  for (let i = 0; i < live; i++) {
+    const id = loop[i]
+    if (id === best) continue
+    const def = w.boss.mechanics.find(m => m.id === id)
+    if (!def || !isGated(def) || !canFire(w, def)) continue
+    const last = w.lastCastMs[id]
+    const since = last === undefined ? Infinity : w.elapsedMs - last
+    if (since <= designedGapMs(w, loop, id)) continue
+    if (since > worst) { worst = since; best = id }
+  }
+  return best
+}
+
+/**
+ * Which mechanic this beat of the rotation casts, or null for a beat with
+ * genuinely nothing to say.
+ *
+ * The three rules of `BossDef.loop`, in the order they take precedence, and the
+ * only place `loopIndex` moves on a non-scripted fight:
+ *
+ *   1. a gate that has just opened takes the beat and the index does NOT move,
+ *      so the appointment is INSERTED and nothing in the array is skipped;
+ *   2. otherwise the ordinary turn, index advanced, exactly as before;
+ *   3. and if that turn landed on a shut gate — a beat that would have been
+ *      silence — it goes to the hungriest open gate instead. The index has
+ *      already moved by then, because the slot WAS spent; it was simply spent
+ *      on something the player can use.
+ *
+ * A fight with no gated entries reaches step 2 and stops there on every beat,
+ * which is bit-for-bit the round-robin this replaced.
+ */
+function pickBeat(w: World): string | null {
+  const loop = activeLoop(w)
+  const live = unlockedCount(w)
+  if (!loop.length || live <= 0) return null
+
+  const promoted = takeOpenedGate(w, loop, live)
+  if (promoted) return promoted
+
+  const id = loop[w.loopIndex % live]
+  w.loopIndex++
+  const def = w.boss.mechanics.find(m => m.id === id)
+  if (def && canFire(w, def)) return id
+  return starvedGate(w, loop, live)
+}
+
 /** Fire a mechanic by id. Exported so bosses can chain mechanics. */
 export function fire(w: World, id: string, at?: Vec, angle?: number) {
   const def = w.boss.mechanics.find(m => m.id === id)
@@ -2738,13 +3001,21 @@ export function fire(w: World, id: string, at?: Vec, angle?: number) {
    * and the Sentinels, in that order. It is not a one-line change and it is not
    * this change.
    *
-   * A closed gate costs one beat of the rotation and nothing else, which is
-   * harmless: the loop simply arrives at the next entry a few seconds later.
+   * A closed gate USED to cost one beat of the rotation and nothing else, and
+   * that was recorded here as harmless. It was not. On a fight where half the
+   * array is gated it meant the rotation went quiet in exactly the stretch where
+   * the player had just bought an ability and wanted the reps, and it meant the
+   * ability itself waited for its own index to come round — see `BossDef.loop`
+   * for what that cost the Lost Explorers and for the two rules that replaced
+   * it. The gates themselves are unchanged and still live here, for the reason
+   * above: this is the one place all five ways of firing a mechanic go through.
    */
-  if (def.from && w.boss.mechanics.some(m => m.unlockedByDeathOf?.length)
-      && !bossUnitFor(w, def.from).alive) return
-  if (def.empoweredOnly && !w.bosses.some(b => b.def.id === def.empoweredOnly && b.empowered)) return
-  if (def.unlockedByDeathOf && !def.unlockedByDeathOf.some(e => e in w.deadEntities)) return
+  if (!canFire(w, def)) return
+
+  // What actually happened, for the starvation rule. After the gates on purpose:
+  // an attempt that a gate turned away is not a cast, and recording it as one
+  // would let a mechanic that has never once fired look freshly served.
+  w.lastCastMs[id] = w.elapsedMs
 
   // A mechanic that splits the raid in half hands the player the other half on
   // alternate casts. Hungering Pyre is the case: half the raid soaks it and the
@@ -4161,10 +4432,21 @@ function resolveInstance(w: World, inst: Instance) {
        * the other one — a single decision about a single destination, which is
        * what makes it a trade rather than a smear.
        *
-       * The pool is NOT consumed by the cleanse. A patch of frostfire on the
-       * floor does not know how many people have walked through it, and a cure
-       * that vanished on first use would make whoever got there second the loser
-       * of a race the fight never called.
+       * The pool IS consumed by the cleanse, and this dealing is what makes that
+       * safe. It used to be argued the other way — a patch of frostfire does not
+       * know how many people have walked through it, so a cure that vanished on
+       * first use would make whoever got there second the loser of a race. There
+       * is no second. Exactly two elements are dealt here, one of each, and
+       * exactly two patches are laid, one of each; a fire patch is the cure for
+       * frost and there is one frost carrier alive to want it. So each pool has
+       * precisely one customer, one pool is one cure, and what lingers after that
+       * customer has been served is not a spare — it is a cure on a floor where
+       * nothing left alive can use it.
+       *
+       * That guarantee lives HERE, in the dealing, and nowhere else. Deal two
+       * carriers of one element and the two of them race a single patch. If this
+       * block ever has to do that, it must lay a pool of the opposite ground per
+       * carrier in the same breath.
        */
       const poolFor = (el: 'fire' | 'frost') =>
         w.boss.mechanics.find(m => m.id === (el === 'fire' ? r.firePoolId : r.frostPoolId))
@@ -4547,15 +4829,19 @@ const FISH_FIRST_REFUSAL_MS = 6000
 /**
  * Which body the raid walks a refused fish into.
  *
- * The fight's own `feedPriority`, in order, skipping the dead, the untargetable
- * and anyone who has already eaten — an explorer can only be empowered once, and
- * offering a fish to one that has eaten is a rejected feed, which costs nothing
- * and achieves nothing. Falls through to any remaining mouth so a priority list
- * that has run out cannot strand the encounter's last fish.
+ * THIS PULL'S order — `World.feedOrder`, which is the fight's own
+ * `feedPriority` shuffled once out of the world seed — skipping the dead, the
+ * untargetable and anyone who has already eaten. An explorer can only be
+ * empowered once, and offering a fish to one that has eaten is a rejected feed,
+ * which costs nothing and achieves nothing. Falls through to any remaining mouth
+ * so a list that has run out cannot strand the encounter's last fish.
+ *
+ * Reading the shuffled order rather than the declared one is the whole of what
+ * stops a body being structurally last for ever — see `feedOrderFor`.
  */
 function feedTarget(w: World): BossUnit | null {
   const eligible = (b: BossUnit) => !b.def.untargetable && b.alive && !b.empowered
-  for (const id of w.boss.feedPriority ?? []) {
+  for (const id of w.feedOrder) {
     const u = w.bosses.find(b => b.def.id === id && eligible(b))
     if (u) return u
   }
@@ -7207,9 +7493,12 @@ export function upcoming(w: World, count = 3): { name: string; inSec: number }[]
   const shown = (id: string): MechanicDef | null => {
     const def = w.boss.mechanics.find(m => m.id === id)
     if (!def || !def_scored(w, def)) return null
+    // Stricter than `canFire` on one point, deliberately: a corpse's rotation is
+    // hidden from the STRIP on every fight, not only on the fights that reward a
+    // death. A countdown to a cast from a body that has fallen over is the one
+    // thing a strip must never show, whatever the engine would do with it.
     if (def.from && !bossUnitFor(w, def.from).alive) return null
-    if (def.empoweredOnly && !w.bosses.some(b => b.def.id === def.empoweredOnly && b.empowered)) return null
-    if (def.unlockedByDeathOf && !def.unlockedByDeathOf.some(e => e in w.deadEntities)) return null
+    if (!canFire(w, def)) return null
     return def
   }
 
@@ -8532,10 +8821,12 @@ export function step(w: World, input: Input, dtMs: number) {
       w.loopTimerMs += dtMs
       if (w.loopTimerMs >= activeInterval(w) * 1000) {
         w.loopTimerMs = 0
-        // Only what has been introduced so far — see unlockedCount().
-        const id = activeLoop(w)[w.loopIndex % unlockedCount(w)]
-        w.loopIndex++
-        fire(w, id)
+        // Only what has been introduced so far — see unlockedCount() — and the
+        // gate rules on top of it, which decide whether this beat belongs to the
+        // rotation's next entry or to an ability the player has just bought.
+        // See pickBeat(); it owns `loopIndex` for the whole non-scripted path.
+        const id = pickBeat(w)
+        if (id !== null) fire(w, id)
       }
     }
   }
@@ -8962,20 +9253,45 @@ export function step(w: World, input: Input, dtMs: number) {
       }
     }
 
-    // A patch of one element cures the other, and does absolutely nothing else.
-    // Beside the pickup test because both are "walk over it" behaviours and they
-    // belong together — but this one never hurts, never scores and never kills:
-    // it is the only thing on the floor of this fight that is purely good news.
+    /**
+     * A patch of one element cures the other, once, and is spent doing it.
+     *
+     * Beside the pickup test because that is now exactly what it is — a thing on
+     * the floor that one body walks over and takes — but this one never hurts,
+     * never scores and never kills. It is the only ground on this fight that is
+     * purely good news, and the only pickup in the raid that is not a race:
+     * every carrier's cure is a patch nobody else can use. See the `elementPool`
+     * rule for why consuming it cannot strand the other carrier, and for what a
+     * fight would have to change before that stopped being true.
+     *
+     * The player and the raid are cured by the same code, in one pass, and
+     * whoever arrives first spends it. Two branches with two rules would be the
+     * bot playing a different mechanic from the one the player is being taught.
+     */
     if (inst.def.rule.type === 'elementPool') {
       const el = inst.def.rule.element
       const rad = inst.def.shape?.kind === 'circle' ? inst.def.shape.radius : 5
-      if (w.player.element && w.player.element !== el && dist(inst.pos, w.player.pos) < rad) {
-        w.player.element = null
-        w.player.elementMs = 0
+      let cured = false
+      if (!inst.answered) {
+        if (w.player.element && w.player.element !== el && dist(inst.pos, w.player.pos) < rad) {
+          w.player.element = null
+          w.player.elementMs = 0
+          cured = true
+        }
+        for (const a of w.allies) {
+          if (cured) break
+          if (!a.alive || !a.element || a.element === el) continue
+          if (dist(inst.pos, a.pos) < rad) { a.element = null; a.elementMs = 0; cured = true }
+        }
       }
-      for (const a of w.allies) {
-        if (!a.alive || !a.element || a.element === el) continue
-        if (dist(inst.pos, a.pos) < rad) { a.element = null; a.elementMs = 0 }
+      if (cured) {
+        // Gone the instant it works, the way a mushroom and a globule are. The
+        // retire is the same one `popsOnContact` uses: `answered` so nothing
+        // reconsiders it this tick, and a timer far enough past its linger that
+        // the sweep at the bottom of the loop drops it rather than holding it
+        // for an impact flash it has no business drawing.
+        inst.answered = true
+        inst.timer = -1e9
       }
     }
 

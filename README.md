@@ -559,6 +559,19 @@ histogram peaking at 700–725 units/s against WoW's 7.00 yd/s base.
 Side rooms and entrance ramps are excluded from the radius: Vashnik has a
 corridor reaching ~105 yd, Sszorak has spurs reaching ~90 yd.
 
+**The edge is not the same thing in every room.** Six of these floors are
+platforms: the floor stops, and walking off it is the fall — the single biggest
+killer in the logs on Sszorak, and the thing Twin Fangs' Stone Breaker knock is
+built on. Two are not. Nek'zali's hall and Vashnik's three-lobed one are enclosed
+rooms, and the outline drawn round them is masonry: a body that walks into it —
+the player, an ally, a boss, an add — is stopped, and nothing else happens. No
+damage, no death, and nothing written into the debrief, because leaning on a wall
+is not a mistake. Boss files say which they are with `walled: true`, the renderer
+paints a walled rim in bone rather than the hot red it uses for a drop, and a room
+may not be both walled and `acid` — the sweep in `invariants.test.js` refuses it.
+What kills in those two rooms is in the middle of them: the Soulcoil Well and the
+Malignant Cavity, both `lethalGround`, and neither one touched by this.
+
 From PTR (July 2026) and unverified against live. Player positions are a lower
 bound on the room — they are where players actually went.
 

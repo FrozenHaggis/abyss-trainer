@@ -4176,3 +4176,90 @@ test('the feed order varies between pulls and is fixed by the seed', async () =>
       'fight and re-record its cells for no reason')
   }
 })
+
+// ── walls, on the two rooms that have them ───────────────────────────────────
+//
+// Tok'zali's hall and Vashnik's three-lobed one are enclosed rooms, not
+// platforms: the outline the renderer draws round them is masonry, and a body
+// that walks into it is stopped rather than killed. Every other room in the tier
+// is a platform and leaving it is still the fall — Twin Fangs' venom sea most of
+// all, where the whole Stone Breaker knock is built on the rim not catching you.
+//
+// The bug this closes: both walled rooms ran the platform's floor check, so a
+// player who backed into the wall of the room died of "Fell off the platform" —
+// on Tok'zali, at the exact rim the Restless Amani spawn on and the only floor a
+// Hungering Pyre can be carried to.
+
+test('a walled room stops a body at the wall instead of killing it', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES, inArena } = await engine()
+  const walled = BOSSES.filter(b => b.walled)
+  assert.equal(walled.length, 2,
+    "the walled rooms are no longer Tok'zali and Vashnik — this check has lost its subject")
+
+  for (const boss of walled) {
+    seedRng(11)
+    const w = createWorld(boss, 'dps', 'green')
+    // Outside by a mile, and on the tick before anything else can happen. This
+    // is the regression itself rather than a walk that approaches it: the old
+    // code killed on the first floor check that read false, whatever put the
+    // body there.
+    // The opening tick first: it is the one that puts the furniture on the floor
+    // and `safeSpot`s the player onto it, so a body placed before it is moved
+    // back by the pull starting rather than by anything this test is about.
+    step(w, IDLE(), TICK_MS)
+    w.player.pos.x = 0
+    w.player.pos.y = -boss.arenaRadius * 3
+    w.player.health = 1
+    step(w, IDLE(), TICK_MS)
+
+    assert.ok(w.player.alive,
+      `${boss.key}: the wall killed a player standing against it — "${w.deathCause}". ` +
+      'This room is a hall with masonry round it; the thing that kills is in the middle of it')
+    assert.ok(inArena(boss, w.player.pos),
+      `${boss.key}: a body outside the room was left outside it. A wall that does not put ` +
+      'you back on the floor is scenery, and every mechanic measured against the floor then ' +
+      'reads a position no player can actually be in')
+    assert.equal(w.failures.has('falling'), false,
+      `${boss.key}: touching the wall was written into the debrief as a failure. Nothing ` +
+      'happened — a raider leaning on a wall has made no mistake to be shown')
+
+    // And it holds. A clamp that fires once and then lets a held direction walk
+    // straight back out would pass the check above and fail the room.
+    // Outward, at the wall the clamp just put them against. Pressing the other
+    // way would walk them through the middle of the room, and the middle of both
+    // of these rooms is a hole that kills — a true death, and nothing to do with
+    // the wall.
+    const push = { ...IDLE(), up: true }
+    for (let i = 0; i < (6 * 1000) / TICK_MS; i++) {
+      w.player.health = 1
+      step(w, push, TICK_MS)
+      if (!w.player.alive) break
+    }
+    assert.ok(w.player.alive && inArena(boss, w.player.pos),
+      `${boss.key}: six seconds of walking into the wall got a body through it ` +
+      `(alive: ${w.player.alive}, cause: ${w.deathCause})`)
+  }
+})
+
+test('a platform still drops whoever walks off it', async () => {
+  const { createWorld, step, seedRng, TICK_MS, BOSSES } = await engine()
+  const platforms = BOSSES.filter(b => !b.walled)
+  assert.ok(platforms.length >= 5, 'most of this tier is meant to be platforms')
+
+  for (const boss of platforms) {
+    seedRng(11)
+    const w = createWorld(boss, 'dps', 'green')
+    step(w, IDLE(), TICK_MS)
+    w.player.pos.x = 0
+    w.player.pos.y = -boss.arenaRadius * 3
+    w.player.health = 1
+    step(w, IDLE(), TICK_MS)
+
+    assert.equal(w.player.alive, false,
+      `${boss.key}: a body off the floor survived. Falling is the single biggest killer in ` +
+      'the logs on this tier and the whole Stone Breaker knock is built on the rim not ' +
+      'catching you — a room that quietly grew walls deletes both')
+    assert.match(w.deathCause ?? '', /Fell (off|into)/,
+      `${boss.key}: died of "${w.deathCause}" rather than of the fall`)
+  }
+})

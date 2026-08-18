@@ -1177,3 +1177,29 @@ test('twinfangs: the room is exactly the room that was signed off', () => {
     'the Spawn of Vexhul no longer surface at (0, 19). Deeper or shallower and one of the ' +
     'three fans onto the lip of the pocket, where the raid can stand on top of it')
 })
+
+// A wall and a fall are the same test asked of the same polygon, and a room that
+// claims both cannot be reasoned about: `acid` says the outside of the floor is a
+// sea you drown in, `offPlatform` says a knock is allowed to finish out there, and
+// `walled` says there is no out there. Tok'zali's hall and Vashnik's are enclosed;
+// Twin Fangs is a platform in a venom sea, and every bound on its Stone Breaker is
+// measured on the rim NOT catching you.
+//
+// Source text rather than runtime, deliberately: this is a contradiction that has
+// to be impossible to author, not one to be caught on the pull where it bites.
+test('sweep: a walled room has nothing to be thrown into', () => {
+  let walled = 0
+  for (const key of BOSSES) {
+    const code = readFileSync(join('src/bosses', `${key}.ts`), 'utf8')
+    if (!code.includes('  walled: true,')) continue
+    walled++
+    assert.equal(code.includes('acid: true,'), false,
+      `${key} is walled AND floating in acid. The rim cannot both stop a body and drown it`)
+    assert.equal(code.includes('offPlatform: true'), false,
+      `${key} is walled and still throws somebody off the platform. There is no off — the ` +
+      'knock ends against the masonry, and the mechanic drills a dodge that does not exist')
+  }
+  assert.equal(walled, 2,
+    `${walled} walled rooms rather than 2. Tok'zali's hall and Vashnik's are the enclosed ` +
+    'ones; every other room in this tier is a platform and walking off it is the fall')
+})

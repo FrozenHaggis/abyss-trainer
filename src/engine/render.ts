@@ -978,10 +978,32 @@ export function render(ctx: CanvasRenderingContext2D, w: World, cam: Camera, wid
   pathArena(ctx, cam, w.boss)
   ctx.fillStyle = grad; ctx.fill()
 
-  // The edge is drawn hot because falling off it is the main way to die.
-  ctx.lineWidth = 3
-  ctx.strokeStyle = `rgba(${RED}, 0.55)`
-  ctx.stroke()
+  // The edge, and what it is painted depends on what it IS.
+  //
+  // Red is this file's word for "this kills you", and on six of these rooms the
+  // rim has earned it — the floor stops there and the fall is the biggest single
+  // killer in the logs. On the two walled halls it would be a lie, and an
+  // expensive one: a hot rim round Tok'zali's room reads as a hazard to be kept
+  // away from, and it is the exact opposite — the Amani walk in over it and a
+  // Hungering Pyre has to be carried to it.
+  //
+  // So a wall is drawn in bone, which is already this file's colour for a piece
+  // of the room rather than a thing out to get you, and it is drawn with a
+  // second dimmer band just inside it: two lines read as masonry with thickness,
+  // where one reads as an outline somebody forgot to colour in.
+  if (w.boss.walled) {
+    ctx.lineWidth = 5
+    ctx.strokeStyle = `rgba(${BONE}, 0.32)`
+    ctx.stroke()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = `rgba(${BONE}, 0.13)`
+    pathArena(ctx, cam, w.boss, 0.975)
+    ctx.stroke()
+  } else {
+    ctx.lineWidth = 3
+    ctx.strokeStyle = `rgba(${RED}, 0.55)`
+    ctx.stroke()
+  }
   ctx.lineWidth = 1
   ctx.strokeStyle = 'rgba(120, 220, 160, 0.10)'
   for (const r of [0.33, 0.66]) {

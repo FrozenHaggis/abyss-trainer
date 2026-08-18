@@ -619,3 +619,125 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .separation.hot, .phase-banner { animation: none; }
 }
+
+/* ───────────────────────────── tag barrel ─────────────────────────────
+   The boss picker. A WebGL drum carrying the raid's own creature models,
+   with the name plate and the setup notes printed underneath it.
+
+   Two layouts share this block, because the models are not in the repo and
+   the deployed build does not have them: `.barrel-stage` is the drum, and
+   `.barrel-fallback` is the old card grid wearing the same plate. Everything
+   from `.barrel-pips` down is common to both. */
+
+.barrel { display: flex; flex-direction: column; gap: 14px; }
+
+/* NO PANEL. The drum sits directly on the page — no border, no fill, no
+   rounded corners — so the body's own gradient runs through it and the barrel
+   reads as part of the interface rather than as a picture of one. The canvas is
+   drawn with `alpha: true` for the same reason.
+
+   Two consequences worth knowing. There is no `overflow: hidden` left to clip
+   anything, so a wide slot spilling sideways spills onto the page instead of
+   being cut off — which is why the loader caps a staged group's width. And the
+   scene's fog colour has to be the page's own darkest stop, because fog blends
+   towards a colour rather than towards transparency. */
+.barrel-stage {
+  position: relative;
+  height: min(54vh, 470px);
+}
+
+/* The drum is brighter than the page it now sits on, so without this its left
+   and right edges stop dead at the canvas boundary and the panel that was just
+   removed reappears as a hard seam. The mask fades the outer eighth of the
+   canvas and the last of its height to nothing, so the deck dissolves into the
+   background instead of ending. Sides only at the top — the bottom fade is
+   what stops the drum looking like it is resting on a shelf. */
+.barrel-canvas {
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, #000 12%, #000 88%, transparent),
+    linear-gradient(to bottom, #000 86%, transparent);
+  mask-image:
+    linear-gradient(to right, transparent, #000 12%, #000 88%, transparent),
+    linear-gradient(to bottom, #000 86%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* `touch-action: none` rather than a preventDefault in the rig: dragging the
+   drum on a phone must not also scroll the page behind it, and the browser
+   decides that before any pointer handler is consulted. */
+.barrel-canvas {
+  display: block; width: 100%; height: 100%;
+  cursor: grab; touch-action: none;
+}
+.barrel-canvas:active { cursor: grabbing; }
+
+.barrel-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 40px; height: 56px; cursor: pointer;
+  display: grid; place-items: center;
+  font-family: var(--font-display); font-size: 30px; line-height: 1;
+  color: var(--muted); background: rgba(10, 7, 20, .82);
+  border: 1px solid var(--line); border-radius: 10px;
+  backdrop-filter: blur(3px);
+  transition: color .15s, border-color .15s, background .15s;
+}
+.barrel-arrow:hover { color: var(--venom); border-color: var(--accent-line); background: var(--accent-soft); }
+.barrel-arrow.left { left: 12px; }
+.barrel-arrow.right { right: 12px; }
+
+.barrel-loading {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em;
+  color: var(--muted); background: rgba(10, 7, 20, .7);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px;
+}
+
+/* The grid is already a complete picker, so the fallback only has to stop it
+   stretching to the plate below and otherwise leaves `.card` alone. */
+.barrel-fallback { align-items: stretch; }
+
+.barrel-pips { display: flex; gap: 7px; justify-content: center; }
+.pip {
+  width: 26px; height: 5px; padding: 0; cursor: pointer;
+  border: none; border-radius: 3px;
+  background: rgba(255, 255, 255, .12);
+  transition: background .18s, box-shadow .18s;
+}
+.pip:hover { background: rgba(182, 255, 92, .45); }
+.pip.on { background: var(--venom); box-shadow: 0 0 10px rgba(182, 255, 92, .55); }
+
+.barrel-plate {
+  display: flex; gap: 22px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); padding: 16px 18px;
+}
+.barrel-id { flex: 1 1 300px; display: flex; flex-direction: column; gap: 5px; }
+.barrel-id h3 {
+  margin: 0; display: flex; align-items: center; gap: 9px;
+  font-family: var(--font-display); font-size: 24px; letter-spacing: .02em;
+  color: var(--venom); text-shadow: 0 0 14px rgba(182, 255, 92, .3);
+}
+.barrel-blurb { margin: 6px 0 0; color: var(--text); font-size: 14px; line-height: 1.55; }
+
+.barrel-setup { flex: 1 1 330px; }
+.barrel-setup h4 {
+  margin: 0 0 8px; font-family: var(--font-display); font-size: 12px;
+  text-transform: uppercase; letter-spacing: .12em; color: var(--muted);
+}
+.barrel-setup ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.barrel-setup li { display: flex; gap: 10px; align-items: baseline; font-size: 13px; line-height: 1.45; }
+/* Fixed column for the count so eight fights' worth of "2 tanks" / "40 yards
+   apart" line their reasons up instead of ragging down the middle. */
+.barrel-setup li strong {
+  flex: none; min-width: 116px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  color: var(--accent); letter-spacing: .02em;
+}
+.barrel-setup li span { color: var(--muted); }
+
+@media (max-width: 620px) {
+  .barrel-stage { height: 380px; }
+  .barrel-setup li { flex-direction: column; gap: 2px; }
+  .barrel-setup li strong { min-width: 0; }
+}

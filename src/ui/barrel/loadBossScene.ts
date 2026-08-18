@@ -3,7 +3,7 @@ import {
   Object3D, Vector3,
 } from 'three'
 import { M2Loader, M2Options, type SequenceManager } from 'three-m2loader'
-import { MODEL_ROOT } from './modelIndex'
+import { FILE_ROOT, type CreatureEntry, type ModelIndex } from './modelIndex'
 import { STAGING, type CreatureStaging } from './staging'
 
 /**
@@ -22,34 +22,6 @@ import { STAGING, type CreatureStaging } from './staging'
  * keeping the whole group the same visual weight as the single serpent in the
  * next slot along.
  */
-
-/** One creature's `model.json`, written by the fetch script. */
-export interface CreatureManifest {
-  id: string
-  name: string
-  npc: number
-  displayId: number
-  /** FileDataID of the .m2, and the basename it is stored under. */
-  model: number
-  skins: number[]
-  textures: number[]
-  /**
-   * Deferred texture slots, keyed by M2 texture-component type. 11, 12 and 13
-   * are the creature skin slots a model leaves blank for CreatureDisplayInfo to
-   * fill — which is how Breath and Blood of Ula'tek are one model in two
-   * colours, and Vexhul and Ithraz likewise. Missing them is fatal rather than
-   * ugly: the loader treats an unresolvable slot as an error and the model does
-   * not appear at all.
-   */
-  skinTextures: Record<string, number>
-  /** CreatureDisplayInfo's own scale. Recorded, deliberately not applied. */
-  scale: number
-}
-
-interface CreaturesFile {
-  key: string
-  creatures: { id: string; name: string; npc: number; displayId: number }[]
-}
 
 /**
  * How tall one creature is drawn, in world units, before the group is fitted.
@@ -243,17 +215,17 @@ function shade(root: Object3D, amount: number): void {
  * places a body rather than negotiating with a creature's own pivot — which on
  * these models sits anywhere from between the feet to the middle of a coil.
  */
-async function loadCreature(bossKey: string, staging: CreatureStaging): Promise<Group> {
-  const dir = `${MODEL_ROOT}${bossKey}/${staging.id}/`
-  const res = await fetch(`${dir}model.json`)
-  if (!res.ok) throw new Error(`no manifest for ${bossKey}/${staging.id}: ${res.status}`)
-  const manifest = await res.json() as CreatureManifest
-
-  const skins = manifest.skinTextures ?? {}
+async function loadCreature(entry: CreatureEntry, staging: CreatureStaging): Promise<Group> {
+  const skins = entry.skinTextures ?? {}
   const options = new M2Options().setSkin(
     skins['11'] ?? null, skins['12'] ?? null, skins['13'] ?? null)
 
-  const loaded = await new M2Loader().loadAsync(`${dir}${manifest.model}.m2`, undefined, options)
+  // Every binary lives in one flat directory named by FileDataID, which is what
+  // lets the two creatures behind a shared model share its files rather than
+  // each carrying a copy. The loader resolves skins and textures as siblings of
+  // the .m2, so a flat store is not just smaller, it is the only layout in
+  // which the sharing is possible at all.
+  const loaded = await new M2Loader().loadAsync(`${FILE_ROOT}${entry.model}.m2`, undefined, options)
 
   // Three nested objects, and each is doing a job the others cannot.
   //
@@ -278,8 +250,8 @@ async function loadCreature(bossKey: string, staging: CreatureStaging): Promise<
 
   const root = new Group()
   root.add(facing)
-  root.name = staging.id
-  root.userData.manifest = manifest
+  root.name = entry.id
+  root.userData.entry = entry
 
   // Posed onto the first frame of its idle BEFORE anything is measured or cut,
   // and that order is the whole reason the animation starts here rather than in
@@ -341,20 +313,21 @@ export interface BossScene {
  * than a slot can hold, which keeps a pair at the same visual weight as the
  * single boss beside them instead of twice it.
  */
-export async function loadBossScene(bossKey: string): Promise<BossScene> {
-  const res = await fetch(`${MODEL_ROOT}${bossKey}/creatures.json`)
-  if (!res.ok) throw new Error(`no creature list for ${bossKey}: ${res.status}`)
-  const listed = await res.json() as CreaturesFile
+export async function loadBossScene(bossKey: string, index: ModelIndex): Promise<BossScene> {
+  const listed = index.bosses.find(b => b.key === bossKey)
+  if (!listed) throw new Error(`no creatures indexed for ${bossKey}`)
 
   // Staging is optional. A boss with no entry stages whatever it downloaded,
   // which is the single-creature case and needs nobody to say so.
-  const cast = STAGING[bossKey] ?? listed.creatures.map(c => ({ id: c.id }))
+  const cast: CreatureStaging[] = STAGING[bossKey] ?? listed.creatures.map(c => ({ id: c.id }))
 
-  // Serial, because these are tens of megabytes each and running a slot's two
-  // creatures concurrently only makes them both arrive later.
+  // Serial, because these are megabytes each and running a slot's two creatures
+  // concurrently only makes them both arrive later.
   const bodies: { staging: CreatureStaging; root: Group }[] = []
   for (const staging of cast) {
-    bodies.push({ staging, root: await loadCreature(bossKey, staging) })
+    const entry = listed.creatures.find(c => c.id === staging.id)
+    if (!entry) throw new Error(`${bossKey} stages '${staging.id}', which was never downloaded`)
+    bodies.push({ staging, root: await loadCreature(entry, staging) })
   }
 
   const group = new Group()

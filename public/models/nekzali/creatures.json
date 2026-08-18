@@ -1,0 +1,11 @@
+{
+  "key": "nekzali",
+  "creatures": [
+    {
+      "id": "nekzali",
+      "name": "Nek'zali the Soulcoiler",
+      "npc": 253563,
+      "displayId": 137923
+    }
+  ]
+}

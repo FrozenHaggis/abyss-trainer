@@ -1,0 +1,55 @@
+{
+  "bosses": [
+    {
+      "key": "nekzali",
+      "creatures": [
+        "nekzali"
+      ]
+    },
+    {
+      "key": "sentinels",
+      "creatures": [
+        "breath",
+        "blood"
+      ]
+    },
+    {
+      "key": "vashnik",
+      "creatures": [
+        "vashnik"
+      ]
+    },
+    {
+      "key": "explorers",
+      "creatures": [
+        "nama"
+      ]
+    },
+    {
+      "key": "sszorak",
+      "creatures": [
+        "sszorak"
+      ]
+    },
+    {
+      "key": "twinfangs",
+      "creatures": [
+        "vexhul",
+        "ithraz"
+      ]
+    },
+    {
+      "key": "coiledaltar",
+      "creatures": [
+        "zuljan",
+        "malacrass"
+      ]
+    },
+    {
+      "key": "ulatek",
+      "creatures": [
+        "ulatek"
+      ]
+    }
+  ]
+}

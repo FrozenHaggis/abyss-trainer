@@ -1,0 +1,11 @@
+{
+  "key": "vashnik",
+  "creatures": [
+    {
+      "id": "vashnik",
+      "name": "Vashnik the Malignant",
+      "npc": 266403,
+      "displayId": 141675
+    }
+  ]
+}

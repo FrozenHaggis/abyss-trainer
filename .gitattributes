@@ -7,3 +7,13 @@
 *.json text eol=lf
 *.css text eol=lf
 *.md text eol=lf
+
+# The boss models. Marked binary explicitly rather than left to git's
+# content sniffing, for the same reason the rules above exist: this repository
+# has already been bitten once by an eol conversion silently rewriting a file it
+# should not have touched. A single CRLF inserted into an .m2 shifts every
+# offset in its header and the model simply fails to parse, with no error that
+# points anywhere near the cause.
+*.m2 binary
+*.skin binary
+*.blp binary

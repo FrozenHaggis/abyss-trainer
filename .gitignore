@@ -22,7 +22,7 @@ public/music/*.mp3
 nul.css
 nul
 
-# The boss models. ~120MB of Blizzard creature art pulled from Wowhead by
-# scripts/fetch-boss-models.mjs, which is how a fresh checkout gets it. Not in
-# the history and not in the Pages build; the picker falls back to its sigils.
-public/models/
+# The boss models are COMMITTED — see ATTRIBUTION.md. They are deliberately not
+# ignored here, because the deployed site cannot show the barrel without them:
+# Wowhead's CDN 403s any cross-origin browser request, so there is no way to
+# fetch them at runtime from the host they came from.

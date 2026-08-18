@@ -1,0 +1,17 @@
+{
+  "key": "coiledaltar",
+  "creatures": [
+    {
+      "id": "zuljan",
+      "name": "Zul'jan",
+      "npc": 257911,
+      "displayId": 142472
+    },
+    {
+      "id": "malacrass",
+      "name": "Hex Lord Malacrass",
+      "npc": 259854,
+      "displayId": 142140
+    }
+  ]
+}

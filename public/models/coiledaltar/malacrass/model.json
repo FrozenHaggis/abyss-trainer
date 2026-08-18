@@ -1,0 +1,22 @@
+{
+  "id": "malacrass",
+  "name": "Hex Lord Malacrass",
+  "npc": 259854,
+  "displayId": 142140,
+  "model": 7539964,
+  "skins": [
+    7580014,
+    7580018,
+    7580025,
+    7580028
+  ],
+  "textures": [
+    7542796,
+    7542794,
+    7579783,
+    7542795,
+    7579785
+  ],
+  "skinTextures": {},
+  "scale": 2.1
+}

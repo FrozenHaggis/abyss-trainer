@@ -1,0 +1,11 @@
+{
+  "key": "sszorak",
+  "creatures": [
+    {
+      "id": "sszorak",
+      "name": "Sszorak",
+      "npc": 257347,
+      "displayId": 142788
+    }
+  ]
+}

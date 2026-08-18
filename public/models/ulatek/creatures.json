@@ -1,0 +1,11 @@
+{
+  "key": "ulatek",
+  "creatures": [
+    {
+      "id": "ulatek",
+      "name": "Ula'tek",
+      "npc": 268956,
+      "displayId": 140369
+    }
+  ]
+}

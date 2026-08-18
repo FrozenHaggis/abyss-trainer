@@ -53,6 +53,13 @@ export const nekzali: BossDef = {
   // Measured from PTR combat logs, not guessed: Circle (CV 10.0%, corner/axis 0.93). 125,871 samples over 27 pulls.
   // 1 yard = 100 coordinate units.
   arenaRadius: 46,
+  // And the rim of it is a wall, not a drop. This is a hall with the well sunk
+  // into the floor of it — the killer here is in the MIDDLE of the room, and the
+  // outside is where the Restless Amani walk in from and where a Hungering Pyre
+  // gets carried to. A trainer that killed a player for backing into the far
+  // wall would be teaching them to fear the one direction this fight keeps
+  // asking them to run in.
+  walled: true,
 
   // Two adds, and they are two completely different jobs.
   //

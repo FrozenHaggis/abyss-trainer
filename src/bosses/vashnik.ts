@@ -82,6 +82,14 @@ export const vashnik: BossDef = {
   // Measured from PTR combat logs, not guessed: Circle (CV 12.1%). A corridor at 120-180 deg reaches ~105yd and is excluded.
   // 1 yard = 100 coordinate units. Kept as the bounding radius of the polygon below.
   arenaRadius: 58,
+  // The outside of the polygon below is masonry, not a ledge. Same shape as
+  // Tok'zali's room in the only way that matters: what kills is the Cavity in
+  // the middle, and the walkable floor is the ring around it. Walking into the
+  // outer wall of a lobe stops you and does nothing else — which the tank in
+  // particular needs, because walking Vashnik out to a fresh pair of fountains
+  // is a walk towards the outer corners, and it is the one job in this raid
+  // where a player is asked to keep moving outward under pressure.
+  walled: true,
 
   // The three-lobed hall, roughly 115 yards tip to tip inside that 58yd bound.
   //

@@ -1937,6 +1937,32 @@ export function clampToArena(boss: BossDef, p: Vec, inset = 0): Vec {
 }
 
 /**
+ * How far inside the wall a body it has stopped ends up standing.
+ *
+ * Not zero, and for two reasons. A point sitting exactly on a polygon edge is a
+ * coin flip for `inArena`'s ray cast, so a body parked precisely on the line
+ * would flicker in and out of the room; and a body clamped to the line every
+ * tick reads as glued to it rather than as leaning on it. Half a yard is under
+ * the width of the marker that draws it, so it costs the player nothing they can
+ * see and buys a floor test that always agrees with itself.
+ */
+const WALL_INSET = 0.5
+
+/**
+ * The wall version of the floor check: the same point when it is in the room,
+ * and the nearest point just inside the wall when it is not.
+ *
+ * This is the whole of what `walled` means. Everywhere else in this file a body
+ * that leaves the polygon has fallen and the fight is over for it; in a room
+ * with masonry round the outside it has walked into a wall, which stops it and
+ * does nothing else. No damage, no failure, no death text — a raider leaning on
+ * the wall of Tok'zali's hall slides along it, exactly as they do in the game.
+ */
+export function blockAtWall(boss: BossDef, p: Vec): Vec {
+  return inArena(boss, p) ? { ...p } : clampToArena(boss, p, WALL_INSET)
+}
+
+/**
  * Where the rim is in a given direction — where `edge` mechanics telegraph and
  * where adds walk in from. On an octagon that distance depends on the bearing,
  * which is the whole reason the polygon exists.
@@ -4012,7 +4038,15 @@ function resolveInstance(w: World, inst: Instance) {
         armLeashGrace(w, TANK_LEASH_KNOCK_MS)
         if (inside) {
           const landing = knockLanding(w.player.pos, inst.pos, push)
-          if (!inArena(w.boss, landing)) {
+          if (w.boss.walled) {
+            // A room with walls takes the push and nobody is blamed for it. Not
+            // scored, deliberately: the failure this records everywhere else is
+            // "you stood where the knock could not be survived", and in a hall
+            // with masonry round the outside there is no such square of floor.
+            const held = blockAtWall(w.boss, landing)
+            landing.x = held.x
+            landing.y = held.y
+          } else if (!inArena(w.boss, landing)) {
             if (scored) recordFailure(w, def)
             if (def.offPlatform) {
               // The rim does not catch you. Deliberately no `killPlayer` here —
@@ -4075,7 +4109,11 @@ function resolveInstance(w: World, inst: Instance) {
         for (const a of w.allies) {
           if (!a.alive || !isInside(inst, a.pos)) continue
           const at = knockLanding(a.pos, inst.pos, push)
-          if (!inArena(w.boss, at)) {
+          if (w.boss.walled) {
+            const held = blockAtWall(w.boss, at)
+            at.x = held.x
+            at.y = held.y
+          } else if (!inArena(w.boss, at)) {
             if (def.offPlatform) {
               a.alive = false
               a.health = 0
@@ -4379,7 +4417,15 @@ function resolveInstance(w: World, inst: Instance) {
           const v = COMPASS[a.wind]
           a.pos.x += v.x * push
           a.pos.y += v.y * push
-          if (!inArena(w.boss, a.pos)) {
+          if (w.boss.walled) {
+            // Never Sszorak, whose room is a platform — but a wall that stopped
+            // the player and let the raid blow through it would be a wall in
+            // name only, and this is the one other place a body is moved without
+            // being asked whether it may go there.
+            const held = blockAtWall(w.boss, a.pos)
+            a.pos.x = held.x
+            a.pos.y = held.y
+          } else if (!inArena(w.boss, a.pos)) {
             a.alive = false
             a.health = 0
             w.alliesLost++
@@ -6526,6 +6572,15 @@ function allyMove(w: World, dt: number) {
       a.pos.x += (dx / d) * stepLen
       a.pos.y += (dy / d) * stepLen
     }
+    // And they stop at the wall the same way the player does. A room that
+    // contains the player and leaks the raid through the masonry is not a room,
+    // and the AI's destinations are only mostly clamped — a station picked a
+    // fraction past the edge is a body standing outside the building.
+    if (w.boss.walled) {
+      const held = blockAtWall(w.boss, a.pos)
+      a.pos.x = held.x
+      a.pos.y = held.y
+    }
     if (a.debuffMs > 0) {
       a.debuffMs -= dt * 1000
       if (a.debuffMs <= 0) { a.debuff = null; a.debuffMs = 0 }
@@ -6866,7 +6921,7 @@ function computePrompt(w: World): Prompt | null {
         // brace stands still, and standing still is how 46% of this floor kills
         // you. Where the push cannot be survived from, the prompt has to be a
         // move order and it has to say which way.
-        if (inside && def.offPlatform
+        if (inside && def.offPlatform && !w.boss.walled
             && !inArena(w.boss, knockLanding(w.player.pos, inst.pos, def.knockbackYards ?? 0))) {
           consider({ verb: 'MOVE IN — IT THROWS YOU OFF', mechanic: def.name, urgency: t }, 4)
         } else if (inside) {
@@ -7946,7 +8001,22 @@ export function step(w: World, input: Input, dtMs: number) {
   // pocket is the second kind and it kills exactly like the rim does — there is
   // no shallow end, and a raider who walks into the pocket chasing a globule is
   // as dead as one blown off the mouth of the platform.
-  if (!inArena(w.boss, w.player.pos)) {
+  //
+  // Unless the room has walls. Two of the eight are enclosed halls rather than
+  // platforms, and there the same test means the opposite thing: the body is put
+  // back against the masonry and the tick carries on. Nothing is recorded,
+  // because nothing happened — walking into a wall is not a mistake, and a
+  // debrief that listed it as one would teach a raider to stay off the rim of a
+  // room whose rim is where half its work happens.
+  //
+  // It runs where the fall check ran, AFTER the walk and after the knock, so a
+  // player leaning on the wall slides along it and a player thrown at it stops
+  // against it. Both are one clamp.
+  if (w.boss.walled) {
+    const held = blockAtWall(w.boss, w.player.pos)
+    w.player.pos.x = held.x
+    w.player.pos.y = held.y
+  } else if (!inArena(w.boss, w.player.pos)) {
     w.player.alive = false
     w.player.health = 0
     w.deathCause = w.boss.acid ? 'Fell into the acid' : 'Fell off the platform'

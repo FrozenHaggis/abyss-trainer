@@ -1627,6 +1627,30 @@ export interface BossDef {
   /** A non-circular floor. When absent the room is a circle of `arenaRadius`. */
   arena?: Arena
   /**
+   * The rim is a WALL rather than a drop. Walking into it stops you dead; it
+   * never kills you.
+   *
+   * Six of these rooms are platforms hanging in a void or floating in a sea of
+   * acid, and leaving the floor is the fall that ends the pull. Two are not:
+   * Tok'zali's hall and Vashnik's three-lobed one are enclosed rooms with
+   * masonry round the outside, and a raider who backs into it in the real fight
+   * is simply blocked. A trainer that killed them there would teach a fear of
+   * the edge the encounter does not reward — on Tok'zali the rim is where the
+   * Restless Amani spawn and where a Hungering Pyre is carried away to, so the
+   * outside of the room is somewhere you are MEANT to be.
+   *
+   * What it changes is uniform, because a wall does not take sides: every body
+   * — the player, the nineteen allies, the bosses and their adds — is held on
+   * the floor instead of dying off it, and a knock that would have thrown
+   * somebody clear ends against the wall and is nobody's failure.
+   *
+   * What it does NOT change is what kills in these two rooms, which is what is
+   * INSIDE them: the Soulcoil Well and the Malignant Cavity are both
+   * `lethalGround` holes in the middle of the floor and neither is touched by
+   * this. The room contains you; the thing in the middle of it still does not.
+   */
+  walled?: boolean
+  /**
    * The floor is a platform in a sea of acid, and the renderer bubbles it.
    *
    * Placed off the arena shape rather than off a second list of coordinates:

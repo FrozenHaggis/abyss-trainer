@@ -85,16 +85,22 @@ Add any CC BY track you use to this file.
 ## Boss models
 
 The picker renders the raid's actual creature models. They are **Blizzard's art,
-used here without permission**, in the same knowingly-accepted-risk category as
-the music above — with one difference that matters: none of it is in this
-repository and none of it is deployed.
+committed to this repository and published on the deployed site**, without
+permission — the same knowingly-accepted risk as the music above, and a more
+conspicuous one, because it is 109MB of it rather than a single track.
 
-`scripts/fetch-boss-models.mjs` downloads about 110MB into `public/models/`,
-which `.gitignore` drops. A clone has no models until somebody runs the script
-on their own machine, the GitHub Pages build has none, and the picker falls back
-to its own drawn sigils when they are absent. So the only copy that ever exists
-is a local one, made by a person who already owns the game the files came out
-of.
+The alternative was considered and rejected on its merits rather than skipped.
+The models cannot be fetched at runtime from where they came from: Wowhead's CDN
+returns 403 to any request carrying an `Origin` header, so a browser on the
+deployed origin cannot read a byte of it. wago.tools does allow cross-origin
+reads, but it is a volunteer-run community service and aiming a public site at
+it for 109MB a visitor is not a reasonable use of somebody else's bandwidth.
+
+So the realistic outcome here is the same as the music: **a DMCA takedown of the
+site**, not damages. If that happens, deleting `public/models/` and restoring the
+`public/models/` line to `.gitignore` reverts it — the picker falls back to its
+own drawn sigils on its own, with no code change, because the fallback is a
+tested path rather than an assumption.
 
 Sources, both community mirrors of game data rather than rehosts of anything
 original:
@@ -106,8 +112,3 @@ original:
 
 The parser is [three-m2loader](https://github.com/Mugen87/three-m2loader) by
 Michael Herzog, MIT.
-
-**Do not commit `public/models/`.** If the barrel ever needs to work on the
-deployed site, that is a decision about publishing Blizzard art, not a
-convenience — and it should be taken deliberately rather than by a stray
-`git add -A`.

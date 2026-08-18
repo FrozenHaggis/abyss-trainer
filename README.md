@@ -57,16 +57,23 @@ npm run playtest   # headless balance check, 8 bosses x 3 roles
 ## Boss models
 
 The boss picker is a rotating barrel carrying the raid's real creature models,
-lit one at a time by a spotlight. **The art is not in this repository.** Get it
-with:
+lit one at a time by a spotlight.
+
+**The art is committed** — 109MB of it, under `public/models/` — so the deployed
+site shows the barrel rather than a fallback. That is a deliberate decision about
+publishing Blizzard's assets, taken with the risk understood; the reasoning and
+the risk are in [ATTRIBUTION.md](ATTRIBUTION.md). It is also why cloning this
+repository is not small.
+
+To re-download or update it:
 
 ```sh
-node scripts/fetch-boss-models.mjs   # ~110MB into public/models/, idempotent
+node scripts/fetch-boss-models.mjs   # ~109MB into public/models/, idempotent
 ```
 
-Without it the picker falls back to the card grid it has always had, which is
-what a fresh clone and the deployed site both see. Nothing else changes: both
-layouts pick the same boss and print the same notes.
+The picker still falls back to the card grid whenever the models are absent, so
+deleting `public/models/` locally costs nothing but the pictures — both layouts
+pick the same boss and print the same notes.
 
 **Where it comes from.** Wowhead's model-viewer CDN serves the `.m2` models and
 their `.skin` files; wago.tools serves the `.blp` textures, which Wowhead only
@@ -75,9 +82,12 @@ parsed in the browser by [three-m2loader](https://github.com/Mugen87/three-m2loa
 `three` is pinned to 0.159.0 because that loader depends on it directly and two
 copies of three.js in one scene do not work.
 
-**Why it is gitignored.** It is a hundred megabytes of Blizzard's creature art.
-It has no business in a git history, and the Pages build does not ship it — see
-[ATTRIBUTION.md](ATTRIBUTION.md).
+**Why it could not be fetched at runtime instead.** Wowhead's CDN returns 403 to
+any request carrying an `Origin` header, so a browser on the deployed origin
+cannot read from it at all. wago.tools does send `Access-Control-Allow-Origin`,
+but pointing a public site at a volunteer-run community service for 109MB a
+visitor is not a reasonable thing to do to somebody else's bandwidth. Shipping
+the files was the remaining option.
 
 **Who is on each slot.** `scripts/fetch-boss-models.mjs` decides which creatures
 an encounter downloads; `src/ui/barrel/staging.ts` decides where they stand.
@@ -620,8 +630,7 @@ Pushing to `main` builds and publishes to GitHub Pages via
 `.github/workflows/deploy.yml`. Enable it once under
 **Settings → Pages → Source → GitHub Actions**.
 
-The deployed site has **no boss models** — `public/models/` is gitignored, so CI
-never sees it and the picker serves its card fallback. That also keeps the main
-bundle honest: three.js and the M2 parser are behind a dynamic import that only
-fires once the models are found, so a visitor who will never use them does not
-download 570KB of renderer to be told so.
+The deployed site **includes the boss models**, so the published bundle is around
+110MB rather than 4MB. The renderer itself is still behind a dynamic import that
+only fires once the models are found, which keeps the first paint on the 428KB
+main bundle and means the card fallback stays cheap wherever the art is missing.

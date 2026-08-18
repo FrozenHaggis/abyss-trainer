@@ -81,3 +81,33 @@ For that specific energy — mid-tempo, driving, brass-and-guitar — search
 incompetech for "Hero" or OpenGameArt for "battle theme rock".
 
 Add any CC BY track you use to this file.
+
+## Boss models
+
+The picker renders the raid's actual creature models. They are **Blizzard's art,
+used here without permission**, in the same knowingly-accepted-risk category as
+the music above — with one difference that matters: none of it is in this
+repository and none of it is deployed.
+
+`scripts/fetch-boss-models.mjs` downloads about 110MB into `public/models/`,
+which `.gitignore` drops. A clone has no models until somebody runs the script
+on their own machine, the GitHub Pages build has none, and the picker falls back
+to its own drawn sigils when they are absent. So the only copy that ever exists
+is a local one, made by a person who already owns the game the files came out
+of.
+
+Sources, both community mirrors of game data rather than rehosts of anything
+original:
+
+| Source | What it serves |
+|---|---|
+| [Wowhead model viewer CDN](https://www.wowhead.com/) | `.m2` models, `.skin` files, and the CreatureDisplayInfo metadata that says which textures a creature wears |
+| [wago.tools](https://wago.tools/) | raw `.blp` textures by FileDataID |
+
+The parser is [three-m2loader](https://github.com/Mugen87/three-m2loader) by
+Michael Herzog, MIT.
+
+**Do not commit `public/models/`.** If the barrel ever needs to work on the
+deployed site, that is a decision about publishing Blizzard art, not a
+convenience — and it should be taken deliberately rather than by a stray
+`git add -A`.

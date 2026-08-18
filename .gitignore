@@ -21,3 +21,8 @@ public/music/*.mp3
 # name on Windows, so git cannot even index it and the commit fails outright.
 nul.css
 nul
+
+# The boss models. ~120MB of Blizzard creature art pulled from Wowhead by
+# scripts/fetch-boss-models.mjs, which is how a fresh checkout gets it. Not in
+# the history and not in the Pages build; the picker falls back to its sigils.
+public/models/

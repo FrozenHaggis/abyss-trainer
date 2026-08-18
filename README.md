@@ -54,6 +54,45 @@ npm test           # the honesty tests
 npm run playtest   # headless balance check, 8 bosses x 3 roles
 ```
 
+## Boss models
+
+The boss picker is a rotating barrel carrying the raid's real creature models,
+lit one at a time by a spotlight. **The art is not in this repository.** Get it
+with:
+
+```sh
+node scripts/fetch-boss-models.mjs   # ~110MB into public/models/, idempotent
+```
+
+Without it the picker falls back to the card grid it has always had, which is
+what a fresh clone and the deployed site both see. Nothing else changes: both
+layouts pick the same boss and print the same notes.
+
+**Where it comes from.** Wowhead's model-viewer CDN serves the `.m2` models and
+their `.skin` files; wago.tools serves the `.blp` textures, which Wowhead only
+publishes pre-transcoded. Everything is addressed by FileDataID, and the M2 is
+parsed in the browser by [three-m2loader](https://github.com/Mugen87/three-m2loader).
+`three` is pinned to 0.159.0 because that loader depends on it directly and two
+copies of three.js in one scene do not work.
+
+**Why it is gitignored.** It is a hundred megabytes of Blizzard's creature art.
+It has no business in a git history, and the Pages build does not ship it — see
+[ATTRIBUTION.md](ATTRIBUTION.md).
+
+**Who is on each slot.** `scripts/fetch-boss-models.mjs` decides which creatures
+an encounter downloads; `src/ui/barrel/staging.ts` decides where they stand.
+Four encounters stage two bodies — both Sentinel golems, both Twin Fangs, and
+Hex Lord Malacrass behind Zul'jan — and for those four the NPC ids are read out
+of the fight's own `entities` array, so the barrel and the sim cannot disagree
+about who is in the room. `test/barrel.test.js` fails if they drift.
+
+Two models need help the data cannot give them. Ula'tek's wings span two and a
+half times her height in a single 18,000-triangle mesh with no geoset to switch
+off, so `staging.ts` trims her to the five heads by discarding triangles more
+than nine units off her centre line. Malacrass's display is a bare troll body —
+his gear is item equipment composed at runtime from tables the loader cannot
+assemble — so he is staged in near-silhouette at the back.
+
 ## Music
 
 **One fixed track.** `public/music/boss-music.mp3` plays on every pull, ducks
@@ -580,3 +619,9 @@ bound on the room — they are where players actually went.
 Pushing to `main` builds and publishes to GitHub Pages via
 `.github/workflows/deploy.yml`. Enable it once under
 **Settings → Pages → Source → GitHub Actions**.
+
+The deployed site has **no boss models** — `public/models/` is gitignored, so CI
+never sees it and the picker serves its card fallback. That also keeps the main
+bundle honest: three.js and the M2 parser are behind a dynamic import that only
+fires once the models are found, so a visitor who will never use them does not
+download 570KB of renderer to be told so.

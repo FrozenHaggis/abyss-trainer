@@ -11,15 +11,18 @@
     "playtest": "esbuild src/engine/sim.ts --bundle --format=esm --outfile=.playtest/sim.mjs --log-level=error && esbuild src/bosses/registry.ts --bundle --format=esm --outfile=.playtest/registry.mjs --log-level=error && node test/playtest.mjs"
   },
   "dependencies": {
+    "@types/three": "^0.159.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "three": "^0.159.0",
+    "three-m2loader": "^5.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "esbuild": "^0.21.5",
     "typescript": "^5.5.4",
-    "vite": "^5.4.2",
-    "esbuild": "^0.21.5"
+    "vite": "^5.4.2"
   }
 }

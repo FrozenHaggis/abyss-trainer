@@ -5,7 +5,7 @@ import { BOSSES, drillableMechanics } from './bosses/registry'
 import Arena from './ui/Arena'
 import Debrief from './ui/Debrief'
 import RoleIcon from './ui/RoleIcon'
-import BossSigil from './ui/BossSigil'
+import BossBarrel from './ui/BossBarrel'
 
 type Screen =
   | { s: 'pick' }
@@ -94,21 +94,10 @@ export default function App() {
 
       <section className="pick">
         <h2>Boss</h2>
-        <div className="cards">
-          {BOSSES.map(b => (
-            <button
-              key={b.key}
-              className={`card${b.key === boss.key ? ' on' : ''}`}
-              onClick={() => setBoss(b)}
-            >
-              <span className="card-title with-icon">
-                <BossSigil bossKey={b.key} size={30} /> {b.name}
-              </span>
-              <span className="card-real">teaches {b.realName}</span>
-              <span className="card-sub">{b.blurb}</span>
-            </button>
-          ))}
-        </div>
+        {/* Eight bosses on a turning drum rather than eight cards in a row. It
+            falls back to the cards on its own when the models are not on disk,
+            which is every fresh clone and the deployed build — see BossBarrel. */}
+        <BossBarrel bosses={BOSSES} selected={boss} onSelect={setBoss} />
 
         <h2>Role</h2>
         <div className="cards">

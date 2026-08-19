@@ -1,9 +1,9 @@
 import {
-  AdditiveBlending, Box3, BufferAttribute, Group, Mesh, MeshBasicMaterial,
-  Object3D, Vector3,
+  AdditiveBlending, Box3, BufferAttribute, Color, Group, Mesh,
+  MeshBasicMaterial, MeshLambertMaterial, Object3D, SkinnedMesh, Vector3,
 } from 'three'
 import { M2Loader, M2Options, type SequenceManager } from 'three-m2loader'
-import { MODEL_ROOT } from './modelIndex'
+import { FILE_ROOT, type CreatureEntry, type ModelIndex } from './modelIndex'
 import { STAGING, type CreatureStaging } from './staging'
 
 /**
@@ -22,34 +22,6 @@ import { STAGING, type CreatureStaging } from './staging'
  * keeping the whole group the same visual weight as the single serpent in the
  * next slot along.
  */
-
-/** One creature's `model.json`, written by the fetch script. */
-export interface CreatureManifest {
-  id: string
-  name: string
-  npc: number
-  displayId: number
-  /** FileDataID of the .m2, and the basename it is stored under. */
-  model: number
-  skins: number[]
-  textures: number[]
-  /**
-   * Deferred texture slots, keyed by M2 texture-component type. 11, 12 and 13
-   * are the creature skin slots a model leaves blank for CreatureDisplayInfo to
-   * fill — which is how Breath and Blood of Ula'tek are one model in two
-   * colours, and Vexhul and Ithraz likewise. Missing them is fatal rather than
-   * ugly: the loader treats an unresolvable slot as an error and the model does
-   * not appear at all.
-   */
-  skinTextures: Record<string, number>
-  /** CreatureDisplayInfo's own scale. Recorded, deliberately not applied. */
-  scale: number
-}
-
-interface CreaturesFile {
-  key: string
-  creatures: { id: string; name: string; npc: number; displayId: number }[]
-}
 
 /**
  * How tall one creature is drawn, in world units, before the group is fitted.
@@ -116,16 +88,38 @@ const EFFECT_OPACITY = 0.35
  * light and should read that way, and on a dark stage that separation is what
  * makes the pair legible as two ranks rather than one crowd.
  *
- * It also covers for a limitation, and the number is set by that rather than by
- * the depth. Hex Lord Malacrass's display is a base troll body — his gear is
- * item equipment composed at runtime from tables this loader cannot assemble —
- * so at anything near full brightness he is a conspicuously undressed troll.
- * Taken almost to black he is a looming silhouette, which is both what the
- * encounter wants and what the model can actually deliver. Not all the way to
- * black: at zero he is a flat cut-out that reads as a rendering fault, and the
- * twelve per cent left is what lets the two rim lights find his edge.
+ * The number is set by what the slot is for. The boss in the beam is the thing
+ * being looked at, and a second body behind it at anything like full brightness
+ * competes with it — which is what a Hex Lord in a bright teal mask did. A tenth
+ * puts him behind the light rather than in it. Not zero: at zero he is a flat
+ * cut-out that reads as a rendering fault, and the tenth left is what lets the
+ * two rim lights find his edge and his mask catch a little of the beam.
  */
-const BACK_RANK_SHADE = 0.12
+const BACK_RANK_SHADE = 0.1
+
+/**
+ * How hard to burn a display's edge colour into the model that wears one.
+ *
+ * An approximation, and it is worth being clear which one. The game applies
+ * these as a fresnel — brightest where a surface turns away from the eye, which
+ * is what makes a spectral creature read as lit from within. This puts the
+ * colour on uniformly as emissive instead, because a fresnel wants a custom
+ * shader for a treatment two creatures in the raid carry.
+ *
+ * QUIET, and it has to be, because a uniform emissive is not a rim light. The
+ * value is linear, so it lands on screen far stronger than it reads — at 0.14
+ * Nek'zali stopped being tinted and became a flat turquoise cut-out with none of
+ * her own colour left, and at 0.4 Hex Lord Malacrass lost his purple and his
+ * olive entirely and rendered as a turquoise ghost. Neither creature is teal.
+ * They are ordinarily coloured things with teal ON them, and the only setting
+ * that keeps that true is one low enough to tint.
+ *
+ * There was briefly a second, much higher value for the back rank, on the
+ * grounds that a shaded body needs the glow to be visible at all. That was
+ * solving the wrong problem: a creature at the back is not supposed to be
+ * visible, it is supposed to be behind the one in the spotlight.
+ */
+const GLOW_EMISSIVE = 0.035
 
 /** The box a model actually draws in, with its skeleton in its current pose. */
 function posedBounds(root: Object3D): Box3 {
@@ -207,6 +201,54 @@ function trimToCentre(root: Object3D, halfWidth: number): void {
   })
 }
 
+/** Bytes in one M2Attachment: id, bone, pad, a C3Vector, and an animation track. */
+const M2_ATTACHMENT_SIZE = 40
+
+/**
+ * Where a model's attachment points are, as `id -> { bone, position }`.
+ *
+ * three-m2loader does not read these — it has no attachment support at all —
+ * so the header is walked here for the one array that matters. The offsets
+ * below are fixed-width fields in the MD20 header wrapped inside the MD21
+ * chunk, counted from the start of that header rather than of the file, which
+ * is why every read is `8 + n`.
+ *
+ * The M2 is fetched a second time and that is free: the loader has already
+ * pulled the same URL, so this is a cache hit rather than a download.
+ */
+async function readAttachments(url: string): Promise<Map<number, { bone: number; position: Vector3 }>> {
+  const out = new Map<number, { bone: number; position: Vector3 }>()
+  const res = await fetch(url)
+  if (!res.ok) return out
+  const view = new DataView(await res.arrayBuffer())
+
+  // 0xF0 is the attachments M2Array. Its offset is relative to the MD20 header.
+  const count = view.getUint32(8 + 0xF0, true)
+  const offset = view.getUint32(8 + 0xF4, true)
+  for (let i = 0; i < count; i++) {
+    const at = 8 + offset + i * M2_ATTACHMENT_SIZE
+    if (at + M2_ATTACHMENT_SIZE > view.byteLength) break
+    out.set(view.getUint32(at, true), {
+      bone: view.getUint16(at + 4, true),
+      position: new Vector3(
+        view.getFloat32(at + 8, true),
+        view.getFloat32(at + 12, true),
+        view.getFloat32(at + 16, true)),
+    })
+  }
+  return out
+}
+
+/** The model's bones, in M2 order, or null if it has no skeleton. */
+function bonesOf(root: Object3D) {
+  let bones: Object3D[] | null = null
+  root.traverse(node => {
+    const skinned = node as SkinnedMesh
+    if (!bones && skinned.isSkinnedMesh && skinned.skeleton) bones = skinned.skeleton.bones
+  })
+  return bones as Object3D[] | null
+}
+
 /** Walk every material on a model, whatever its mesh nesting. */
 function eachMaterial(root: Object3D, fn: (m: MeshBasicMaterial) => void): void {
   root.traverse(node => {
@@ -223,6 +265,21 @@ function dampenEffects(root: Object3D): void {
     if (m.blending !== AdditiveBlending) return
     m.transparent = true
     m.opacity *= EFFECT_OPACITY
+  })
+}
+
+/**
+ * Burn the display's edge colour into the model as emissive.
+ *
+ * Only the lit materials take it. The additive effect cards have no emissive
+ * channel and are already the colour they are meant to be.
+ */
+function applyGlow(root: Object3D, edge: [number, number, number], amount: number): void {
+  const colour = new Color(edge[0], edge[1], edge[2])
+  eachMaterial(root, m => {
+    const lit = m as unknown as MeshLambertMaterial
+    if (!lit.emissive) return
+    lit.emissive.copy(colour).multiplyScalar(amount)
   })
 }
 
@@ -243,17 +300,17 @@ function shade(root: Object3D, amount: number): void {
  * places a body rather than negotiating with a creature's own pivot — which on
  * these models sits anywhere from between the feet to the middle of a coil.
  */
-async function loadCreature(bossKey: string, staging: CreatureStaging): Promise<Group> {
-  const dir = `${MODEL_ROOT}${bossKey}/${staging.id}/`
-  const res = await fetch(`${dir}model.json`)
-  if (!res.ok) throw new Error(`no manifest for ${bossKey}/${staging.id}: ${res.status}`)
-  const manifest = await res.json() as CreatureManifest
-
-  const skins = manifest.skinTextures ?? {}
+async function loadCreature(entry: CreatureEntry, staging: CreatureStaging): Promise<Group> {
+  const skins = entry.skinTextures ?? {}
   const options = new M2Options().setSkin(
     skins['11'] ?? null, skins['12'] ?? null, skins['13'] ?? null)
 
-  const loaded = await new M2Loader().loadAsync(`${dir}${manifest.model}.m2`, undefined, options)
+  // Every binary lives in one flat directory named by FileDataID, which is what
+  // lets the two creatures behind a shared model share its files rather than
+  // each carrying a copy. The loader resolves skins and textures as siblings of
+  // the .m2, so a flat store is not just smaller, it is the only layout in
+  // which the sharing is possible at all.
+  const loaded = await new M2Loader().loadAsync(`${FILE_ROOT}${entry.model}.m2`, undefined, options)
 
   // Three nested objects, and each is doing a job the others cannot.
   //
@@ -278,8 +335,11 @@ async function loadCreature(bossKey: string, staging: CreatureStaging): Promise<
 
   const root = new Group()
   root.add(facing)
-  root.name = staging.id
-  root.userData.manifest = manifest
+  root.name = entry.id
+  root.userData.entry = entry
+
+  /** Managers belonging to attachment models rather than to the creature. */
+  const extraSequences: SequenceManager[] = []
 
   // Posed onto the first frame of its idle BEFORE anything is measured or cut,
   // and that order is the whole reason the animation starts here rather than in
@@ -301,8 +361,46 @@ async function loadCreature(bossKey: string, staging: CreatureStaging): Promise<
   root.userData.sequenceManager = sequences
   root.updateMatrixWorld(true)
 
+  // Anything the display bolts on, hung off the bone its attachment point names.
+  //
+  // Parented to the BONE rather than to the model, so the mask rides the head
+  // through the idle instead of hanging in the air where the head used to be.
+  // No axis fix and no yaw on the way in: a bone is already in the model's own
+  // space, so the attachment arrives in the same frame its offset is expressed
+  // in and needs no correction.
+  const attachments = entry.attachments ?? []
+  if (attachments.length > 0) {
+    const points = await readAttachments(`${FILE_ROOT}${entry.model}.m2`)
+    const bones = bonesOf(root)
+    for (const attachment of attachments) {
+      const hung = await new M2Loader().loadAsync(`${FILE_ROOT}${attachment.model}.m2`)
+      hung.scale.setScalar(attachment.scale)
+
+      // -1 means the effect has no attachment point and rides the model itself.
+      const point = attachment.attachmentId >= 0 ? points.get(attachment.attachmentId) : undefined
+      const parent = point && bones ? bones[point.bone] : undefined
+      if (parent && point) {
+        hung.position.copy(point.position)
+        parent.add(hung)
+      } else {
+        loaded.add(hung)
+      }
+
+      // Attachment models carry their own idles — a mask breathes with its
+      // wearer's crest — so their managers join the list the barrel ticks.
+      const seq = hung.userData.sequenceManager as SequenceManager | undefined
+      const first = seq?.listSequences?.()[0]
+      if (seq && first) {
+        seq.playSequence(first.id)
+        seq.update(0)
+        extraSequences.push(seq)
+      }
+    }
+  }
+
   if (staging.trimHalfWidth !== undefined) trimToCentre(root, staging.trimHalfWidth)
   dampenEffects(root)
+  if (entry.glow?.edge) applyGlow(root, entry.glow.edge, GLOW_EMISSIVE)
   if (staging.back !== undefined) shade(root, BACK_RANK_SHADE)
 
   const box = posedBounds(root)
@@ -321,6 +419,7 @@ async function loadCreature(bossKey: string, staging: CreatureStaging): Promise<
       -((box.min.z + box.max.z) / 2) * scale)
   }
 
+  root.userData.extraSequences = extraSequences
   return root
 }
 
@@ -341,20 +440,21 @@ export interface BossScene {
  * than a slot can hold, which keeps a pair at the same visual weight as the
  * single boss beside them instead of twice it.
  */
-export async function loadBossScene(bossKey: string): Promise<BossScene> {
-  const res = await fetch(`${MODEL_ROOT}${bossKey}/creatures.json`)
-  if (!res.ok) throw new Error(`no creature list for ${bossKey}: ${res.status}`)
-  const listed = await res.json() as CreaturesFile
+export async function loadBossScene(bossKey: string, index: ModelIndex): Promise<BossScene> {
+  const listed = index.bosses.find(b => b.key === bossKey)
+  if (!listed) throw new Error(`no creatures indexed for ${bossKey}`)
 
   // Staging is optional. A boss with no entry stages whatever it downloaded,
   // which is the single-creature case and needs nobody to say so.
-  const cast = STAGING[bossKey] ?? listed.creatures.map(c => ({ id: c.id }))
+  const cast: CreatureStaging[] = STAGING[bossKey] ?? listed.creatures.map(c => ({ id: c.id }))
 
-  // Serial, because these are tens of megabytes each and running a slot's two
-  // creatures concurrently only makes them both arrive later.
+  // Serial, because these are megabytes each and running a slot's two creatures
+  // concurrently only makes them both arrive later.
   const bodies: { staging: CreatureStaging; root: Group }[] = []
   for (const staging of cast) {
-    bodies.push({ staging, root: await loadCreature(bossKey, staging) })
+    const entry = listed.creatures.find(c => c.id === staging.id)
+    if (!entry) throw new Error(`${bossKey} stages '${staging.id}', which was never downloaded`)
+    bodies.push({ staging, root: await loadCreature(entry, staging) })
   }
 
   const group = new Group()
@@ -390,8 +490,9 @@ export async function loadBossScene(bossKey: string): Promise<BossScene> {
 
   return {
     group,
-    sequences: bodies
-      .map(b => b.root.userData.sequenceManager as SequenceManager | undefined)
-      .filter((s): s is SequenceManager => !!s),
+    sequences: bodies.flatMap(b => [
+      b.root.userData.sequenceManager as SequenceManager | undefined,
+      ...(b.root.userData.extraSequences as SequenceManager[] | undefined ?? []),
+    ]).filter((s): s is SequenceManager => !!s),
   }
 }

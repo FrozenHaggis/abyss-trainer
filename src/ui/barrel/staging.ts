@@ -70,6 +70,17 @@ export const STAGING: Record<string, CreatureStaging[]> = {
   // The Hex Lord looms behind the Soulcoiler rather than beside him. Nudged off
   // centre so he is not a silhouette directly behind a head, and left at full
   // height so the overlap reads as depth rather than as a smaller creature.
+  //
+  // He is also the reason the back rank is shaded as hard as it is, and the
+  // reason that is not a compromise. His display points at
+  // `creature/zandalaritroll2/zandalaritroll2.m2` — a GENERIC Zandalari troll
+  // body, shared with every other Zandalari in the game. The purple robes he
+  // actually wears are item equipment, composed at runtime from geosets and a
+  // baked component texture by a system this loader does not implement, and
+  // there is no Malacrass-specific model to fall back to: the CASC listfile has
+  // no `.m2` with his name on it at all, only voice lines. Lit, he is a
+  // recognisably undressed troll. In shadow he is a masked shape behind the
+  // boss, which is where a second body on a slot belongs anyway.
   coiledaltar: [
     { id: 'zuljan' },
     { id: 'malacrass', back: 0.85, x: 0.5 },

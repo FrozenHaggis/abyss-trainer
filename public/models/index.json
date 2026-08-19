@@ -1,0 +1,203 @@
+{
+  "bosses": [
+    {
+      "key": "nekzali",
+      "creatures": [
+        {
+          "id": "nekzali",
+          "name": "Nek'zali the Soulcoiler",
+          "npc": 253563,
+          "displayId": 137923,
+          "model": 7490191,
+          "skinTextures": {},
+          "scale": 1.5,
+          "attachments": [],
+          "glow": {
+            "edge": [
+              0,
+              0.7490196,
+              0.5058824
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "sentinels",
+      "creatures": [
+        {
+          "id": "breath",
+          "name": "Breath of Ula'tek",
+          "npc": 258557,
+          "displayId": 143437,
+          "model": 7491708,
+          "skinTextures": {
+            "11": 7648724,
+            "12": 7648726,
+            "13": 7648723
+          },
+          "scale": 1.5,
+          "attachments": [],
+          "glow": null
+        },
+        {
+          "id": "blood",
+          "name": "Blood of Ula'tek",
+          "npc": 258558,
+          "displayId": 143436,
+          "model": 7491708,
+          "skinTextures": {
+            "11": 7658832,
+            "12": 7658831,
+            "13": 7658833
+          },
+          "scale": 1.5,
+          "attachments": [],
+          "glow": null
+        }
+      ]
+    },
+    {
+      "key": "vashnik",
+      "creatures": [
+        {
+          "id": "vashnik",
+          "name": "Vashnik the Malignant",
+          "npc": 266403,
+          "displayId": 141675,
+          "model": 7377755,
+          "skinTextures": {},
+          "scale": 2.5,
+          "attachments": [],
+          "glow": null
+        }
+      ]
+    },
+    {
+      "key": "explorers",
+      "creatures": [
+        {
+          "id": "nama",
+          "name": "First Mate Nama",
+          "npc": 261835,
+          "displayId": 144893,
+          "model": 7531583,
+          "skinTextures": {
+            "11": 7552048,
+            "12": 7552044
+          },
+          "scale": 1.9,
+          "attachments": [],
+          "glow": null
+        }
+      ]
+    },
+    {
+      "key": "sszorak",
+      "creatures": [
+        {
+          "id": "sszorak",
+          "name": "Sszorak",
+          "npc": 257347,
+          "displayId": 142788,
+          "model": 7446905,
+          "skinTextures": {},
+          "scale": 1,
+          "attachments": [],
+          "glow": null
+        }
+      ]
+    },
+    {
+      "key": "twinfangs",
+      "creatures": [
+        {
+          "id": "vexhul",
+          "name": "Vexhul",
+          "npc": 257361,
+          "displayId": 140993,
+          "model": 7377851,
+          "skinTextures": {
+            "11": 7483945
+          },
+          "scale": 3,
+          "attachments": [],
+          "glow": null
+        },
+        {
+          "id": "ithraz",
+          "name": "Ithraz",
+          "npc": 257368,
+          "displayId": 141309,
+          "model": 7377851,
+          "skinTextures": {
+            "11": 7556500
+          },
+          "scale": 3,
+          "attachments": [],
+          "glow": null
+        }
+      ]
+    },
+    {
+      "key": "coiledaltar",
+      "creatures": [
+        {
+          "id": "zuljan",
+          "name": "Zul'jan",
+          "npc": 257911,
+          "displayId": 142472,
+          "model": 7274446,
+          "skinTextures": {},
+          "scale": 2.2,
+          "attachments": [],
+          "glow": null
+        },
+        {
+          "id": "malacrass",
+          "name": "Hex Lord Malacrass",
+          "npc": 259854,
+          "displayId": 142140,
+          "model": 7539964,
+          "skinTextures": {},
+          "scale": 2.1,
+          "attachments": [
+            {
+              "attachmentId": 17,
+              "model": 7667245,
+              "scale": 1
+            },
+            {
+              "attachmentId": -1,
+              "model": 7939164,
+              "scale": 1.5
+            }
+          ],
+          "glow": {
+            "edge": [
+              0.15686275,
+              0.7960785,
+              0.6901961
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ulatek",
+      "creatures": [
+        {
+          "id": "ulatek",
+          "name": "Ula'tek",
+          "npc": 268956,
+          "displayId": 140369,
+          "model": 7234130,
+          "skinTextures": {},
+          "scale": 1,
+          "attachments": [],
+          "glow": null
+        }
+      ]
+    }
+  ]
+}

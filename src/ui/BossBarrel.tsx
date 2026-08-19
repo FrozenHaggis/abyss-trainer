@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BossDef } from '../engine/types'
 import { suggestedSetup } from '../engine/setup'
 import type { BarrelRig } from './barrel/BarrelRig'
-import { loadModelIndex } from './barrel/modelIndex'
+import { loadModelIndex, type ModelIndex } from './barrel/modelIndex'
 import BossSigil from './BossSigil'
 
 /**
@@ -28,8 +28,15 @@ export default function BossBarrel({ bosses, selected, onSelect }: {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rigRef = useRef<BarrelRig | null>(null)
 
-  /** null while the index request is in flight, false when there is no art. */
-  const [hasModels, setHasModels] = useState<boolean | null>(null)
+  /**
+   * The raid's model index, or false once we know there is none. Null while the
+   * one request that decides it is still in flight.
+   *
+   * Held here rather than re-fetched by the rig because it is also the answer to
+   * "barrel or cards", and asking twice would mean the picker and the renderer
+   * could disagree about what exists.
+   */
+  const [models, setModels] = useState<ModelIndex | false | null>(null)
   /** Which bosses have finished loading, so the overlay can stop saying so. */
   const [ready, setReady] = useState<Set<string>>(new Set())
 
@@ -51,18 +58,19 @@ export default function BossBarrel({ bosses, selected, onSelect }: {
 
   useEffect(() => {
     let live = true
-    void loadModelIndex().then(keys => {
+    void loadModelIndex().then(index => {
       if (!live) return
       // Art for SOME bosses is not enough. A barrel with three creatures and
       // five loading shards on it is worse than the grid, and the shards never
       // resolve — so the barrel is all-or-nothing against the raid roster.
-      setHasModels(keys !== null && bosses.every(b => keys.has(b.key)))
+      const keys = new Set(index?.bosses.map(b => b.key) ?? [])
+      setModels(index !== null && bosses.every(b => keys.has(b.key)) ? index : false)
     })
     return () => { live = false }
   }, [bosses])
 
   useEffect(() => {
-    if (!hasModels || !canvasRef.current) return
+    if (!models || !canvasRef.current) return
     const canvas = canvasRef.current
     let rig: BarrelRig | null = null
     let live = true
@@ -80,6 +88,7 @@ export default function BossBarrel({ bosses, selected, onSelect }: {
       if (!live) return
       rig = new BarrelRig(canvas, {
         keys: bossesRef.current.map(b => b.key),
+        index: models,
         initial: indexRef.current,
         onSelect: i => selectRef.current(bossesRef.current[i]),
         onLoaded: (key, ok) => {
@@ -98,7 +107,7 @@ export default function BossBarrel({ bosses, selected, onSelect }: {
       rig?.dispose()
       rigRef.current = null
     }
-  }, [hasModels])
+  }, [models])
 
   // Keep the drum pointing at whatever App thinks is selected. Usually a no-op,
   // because the usual direction of travel is the other way — the barrel decides
@@ -131,11 +140,11 @@ export default function BossBarrel({ bosses, selected, onSelect }: {
   }, [step])
 
   const setup = suggestedSetup(selected)
-  const loading = hasModels === true && !ready.has(selected.key)
+  const loading = !!models && !ready.has(selected.key)
 
   return (
     <div className="barrel">
-      {hasModels
+      {models
         ? (
           <div className="barrel-stage">
             <canvas ref={canvasRef} className="barrel-canvas" />

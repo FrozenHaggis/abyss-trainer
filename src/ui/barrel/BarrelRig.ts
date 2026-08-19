@@ -6,6 +6,7 @@ import {
   Raycaster, Scene, SpotLight, Texture, Vector2, WebGLRenderer,
 } from 'three'
 import { loadBossScene } from './loadBossScene'
+import type { ModelIndex } from './modelIndex'
 
 /**
  * The tag barrel.
@@ -32,6 +33,8 @@ import { loadBossScene } from './loadBossScene'
 /** Slots, in raid order. The barrel is built from whatever it is handed. */
 export interface BarrelOptions {
   keys: string[]
+  /** The whole raid's model index, already fetched by the picker. */
+  index: ModelIndex
   /**
    * Which slot faces the player on the first frame, jumped to rather than
    * sprung to. Also where the download queue starts, which is the part that
@@ -93,6 +96,7 @@ export class BarrelRig {
   /** One entry per boss, in the order given. Index is the slot number. */
   private readonly slots: Slot[] = []
   private readonly keys: string[]
+  private readonly index: ModelIndex
   private readonly onSelect: (index: number) => void
   private readonly onLoaded?: (key: string, ok: boolean) => void
 
@@ -123,6 +127,7 @@ export class BarrelRig {
 
   constructor(private readonly canvas: HTMLCanvasElement, opts: BarrelOptions) {
     this.keys = opts.keys
+    this.index = opts.index
     this.onSelect = opts.onSelect
     this.onLoaded = opts.onLoaded
 
@@ -476,7 +481,7 @@ export class BarrelRig {
       if (this.disposed) return
       const key = this.keys[i]
       try {
-        const scene = await loadBossScene(key)
+        const scene = await loadBossScene(key, this.index)
         if (this.disposed) return
         this.attach(this.slots[i], scene)
         this.onLoaded?.(key, true)

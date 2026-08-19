@@ -39,6 +39,21 @@ export interface CreatureEntry {
   skinTextures: Record<string, number>
   /** CreatureDisplayInfo's own scale. Recorded, deliberately not applied. */
   scale: number
+  /**
+   * Models the DISPLAY hangs on the creature, which are not in its own model.
+   *
+   * `attachmentId` is an M2 attachment point — 17 is the face — and -1 means
+   * the model root. Hex Lord Malacrass's mask is one of these; without them he
+   * renders as a bare troll body, because that is what his model is.
+   */
+  attachments: { attachmentId: number; model: number; scale: number }[]
+  /**
+   * The display's colour treatment, as linear RGB in 0..1, or null.
+   *
+   * Malacrass's teal is here rather than in any texture, so a renderer that
+   * ignores it draws the right shape in the wrong colour.
+   */
+  glow: { edge: [number, number, number] } | null
 }
 
 export interface ModelIndex {

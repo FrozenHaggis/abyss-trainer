@@ -10,7 +10,15 @@
           "displayId": 137923,
           "model": 7490191,
           "skinTextures": {},
-          "scale": 1.5
+          "scale": 1.5,
+          "attachments": [],
+          "glow": {
+            "edge": [
+              0,
+              0.7490196,
+              0.5058824
+            ]
+          }
         }
       ]
     },
@@ -28,7 +36,9 @@
             "12": 7648726,
             "13": 7648723
           },
-          "scale": 1.5
+          "scale": 1.5,
+          "attachments": [],
+          "glow": null
         },
         {
           "id": "blood",
@@ -41,7 +51,9 @@
             "12": 7658831,
             "13": 7658833
           },
-          "scale": 1.5
+          "scale": 1.5,
+          "attachments": [],
+          "glow": null
         }
       ]
     },
@@ -55,7 +67,9 @@
           "displayId": 141675,
           "model": 7377755,
           "skinTextures": {},
-          "scale": 2.5
+          "scale": 2.5,
+          "attachments": [],
+          "glow": null
         }
       ]
     },
@@ -72,7 +86,9 @@
             "11": 7552048,
             "12": 7552044
           },
-          "scale": 1.9
+          "scale": 1.9,
+          "attachments": [],
+          "glow": null
         }
       ]
     },
@@ -86,7 +102,9 @@
           "displayId": 142788,
           "model": 7446905,
           "skinTextures": {},
-          "scale": 1
+          "scale": 1,
+          "attachments": [],
+          "glow": null
         }
       ]
     },
@@ -102,7 +120,9 @@
           "skinTextures": {
             "11": 7483945
           },
-          "scale": 3
+          "scale": 3,
+          "attachments": [],
+          "glow": null
         },
         {
           "id": "ithraz",
@@ -113,7 +133,9 @@
           "skinTextures": {
             "11": 7556500
           },
-          "scale": 3
+          "scale": 3,
+          "attachments": [],
+          "glow": null
         }
       ]
     },
@@ -127,7 +149,9 @@
           "displayId": 142472,
           "model": 7274446,
           "skinTextures": {},
-          "scale": 2.2
+          "scale": 2.2,
+          "attachments": [],
+          "glow": null
         },
         {
           "id": "malacrass",
@@ -136,7 +160,26 @@
           "displayId": 142140,
           "model": 7539964,
           "skinTextures": {},
-          "scale": 2.1
+          "scale": 2.1,
+          "attachments": [
+            {
+              "attachmentId": 17,
+              "model": 7667245,
+              "scale": 1
+            },
+            {
+              "attachmentId": -1,
+              "model": 7939164,
+              "scale": 1.5
+            }
+          ],
+          "glow": {
+            "edge": [
+              0.15686275,
+              0.7960785,
+              0.6901961
+            ]
+          }
         }
       ]
     },
@@ -150,7 +193,9 @@
           "displayId": 140369,
           "model": 7234130,
           "skinTextures": {},
-          "scale": 1
+          "scale": 1,
+          "attachments": [],
+          "glow": null
         }
       ]
     }

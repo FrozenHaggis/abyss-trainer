@@ -1,6 +1,6 @@
 import {
-  AdditiveBlending, Box3, BufferAttribute, Group, Mesh, MeshBasicMaterial,
-  Object3D, Vector3,
+  AdditiveBlending, Box3, BufferAttribute, Color, Group, Mesh,
+  MeshBasicMaterial, MeshLambertMaterial, Object3D, SkinnedMesh, Vector3,
 } from 'three'
 import { M2Loader, M2Options, type SequenceManager } from 'three-m2loader'
 import { FILE_ROOT, type CreatureEntry, type ModelIndex } from './modelIndex'
@@ -99,6 +99,28 @@ const EFFECT_OPACITY = 0.35
  */
 const BACK_RANK_SHADE = 0.12
 
+/**
+ * How hard to burn a display's edge colour into the model that wears one, lit
+ * in the front rank and shaded at the back.
+ *
+ * An approximation, and it is worth being clear which one. The game applies
+ * these as a fresnel term — brightest where the surface turns away from the eye,
+ * which is what makes a spectral creature read as lit from within. This puts the
+ * colour on uniformly as emissive instead, because a fresnel needs a custom
+ * shader for a treatment only two creatures in the raid carry.
+ *
+ * TWO VALUES, because a uniform emissive is not a rim light and cannot be tuned
+ * once for both. The front figure is standing in a spotlight, so anything above
+ * a whisper stops tinting it and becomes it — Nek'zali at 0.14 rendered as a
+ * flat turquoise cut-out with none of her own colour left, and the numbers here
+ * are linear, so 0.14 leaves the shader as roughly 0.4 on screen. The back rank
+ * has the opposite problem: `shade` has already taken its diffuse to a tenth, so
+ * the glow is most of what is left to see it by, and it is what turns Malacrass
+ * from an unlit shape into a spectral one.
+ */
+const GLOW_FRONT = 0.035
+const GLOW_BACK = 0.4
+
 /** The box a model actually draws in, with its skeleton in its current pose. */
 function posedBounds(root: Object3D): Box3 {
   const box = new Box3()
@@ -179,6 +201,54 @@ function trimToCentre(root: Object3D, halfWidth: number): void {
   })
 }
 
+/** Bytes in one M2Attachment: id, bone, pad, a C3Vector, and an animation track. */
+const M2_ATTACHMENT_SIZE = 40
+
+/**
+ * Where a model's attachment points are, as `id -> { bone, position }`.
+ *
+ * three-m2loader does not read these — it has no attachment support at all —
+ * so the header is walked here for the one array that matters. The offsets
+ * below are fixed-width fields in the MD20 header wrapped inside the MD21
+ * chunk, counted from the start of that header rather than of the file, which
+ * is why every read is `8 + n`.
+ *
+ * The M2 is fetched a second time and that is free: the loader has already
+ * pulled the same URL, so this is a cache hit rather than a download.
+ */
+async function readAttachments(url: string): Promise<Map<number, { bone: number; position: Vector3 }>> {
+  const out = new Map<number, { bone: number; position: Vector3 }>()
+  const res = await fetch(url)
+  if (!res.ok) return out
+  const view = new DataView(await res.arrayBuffer())
+
+  // 0xF0 is the attachments M2Array. Its offset is relative to the MD20 header.
+  const count = view.getUint32(8 + 0xF0, true)
+  const offset = view.getUint32(8 + 0xF4, true)
+  for (let i = 0; i < count; i++) {
+    const at = 8 + offset + i * M2_ATTACHMENT_SIZE
+    if (at + M2_ATTACHMENT_SIZE > view.byteLength) break
+    out.set(view.getUint32(at, true), {
+      bone: view.getUint16(at + 4, true),
+      position: new Vector3(
+        view.getFloat32(at + 8, true),
+        view.getFloat32(at + 12, true),
+        view.getFloat32(at + 16, true)),
+    })
+  }
+  return out
+}
+
+/** The model's bones, in M2 order, or null if it has no skeleton. */
+function bonesOf(root: Object3D) {
+  let bones: Object3D[] | null = null
+  root.traverse(node => {
+    const skinned = node as SkinnedMesh
+    if (!bones && skinned.isSkinnedMesh && skinned.skeleton) bones = skinned.skeleton.bones
+  })
+  return bones as Object3D[] | null
+}
+
 /** Walk every material on a model, whatever its mesh nesting. */
 function eachMaterial(root: Object3D, fn: (m: MeshBasicMaterial) => void): void {
   root.traverse(node => {
@@ -195,6 +265,21 @@ function dampenEffects(root: Object3D): void {
     if (m.blending !== AdditiveBlending) return
     m.transparent = true
     m.opacity *= EFFECT_OPACITY
+  })
+}
+
+/**
+ * Burn the display's edge colour into the model as emissive.
+ *
+ * Only the lit materials take it. The additive effect cards have no emissive
+ * channel and are already the colour they are meant to be.
+ */
+function applyGlow(root: Object3D, edge: [number, number, number], amount: number): void {
+  const colour = new Color(edge[0], edge[1], edge[2])
+  eachMaterial(root, m => {
+    const lit = m as unknown as MeshLambertMaterial
+    if (!lit.emissive) return
+    lit.emissive.copy(colour).multiplyScalar(amount)
   })
 }
 
@@ -253,6 +338,9 @@ async function loadCreature(entry: CreatureEntry, staging: CreatureStaging): Pro
   root.name = entry.id
   root.userData.entry = entry
 
+  /** Managers belonging to attachment models rather than to the creature. */
+  const extraSequences: SequenceManager[] = []
+
   // Posed onto the first frame of its idle BEFORE anything is measured or cut,
   // and that order is the whole reason the animation starts here rather than in
   // the barrel that will drive it. A skinned model has two silhouettes — the
@@ -273,9 +361,48 @@ async function loadCreature(entry: CreatureEntry, staging: CreatureStaging): Pro
   root.userData.sequenceManager = sequences
   root.updateMatrixWorld(true)
 
+  // Anything the display bolts on, hung off the bone its attachment point names.
+  //
+  // Parented to the BONE rather than to the model, so the mask rides the head
+  // through the idle instead of hanging in the air where the head used to be.
+  // No axis fix and no yaw on the way in: a bone is already in the model's own
+  // space, so the attachment arrives in the same frame its offset is expressed
+  // in and needs no correction.
+  const attachments = entry.attachments ?? []
+  if (attachments.length > 0) {
+    const points = await readAttachments(`${FILE_ROOT}${entry.model}.m2`)
+    const bones = bonesOf(root)
+    for (const attachment of attachments) {
+      const hung = await new M2Loader().loadAsync(`${FILE_ROOT}${attachment.model}.m2`)
+      hung.scale.setScalar(attachment.scale)
+
+      // -1 means the effect has no attachment point and rides the model itself.
+      const point = attachment.attachmentId >= 0 ? points.get(attachment.attachmentId) : undefined
+      const parent = point && bones ? bones[point.bone] : undefined
+      if (parent && point) {
+        hung.position.copy(point.position)
+        parent.add(hung)
+      } else {
+        loaded.add(hung)
+      }
+
+      // Attachment models carry their own idles — a mask breathes with its
+      // wearer's crest — so their managers join the list the barrel ticks.
+      const seq = hung.userData.sequenceManager as SequenceManager | undefined
+      const first = seq?.listSequences?.()[0]
+      if (seq && first) {
+        seq.playSequence(first.id)
+        seq.update(0)
+        extraSequences.push(seq)
+      }
+    }
+  }
+
   if (staging.trimHalfWidth !== undefined) trimToCentre(root, staging.trimHalfWidth)
   dampenEffects(root)
-  if (staging.back !== undefined) shade(root, BACK_RANK_SHADE)
+  const atBack = staging.back !== undefined
+  if (entry.glow?.edge) applyGlow(root, entry.glow.edge, atBack ? GLOW_BACK : GLOW_FRONT)
+  if (atBack) shade(root, BACK_RANK_SHADE)
 
   const box = posedBounds(root)
   const size = box.getSize(new Vector3())
@@ -293,6 +420,7 @@ async function loadCreature(entry: CreatureEntry, staging: CreatureStaging): Pro
       -((box.min.z + box.max.z) / 2) * scale)
   }
 
+  root.userData.extraSequences = extraSequences
   return root
 }
 
@@ -363,8 +491,9 @@ export async function loadBossScene(bossKey: string, index: ModelIndex): Promise
 
   return {
     group,
-    sequences: bodies
-      .map(b => b.root.userData.sequenceManager as SequenceManager | undefined)
-      .filter((s): s is SequenceManager => !!s),
+    sequences: bodies.flatMap(b => [
+      b.root.userData.sequenceManager as SequenceManager | undefined,
+      ...(b.root.userData.extraSequences as SequenceManager[] | undefined ?? []),
+    ]).filter((s): s is SequenceManager => !!s),
   }
 }

@@ -88,38 +88,38 @@ const EFFECT_OPACITY = 0.35
  * light and should read that way, and on a dark stage that separation is what
  * makes the pair legible as two ranks rather than one crowd.
  *
- * It also covers for a limitation, and the number is set by that rather than by
- * the depth. Hex Lord Malacrass's display is a base troll body — his gear is
- * item equipment composed at runtime from tables this loader cannot assemble —
- * so at anything near full brightness he is a conspicuously undressed troll.
- * Taken almost to black he is a looming silhouette, which is both what the
- * encounter wants and what the model can actually deliver. Not all the way to
- * black: at zero he is a flat cut-out that reads as a rendering fault, and the
- * twelve per cent left is what lets the two rim lights find his edge.
+ * The number is set by what the slot is for. The boss in the beam is the thing
+ * being looked at, and a second body behind it at anything like full brightness
+ * competes with it — which is what a Hex Lord in a bright teal mask did. A tenth
+ * puts him behind the light rather than in it. Not zero: at zero he is a flat
+ * cut-out that reads as a rendering fault, and the tenth left is what lets the
+ * two rim lights find his edge and his mask catch a little of the beam.
  */
-const BACK_RANK_SHADE = 0.12
+const BACK_RANK_SHADE = 0.1
 
 /**
- * How hard to burn a display's edge colour into the model that wears one, lit
- * in the front rank and shaded at the back.
+ * How hard to burn a display's edge colour into the model that wears one.
  *
  * An approximation, and it is worth being clear which one. The game applies
- * these as a fresnel term — brightest where the surface turns away from the eye,
- * which is what makes a spectral creature read as lit from within. This puts the
- * colour on uniformly as emissive instead, because a fresnel needs a custom
- * shader for a treatment only two creatures in the raid carry.
+ * these as a fresnel — brightest where a surface turns away from the eye, which
+ * is what makes a spectral creature read as lit from within. This puts the
+ * colour on uniformly as emissive instead, because a fresnel wants a custom
+ * shader for a treatment two creatures in the raid carry.
  *
- * TWO VALUES, because a uniform emissive is not a rim light and cannot be tuned
- * once for both. The front figure is standing in a spotlight, so anything above
- * a whisper stops tinting it and becomes it — Nek'zali at 0.14 rendered as a
- * flat turquoise cut-out with none of her own colour left, and the numbers here
- * are linear, so 0.14 leaves the shader as roughly 0.4 on screen. The back rank
- * has the opposite problem: `shade` has already taken its diffuse to a tenth, so
- * the glow is most of what is left to see it by, and it is what turns Malacrass
- * from an unlit shape into a spectral one.
+ * QUIET, and it has to be, because a uniform emissive is not a rim light. The
+ * value is linear, so it lands on screen far stronger than it reads — at 0.14
+ * Nek'zali stopped being tinted and became a flat turquoise cut-out with none of
+ * her own colour left, and at 0.4 Hex Lord Malacrass lost his purple and his
+ * olive entirely and rendered as a turquoise ghost. Neither creature is teal.
+ * They are ordinarily coloured things with teal ON them, and the only setting
+ * that keeps that true is one low enough to tint.
+ *
+ * There was briefly a second, much higher value for the back rank, on the
+ * grounds that a shaded body needs the glow to be visible at all. That was
+ * solving the wrong problem: a creature at the back is not supposed to be
+ * visible, it is supposed to be behind the one in the spotlight.
  */
-const GLOW_FRONT = 0.035
-const GLOW_BACK = 0.4
+const GLOW_EMISSIVE = 0.035
 
 /** The box a model actually draws in, with its skeleton in its current pose. */
 function posedBounds(root: Object3D): Box3 {
@@ -400,9 +400,8 @@ async function loadCreature(entry: CreatureEntry, staging: CreatureStaging): Pro
 
   if (staging.trimHalfWidth !== undefined) trimToCentre(root, staging.trimHalfWidth)
   dampenEffects(root)
-  const atBack = staging.back !== undefined
-  if (entry.glow?.edge) applyGlow(root, entry.glow.edge, atBack ? GLOW_BACK : GLOW_FRONT)
-  if (atBack) shade(root, BACK_RANK_SHADE)
+  if (entry.glow?.edge) applyGlow(root, entry.glow.edge, GLOW_EMISSIVE)
+  if (staging.back !== undefined) shade(root, BACK_RANK_SHADE)
 
   const box = posedBounds(root)
   const size = box.getSize(new Vector3())
